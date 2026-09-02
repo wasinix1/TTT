@@ -1,0 +1,22 @@
+[Unit]
+Description=Table tennis console
+After=network.target
+
+[Service]
+Type=simple
+User=tt
+WorkingDirectory=/opt/tt-console
+ExecStart=/usr/bin/python3 run.py --host 127.0.0.1 --port 8000 --data /var/lib/tt-console
+Restart=always
+RestartSec=2
+
+# the event log is the only thing that matters; keep it out of the app dir
+StateDirectory=tt-console
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/tt-console
+
+[Install]
+WantedBy=multi-user.target

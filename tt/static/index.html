@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0d1b1a">
+<title>Table tennis console</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header class="bar">
+  <div class="bar-left">
+    <span class="mark" aria-hidden="true"></span>
+    <h1 id="ev-name">Loading</h1>
+  </div>
+  <div class="bar-right">
+    <span id="role-tag" class="role-tag"></span>
+    <button id="setup-btn" class="ghost" hidden>Setup</button>
+    <span id="pulse" class="pulse" title="live"></span>
+  </div>
+</header>
+
+<main>
+  <section id="tables" class="tables"></section>
+
+  <div class="cols">
+    <div class="col">
+      <div id="queues"></div>
+      <div id="upcoming"></div>
+      <div id="recent"></div>
+    </div>
+    <div class="col">
+      <div id="standings"></div>
+      <div id="brackets"></div>
+    </div>
+  </div>
+</main>
+
+<div id="sheet" class="sheet" hidden>
+  <div class="sheet-inner">
+    <div class="sheet-head">
+      <nav id="tabs" class="tabs"></nav>
+      <button id="sheet-close" class="ghost">Close</button>
+    </div>
+    <div id="sheet-body" class="sheet-body"></div>
+  </div>
+</div>
+
+<div id="toast" class="toast" hidden></div>
+
+<script src="/static/app.js"></script>
+</body>
+</html>

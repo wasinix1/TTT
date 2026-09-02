@@ -1,0 +1,15 @@
+# Replace tt.example.at with your domain. Caddy gets and renews the TLS
+# certificate on its own; there is nothing else to configure.
+
+tt.example.at {
+	encode zstd gzip
+
+	# Server-sent events must not be buffered or the live updates arrive
+	# in batches whenever the proxy decides to flush.
+	@sse path /api/stream
+	reverse_proxy @sse 127.0.0.1:8000 {
+		flush_interval -1
+	}
+
+	reverse_proxy 127.0.0.1:8000
+}
