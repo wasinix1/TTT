@@ -533,6 +533,8 @@ function tabFormats() {
     <div class="hr"></div>
     ${S.formats.map(f => {
       const canCutKo = f.kind === 'swiss' && f.status === 'running' && f.phase !== 'ko';
+      const canAddEntrant = f.kind === 'swiss' && f.status === 'running' && f.phase !== 'ko';
+      const joinable = canAddEntrant ? S.entrants.filter(e => !f.entrant_ids.includes(e.id)) : [];
       return `<div class="inline" style="align-items:center">
       <div class="field"><label>${esc({open_play:'Open play',groups:'Groups',single_elim:'Knockout',swiss:'Swiss'}[f.kind]||f.kind)}</label>
         <input value="${esc(f.name)}" disabled></div>
@@ -543,12 +545,18 @@ function tabFormats() {
         </select></div>` : ''}
       <span class="chip">${f.status}${f.phase ? ' · ' + f.phase : ''}</span>
       ${f.status !== 'running' ? `<button class="primary tiny" data-act="start-format" data-i="${f.id}">Start</button>` : ''}
+      ${canAddEntrant && joinable.length ? `<div class="field" style="max-width:170px"><label>Add mid-tournament</label>
+        <select data-fadd="${f.id}">
+          <option value="">+ add a team…</option>
+          ${joinable.map(e => `<option value="${e.id}">${esc(e.name)}</option>`).join('')}
+        </select></div>` : ''}
       ${canCutKo ? `<button class="ghost tiny" data-act="cut-ko" data-i="${f.id}">Cut to knockout now</button>` : ''}
       ${f.status !== 'setup' ? `<button class="ghost tiny" data-act="reset-format" data-i="${f.id}">Reset</button>` : ''}
       <button class="ghost tiny" data-act="rm-format" data-i="${f.id}">Remove</button>
     </div>`;
     }).join('') || '<p class="blank">No formats yet.</p>'}
     <p class="sub">Two formats can run at once and share the tables. A knockout on tables 1 and 2 while everyone already eliminated keeps playing open queue on table 3. "Reset" clears a format's matches and results but keeps its settings and entrants, so you can start it again clean.</p>
+    <p class="sub">A Swiss format lets you add a team mid-tournament: they start at 0 wins and slot into the next round's pairing, same as anyone else who hasn't won yet. Best done early — round 1 or 2 — a later add means fewer rounds played and a standings row that isn't really comparable to the rest.</p>
   </div>`;
 }
 
@@ -635,6 +643,8 @@ document.addEventListener('change', e => {
   if (ent) { form.ents = form.ents || {}; form.ents[ent] = e.target.checked; }
   const fcup = e.target.dataset.fcup;
   if (fcup) api('update_format', { id: fcup, config: { cup_id: e.target.value } });
+  const fadd = e.target.dataset.fadd;
+  if (fadd && e.target.value) api('add_entrant', { id: fadd, entrant_id: e.target.value });
 });
 
 document.addEventListener('click', async e => {
