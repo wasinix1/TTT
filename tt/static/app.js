@@ -164,9 +164,7 @@ function renderTables() {
     } else if (!m) {
       body = `<div class="empty-table">Free — waiting for a pairing</div>`;
     } else {
-      const sub = a => m.meta && m.meta.scramble ? '' :
-        (a.split(' / ').length > 1 ? '' : '');
-      body = `<div class="versus">
+      body = `<div class="match-label">${esc(m.label)}</div><div class="versus">
         <div class="side"><span class="side-name">${esc(m.a)}</span></div>
         <div class="vs">plays</div>
         <div class="side"><span class="side-name">${esc(m.b)}</span></div>
@@ -175,7 +173,7 @@ function renderTables() {
     return `<div class="${cls}">
       <div class="table-head">
         <span class="table-no">${t.number}</span>
-        <span class="table-name">${esc(m ? m.label : t.name)}</span>
+        <span class="table-name">${esc(t.name || ('Table ' + t.number))}</span>
         ${isAdmin() ? `<button class="ghost tiny" data-act="pause" data-t="${t.number}">${t.paused ? 'Resume' : 'Pause'}</button>` : ''}
       </div>${body}</div>`;
   }).join('');
@@ -530,12 +528,15 @@ function tabFormats() {
 
     <div class="hr"></div>
     ${S.formats.map(f => {
-      const cup = S.cups.find(c => c.id === f.cup_id);
       const canCutKo = f.kind === 'swiss' && f.status === 'running' && f.phase !== 'ko';
       return `<div class="inline" style="align-items:center">
       <div class="field"><label>${esc({open_play:'Open play',groups:'Groups',single_elim:'Knockout',swiss:'Swiss'}[f.kind]||f.kind)}</label>
         <input value="${esc(f.name)}" disabled></div>
-      ${cup ? `<span class="chip">${esc(cup.name)}</span>` : ''}
+      ${S.cups.length ? `<div class="field" style="max-width:140px"><label>Cup</label>
+        <select data-fcup="${f.id}">
+          <option value="">No cup</option>
+          ${S.cups.map(c => `<option value="${c.id}" ${f.cup_id === c.id ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}
+        </select></div>` : ''}
       <span class="chip">${f.status}${f.phase ? ' · ' + f.phase : ''}</span>
       ${f.status !== 'running' ? `<button class="primary tiny" data-act="start-format" data-i="${f.id}">Start</button>` : ''}
       ${canCutKo ? `<button class="ghost tiny" data-act="cut-ko" data-i="${f.id}">Cut to knockout now</button>` : ''}
@@ -628,6 +629,8 @@ document.addEventListener('change', e => {
   }
   const ent = e.target.dataset.ent;
   if (ent) { form.ents = form.ents || {}; form.ents[ent] = e.target.checked; }
+  const fcup = e.target.dataset.fcup;
+  if (fcup) api('update_format', { id: fcup, config: { cup_id: e.target.value } });
 });
 
 document.addEventListener('click', async e => {

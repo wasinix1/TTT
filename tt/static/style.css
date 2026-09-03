@@ -84,6 +84,7 @@ main{padding:var(--gap) 18px 40px;max-width:1400px;margin:0 auto}
 .table-name{font-size:13px;color:var(--muted);flex:1}
 .table-state{font-size:12.5px;color:var(--muted)}
 
+.match-label{font-size:11.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.03em}
 .versus{display:flex;flex-direction:column;gap:6px;flex:1;justify-content:center}
 .side{display:flex;align-items:baseline;gap:10px}
 .side-name{font-size:21px;font-weight:640;letter-spacing:-.02em;line-height:1.15}
