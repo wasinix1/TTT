@@ -222,6 +222,12 @@ class App:
     def op_update_entrant(self, p):
         self.store.append("entrant_update", p)
 
+    def op_reset_players(self, p):
+        """Danger zone: wipe players/entrants and void whatever matches or
+        queue entries depended on them. Tables, cups and format settings
+        are kept, so the event doesn't need rebuilding for a fresh roster."""
+        self.store.append("players_reset", {})
+
     # tables
     def op_set_table(self, p):
         self.store.append("table_set", p)
@@ -353,6 +359,7 @@ class App:
 
 OP_LEVEL = {
     "add_player": 2, "update_player": 2, "add_team": 2, "update_entrant": 2,
+    "reset_players": 2,
     "set_table": 2, "remove_table": 2,
     "add_format": 2, "update_format": 2, "start_format": 2, "remove_format": 2,
     "reset_format": 2, "swiss_cut_ko": 2,

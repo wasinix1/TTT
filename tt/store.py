@@ -121,6 +121,12 @@ class Store:
             return
         if "name" in p:
             pl.name = p["name"]
+            # a solo entrant's name is just its one player's name at the
+            # time it was created; keep it in sync or every picker (format
+            # entry, queue, match labels) keeps showing the old name forever
+            for e in self.entrants.values():
+                if e.player_ids == [pl.id]:
+                    e.name = pl.name
         if "strength" in p:
             pl.strength = float(p["strength"])
         if "active" in p:
@@ -227,6 +233,23 @@ class Store:
             m.games = []
             m.winner = None
         self.queue = [q for q in self.queue if q.format_id != fid]
+
+    def _ev_players_reset(self, p, seq):
+        """Wipe the whole roster — players, entrants, and every match/queue
+        entry that depends on them — so a stale player list doesn't linger
+        between events. Tables, cups and format settings are untouched, so
+        formats just drop back to 'setup' with nobody entered yet rather
+        than needing to be rebuilt."""
+        for fid in list(self.formats.keys()):
+            self._purge_format_matches(fid)
+            f = self.formats[fid]
+            f.entrant_ids = []
+            f.status = "setup"
+            f.phase = ""
+        self.players = {}
+        self.entrants = {}
+        self.opted_out = set()
+        self.came_from = {}
 
     def _ev_queue_join(self, p, seq):
         eid = p["entrant_id"]

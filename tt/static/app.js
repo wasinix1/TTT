@@ -391,7 +391,10 @@ function tabPeople() {
     </fieldset>
 
     <div class="hr"></div>
-    <h2 style="font-size:14px">Players</h2>
+    <div class="inline" style="align-items:center;justify-content:space-between">
+      <h2 style="font-size:14px;margin:0">Players</h2>
+      ${S.players.length ? `<button class="danger tiny" data-act="reset-players">Reset players</button>` : ''}
+    </div>
     <p class="sub">Strength is your estimate, not a rating. Nudge it after the first round; that beats any rating system at this sample size.</p>
     ${S.players.map(p => `<div class="inline">
       <div class="field"><input id="pn-${p.id}" value="${esc(p.name)}" data-f="n-${p.id}"></div>
@@ -399,6 +402,7 @@ function tabPeople() {
       <button class="tiny" data-act="save-player" data-p="${p.id}">Save</button>
       <button class="ghost tiny" data-act="toggle-player" data-p="${p.id}">${p.active ? 'Sit out' : 'Bring back'}</button>
     </div>`).join('') || '<p class="blank">Nobody yet.</p>'}
+    <p class="sub">"Reset players" clears every player and team and voids their matches — tables, cups and format setups stay, so you can bring in a new roster without rebuilding the event.</p>
   </div>`;
 }
 
@@ -720,6 +724,11 @@ document.addEventListener('click', async e => {
   if (a === 'toggle-player') {
     const p = S.players.find(x => x.id === b.dataset.p);
     return void api('update_player', { id: p.id, active: !p.active });
+  }
+  if (a === 'reset-players') {
+    if (!confirm('Remove every player and team, and void their matches? Tables, cups and format settings stay. This cannot be undone.')) return;
+    form.ents = {};
+    return void api('reset_players', {});
   }
 
   if (a === 'pick-all') {
