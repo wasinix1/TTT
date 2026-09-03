@@ -222,6 +222,23 @@ class App:
     def op_update_entrant(self, p):
         self.store.append("entrant_update", p)
 
+    def op_add_entrant(self, p):
+        """Add a team to a Swiss already in progress. Only makes sense before
+        standings have pulled far apart: the newcomer starts at 0 wins and
+        joins the next round's pairing pool exactly like anyone else who is
+        still on 0, so this is meant for early on (round 1 still live), not
+        for dropping someone into round 6 of 8."""
+        s = self.store
+        f = s.formats[p["id"]]
+        if f.kind != "swiss":
+            raise ValueError("adding entrants mid-tournament only works for Swiss")
+        eid = p["entrant_id"]
+        if eid not in f.entrant_ids:
+            f.entrant_ids = f.entrant_ids + [eid]
+            s.append("format_update", {"id": f.id, "entrant_ids": f.entrant_ids})
+        if f.uses_queue() and f.status == "running":
+            s.append("queue_join", {"entrant_id": eid, "format_id": f.id})
+
     def op_reset_players(self, p):
         """Danger zone: wipe players/entrants and void whatever matches or
         queue entries depended on them. Tables, cups and format settings
@@ -362,7 +379,7 @@ OP_LEVEL = {
     "reset_players": 2,
     "set_table": 2, "remove_table": 2,
     "add_format": 2, "update_format": 2, "start_format": 2, "remove_format": 2,
-    "reset_format": 2, "swiss_cut_ko": 2,
+    "reset_format": 2, "swiss_cut_ko": 2, "add_entrant": 2,
     "add_cup": 2, "update_cup": 2, "remove_cup": 2,
     "join_queue": 1, "leave_queue": 1,
     "report": 1, "void_match": 1, "unassign": 2, "assign": 2,
