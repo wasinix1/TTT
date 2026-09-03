@@ -12,6 +12,10 @@ let sheetTab = 'people';
 let sheetOpen = false;
 const form = {};           // sticky admin form values
 
+// manual result entry — a match that never touched the queue or a table
+let manualDraft = { a: '', b: '', format_id: '', bo: 3, pts: 11 };
+let manualGames = [['', '']];
+
 // which cup this browser is looking at — per-viewer, not shared with the
 // server, so admin and every spectator can each pick their own
 let selectedCup = localStorage.getItem('tt_cup') || '';
@@ -111,6 +115,7 @@ function render() {
   renderTables();
   renderQueues();
   renderUpcoming();
+  renderManual();
   renderStandings();
   renderBrackets();
   renderRecent();
@@ -266,6 +271,69 @@ function renderUpcoming() {
         ${m.blocked ? `<span class="chip">a player is still on another table</span>` : ''}
         ${isAdmin() ? `<button class="ghost tiny" data-act="jump" data-m="${m.id}">Seat now</button>` : ''}
       </div>`).join('')}</div></div>`;
+}
+
+/* -- manual result entry ------------------------------------------------ */
+
+function renderManual() {
+  const el = $('manual-entry');
+  if (!el) return;
+  if (!canScore()) { el.innerHTML = ''; return; }
+  const entrants = S.entrants.slice().sort((a, b) => a.name.localeCompare(b.name));
+  if (entrants.length < 2) { el.innerHTML = ''; return; }
+  const runningFormats = S.formats.filter(f => f.status === 'running');
+  const need = Math.floor(+manualDraft.bo / 2) + 1;
+  let wa = 0, wb = 0;
+  manualGames.forEach(([a, b]) => { if (a !== '' && b !== '') { +a > +b ? wa++ : +b > +a ? wb++ : 0; } });
+  const decided = wa >= need || wb >= need;
+  const lastFilled = manualGames.length && manualGames[manualGames.length - 1][0] !== '' && manualGames[manualGames.length - 1][1] !== '';
+  if (!decided && lastFilled && manualGames.length < +manualDraft.bo) manualGames.push(['', '']);
+
+  const nameOf = id => (S.entrants.find(x => x.id === id) || {}).name || '';
+  const games = manualGames.map((g, i) => `<span class="game">
+      <input id="mg-${i}-a" data-mg="${i}|0" inputmode="numeric" value="${esc(g[0])}" aria-label="Game ${i + 1}, side A">
+      <span class="sep">:</span>
+      <input id="mg-${i}-b" data-mg="${i}|1" inputmode="numeric" value="${esc(g[1])}" aria-label="Game ${i + 1}, side B">
+    </span>`).join('');
+
+  const ready = decided && manualDraft.a && manualDraft.b && manualDraft.a !== manualDraft.b;
+  el.innerHTML = `<div class="panel">
+    <div class="panel-head"><h2>Enter a result</h2><span class="note">for a match played off the queue</span></div>
+    <div class="panel-body">
+      <div class="inline">
+        <div class="field"><label for="man-a">Side A</label>
+          <select id="man-a" data-mf="a">
+            <option value="">Pick…</option>
+            ${entrants.map(e => `<option value="${e.id}" ${manualDraft.a === e.id ? 'selected' : ''}>${esc(e.name)}</option>`).join('')}
+          </select></div>
+        <div class="field"><label for="man-b">Side B</label>
+          <select id="man-b" data-mf="b">
+            <option value="">Pick…</option>
+            ${entrants.map(e => `<option value="${e.id}" ${manualDraft.b === e.id ? 'selected' : ''}>${esc(e.name)}</option>`).join('')}
+          </select></div>
+      </div>
+      <div class="inline">
+        ${runningFormats.length ? `<div class="field"><label for="man-fmt">Counts towards</label>
+          <select id="man-fmt" data-mf="format_id">
+            <option value="">Friendly — no format</option>
+            ${runningFormats.map(f => `<option value="${f.id}" ${manualDraft.format_id === f.id ? 'selected' : ''}>${esc(f.name)}</option>`).join('')}
+          </select></div>` : ''}
+        <div class="field" style="max-width:100px"><label for="man-bo">Best of</label>
+          <select id="man-bo" data-mf="bo">${[1, 3, 5, 7].map(n =>
+            `<option value="${n}" ${+manualDraft.bo === n ? 'selected' : ''}>${n}</option>`).join('')}</select></div>
+        <div class="field" style="max-width:100px"><label for="man-pts">Points to</label>
+          <select id="man-pts" data-mf="pts">${[11, 21].map(n =>
+            `<option value="${n}" ${+manualDraft.pts === n ? 'selected' : ''}>${n}</option>`).join('')}</select></div>
+      </div>
+      <div class="games">${games}</div>
+      <div class="pad-row">
+        <button class="primary" data-act="manual-result" ${ready ? '' : 'disabled'}>
+          ${decided ? `Save ${esc(wa > wb ? (nameOf(manualDraft.a) || 'side A') : (nameOf(manualDraft.b) || 'side B'))} win` : 'Save result'}</button>
+        <button class="ghost tiny" data-act="manual-clear">Clear</button>
+      </div>
+      <p class="sub">Both sides drop straight into results — nobody needs to have queued or been dispatched to a table first.</p>
+    </div>
+  </div>`;
 }
 
 /* -- standings --------------------------------------------------------- */
@@ -614,6 +682,18 @@ function tabAccess() {
 /* --------------------------------------------------------------- events */
 
 document.addEventListener('input', e => {
+  const mg = e.target.dataset.mg;
+  if (mg) {
+    const [i, side] = mg.split('|');
+    const v = e.target.value.replace(/[^0-9]/g, '').slice(0, 2);
+    e.target.value = v;
+    while (manualGames.length <= +i) manualGames.push(['', '']);
+    manualGames[+i][+side] = v;
+    renderManual();
+    const back = document.getElementById(e.target.id);
+    if (back) { back.focus(); try { back.setSelectionRange(99, 99); } catch (x) { } }
+    return;
+  }
   const g = e.target.dataset.g;
   if (g) {
     const [mid, i, side] = g.split('|');
@@ -634,6 +714,13 @@ document.addEventListener('input', e => {
 });
 
 document.addEventListener('change', e => {
+  const mf = e.target.dataset.mf;
+  if (mf) {
+    manualDraft[mf] = e.target.value;
+    if (mf === 'bo') manualGames = [['', '']];
+    renderManual();
+    return;
+  }
   const f = e.target.dataset.f;
   if (f) {
     form[f] = e.target.type === 'checkbox' ? e.target.checked : e.target.value;
@@ -667,6 +754,18 @@ document.addEventListener('click', async e => {
     if (ok) { delete drafts[mid]; delete drafts['rq-' + mid]; }
     return;
   }
+  if (a === 'manual-result') {
+    const games = manualGames.filter(g => g[0] !== '' && g[1] !== '').map(g => [+g[0], +g[1]]);
+    const ok = await api('manual_result', {
+      entrant_a: manualDraft.a, entrant_b: manualDraft.b,
+      format_id: manualDraft.format_id || undefined,
+      games,
+      scoring: { best_of: +manualDraft.bo, points_to: +manualDraft.pts, win_by: 2 },
+    });
+    if (ok) { manualDraft.a = ''; manualDraft.b = ''; manualGames = [['', '']]; renderManual(); }
+    return;
+  }
+  if (a === 'manual-clear') { manualGames = [['', '']]; renderManual(); return; }
   if (a === 'void') return void api('void_match', { match_id: b.dataset.m });
   if (a === 'unassign') return void api('unassign', { match_id: b.dataset.m });
   if (a === 'jump') {

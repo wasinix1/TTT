@@ -346,6 +346,29 @@ class App:
         self.store.append("match_assign", {"match_id": p["match_id"],
                                            "table": int(p["table"])})
 
+    def op_manual_result(self, p):
+        """Record a result for a match that never went through the queue or
+        a table — a walk-up game, or backfilling something that already
+        happened. Creates the match and its result in one step."""
+        s = self.store
+        a, b = p.get("entrant_a"), p.get("entrant_b")
+        if not a or not b or a == b:
+            raise ValueError("pick two different entrants")
+        if a not in s.entrants or b not in s.entrants:
+            raise ValueError("unknown entrant")
+        scoring = Scoring.from_dict(p.get("scoring"))
+        games = [[int(x), int(y)] for x, y in p["games"]]
+        winner = p.get("winner") or decide_winner(games, scoring)
+        if not winner:
+            raise ValueError("that score does not decide the match")
+        mid = s.create_match(
+            format_id=p.get("format_id") or "manual",
+            entrant_a=a, entrant_b=b,
+            label=p.get("label") or "Manual entry", meta={"phase": "manual"},
+            scoring=scoring.to_dict())
+        s.append("match_result", {"match_id": mid, "games": games, "winner": winner})
+        return {"match_id": mid}
+
     def op_manual_match(self, p):
         s = self.store
         mid = s.create_match(
@@ -383,7 +406,7 @@ OP_LEVEL = {
     "add_cup": 2, "update_cup": 2, "remove_cup": 2,
     "join_queue": 1, "leave_queue": 1,
     "report": 1, "void_match": 1, "unassign": 2, "assign": 2,
-    "manual_match": 2, "event_meta": 2, "rewind": 2, "reset_event": 2,
+    "manual_match": 2, "manual_result": 1, "event_meta": 2, "rewind": 2, "reset_event": 2,
 }
 
 
