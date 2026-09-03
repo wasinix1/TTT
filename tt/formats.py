@@ -648,7 +648,11 @@ class Swiss(Format):
             return
         if cur >= total:
             if self.config.get("then_ko"):
-                self._start_ko(store)
+                live = [m for m in store.matches.values()
+                        if m.format_id == self.id and m.meta.get("round") == total - 1
+                        and m.status not in ("done", "void")]
+                if not live:
+                    self._start_ko(store)
             return
         live = [m for m in store.matches.values()
                 if m.format_id == self.id and m.meta.get("round") == cur - 1
