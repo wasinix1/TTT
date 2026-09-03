@@ -2,6 +2,10 @@
 match came from, which is the whole reason two formats can share a table pool:
 run the knockout on tables 1 and 2 while everyone already eliminated keeps
 playing open queue on table 3.
+
+The one exception is cups: a table tagged for a cup is reserved for that
+cup's formats only, so two tournaments running at once don't cross-pollinate
+each other's tables. An untagged table stays shared, exactly as before.
 """
 
 
@@ -28,19 +32,25 @@ def tick(store):
             # first pass respects each format's strength tolerance; if that
             # leaves a table empty, go round again ignoring it, because an idle
             # table is worse than an imperfect pairing
+            assigned = None
             for forced in (False, True):
                 for tnum in free:
+                    tcup = store.cup_of_table(store.tables[tnum])
                     mid = None
                     for f in by_priority():
+                        if tcup is not None and store.cup_of_format(f) != tcup:
+                            continue          # this table is reserved for another cup
                         mid = f.next_match(store, busy, force=forced)
                         if mid:
                             break
                     if mid:
+                        assigned = (tnum, mid)
                         break
-                if mid:
+                if assigned:
                     break
-            if not mid:
+            if not assigned:
                 return
+            tnum, mid = assigned
             store.append("match_assign", {"match_id": mid, "table": tnum})
             waiting = [q.entrant_id for q in store.queue]
             if waiting:

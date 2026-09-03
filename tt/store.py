@@ -13,7 +13,7 @@ import time
 from collections import defaultdict
 
 from .models import (
-    Player, Entrant, Match, Table, QueueEntry, Scoring, decide_winner,
+    Player, Entrant, Match, Table, QueueEntry, Scoring, Cup, decide_winner,
 )
 
 
@@ -39,6 +39,8 @@ class Store:
         self.entrants: dict[str, Entrant] = {}
         self.matches: dict[str, Match] = {}
         self.tables: dict[int, Table] = {}
+        self.cups: dict[str, Cup] = {}
+        self.cup_order: list[str] = []
         self.formats = {}            # id -> Format instance
         self.format_order: list[str] = []
         self.queue: list[QueueEntry] = []
@@ -149,10 +151,30 @@ class Store:
         t.name = p.get("name", t.name)
         if "paused" in p:
             t.paused = bool(p["paused"])
+        if "cup_id" in p:
+            t.cup_id = p["cup_id"] or None
         self.tables[n] = t
 
     def _ev_table_remove(self, p, seq):
         self.tables.pop(int(p["number"]), None)
+
+    def _ev_cup_add(self, p, seq):
+        self.cups[p["id"]] = Cup(id=p["id"], name=p.get("name") or "Cup")
+        if p["id"] not in self.cup_order:
+            self.cup_order.append(p["id"])
+
+    def _ev_cup_update(self, p, seq):
+        c = self.cups.get(p["id"])
+        if not c:
+            return
+        if "name" in p:
+            c.name = p["name"]
+
+    def _ev_cup_remove(self, p, seq):
+        self.cups.pop(p["id"], None)
+        self.cup_order = [i for i in self.cup_order if i != p["id"]]
+        # tables/formats that pointed at it fall back to shared/ungrouped —
+        # cup_of_table / cup_of_format only trust ids still present in self.cups
 
     def _ev_format_add(self, p, seq):
         from .formats import build_format
@@ -177,8 +199,34 @@ class Store:
             f.phase = p["phase"]
 
     def _ev_format_remove(self, p, seq):
+        self._purge_format_matches(p["id"])
         self.formats.pop(p["id"], None)
         self.format_order = [i for i in self.format_order if i != p["id"]]
+
+    def _ev_format_reset(self, p, seq):
+        """Clear a format's matches/queue in place, keep its config so it
+        can be started again without recreating entrants or settings."""
+        fid = p["id"]
+        self._purge_format_matches(fid)
+        f = self.formats.get(fid)
+        if f:
+            f.status = "setup"
+            f.phase = ""
+
+    def _purge_format_matches(self, fid):
+        """Void every match still hanging off a format — done or not — so
+        removing/resetting a format leaves no residue in results, standings
+        or rematch-avoidance history, and frees any table it was holding."""
+        for m in self.matches.values():
+            if m.format_id != fid or m.status == "void":
+                continue
+            if m.table in self.tables and self.tables[m.table].match_id == m.id:
+                self.tables[m.table].match_id = None
+            m.table = None
+            m.status = "void"
+            m.games = []
+            m.winner = None
+        self.queue = [q for q in self.queue if q.format_id != fid]
 
     def _ev_queue_join(self, p, seq):
         eid = p["entrant_id"]
@@ -311,6 +359,22 @@ class Store:
         if not m:
             return
         self._fill_slot(m, slot, entrant_id)
+
+    # ------------------------------------------------------------ cups
+
+    def cup_of_table(self, t: Table):
+        """A table's cup, or None if shared — self-heals if the cup was removed."""
+        return t.cup_id if t.cup_id in self.cups else None
+
+    def cup_of_format(self, f):
+        c = f.config.get("cup_id") if f else None
+        return c if c in self.cups else None
+
+    def tables_for_cup(self, cup_id):
+        """Table numbers a format tagged `cup_id` may be dispatched to: the
+        shared pool plus any table reserved for that same cup."""
+        return [n for n, t in sorted(self.tables.items())
+                if self.cup_of_table(t) in (None, cup_id)]
 
     def busy_players(self) -> set[str]:
         out = set()

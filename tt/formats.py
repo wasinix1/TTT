@@ -104,6 +104,9 @@ class Format:
     def priority(self) -> int:
         return int(self.config.get("priority", self.default_priority))
 
+    def cup_id(self):
+        return self.config.get("cup_id") or None
+
     # -- config helpers
     def scoring(self) -> Scoring:
         return Scoring.from_dict(self.config.get("scoring"))
@@ -145,6 +148,7 @@ class Format:
         return {
             "id": self.id, "kind": self.kind, "name": self.name,
             "status": self.status, "phase": self.phase, "priority": self.priority(),
+            "cup_id": self.cup_id(),
             "config": self.config, "entrant_ids": self.entrant_ids,
             "uses_queue": self.uses_queue(),
             "standings": self.standings(store),
@@ -578,25 +582,33 @@ class Swiss(Format):
               if m.format_id == self.id and m.status != "void"]
         return max(rs) + 1 if rs else 0
 
+    def _eligible(self, store, e):
+        """Same bar as entrant_available, minus the busy check: a player sat
+        out mid-tournament must not keep getting drawn into new rounds."""
+        ent = store.entrants.get(e)
+        if not ent or not ent.active:
+            return False
+        return all(store.players[p].active for p in ent.player_ids if p in store.players)
+
     def _generate_round(self, store, rnd):
         score = self._score(store)
         meets = store.meetings()
-        pool = sorted([e for e in self.entrant_ids
-                       if store.entrants.get(e) and store.entrants[e].active],
+        pool = sorted([e for e in self.entrant_ids if self._eligible(store, e)],
                       key=lambda e: (-score.get(e, 0), -store.entrant_strength(e)))
         byes = {m.meta.get("bye") for m in store.matches.values()
                 if m.format_id == self.id and m.meta.get("bye")}
         if len(pool) % 2:
-            for e in reversed(pool):
-                if e not in byes:
-                    pool.remove(e)
-                    store.create_match(
-                        format_id=self.id, entrant_a=e, entrant_b=None,
-                        label=f"Round {rnd+1} bye", status="done",
-                        meta={"round": rnd, "phase": "swiss", "bye": e},
-                        scoring=self.scoring().to_dict(),
-                    )
-                    break
+            # prefer someone who hasn't had a bye yet; if the field has
+            # shrunk enough that everyone left already has, give it to the
+            # weakest-ranked entrant anyway rather than silently dropping them
+            pick = next((e for e in reversed(pool) if e not in byes), pool[-1])
+            pool.remove(pick)
+            store.create_match(
+                format_id=self.id, entrant_a=pick, entrant_b=None,
+                label=f"Round {rnd+1} bye", status="done",
+                meta={"round": rnd, "phase": "swiss", "bye": pick},
+                scoring=self.scoring().to_dict(),
+            )
         used, pairs = set(), []
         for i, a in enumerate(pool):
             if a in used:
@@ -626,11 +638,17 @@ class Swiss(Format):
             )
 
     def tick(self, store):
-        if self.config.get("continuous") or self.status != "running":
+        if self.status != "running" or self.phase == "ko":
+            return
+        if self.config.get("continuous"):
             return
         total = int(self.config.get("rounds", 5))
         cur = self._rounds_done(store)
-        if cur == 0 or cur >= total:
+        if cur == 0:
+            return
+        if cur >= total:
+            if self.config.get("then_ko"):
+                self._start_ko(store)
             return
         live = [m for m in store.matches.values()
                 if m.format_id == self.id and m.meta.get("round") == cur - 1
@@ -638,8 +656,37 @@ class Swiss(Format):
         if not live:
             self._generate_round(store, cur)
 
+    def _start_ko(self, store):
+        """Cross into the knockout stage: top N by standings, seeded bracket.
+        Shared by the normal end-of-rounds transition and the manual cut."""
+        if self.phase == "ko":
+            return
+        blocks = self.standings(store)
+        rows = blocks[0]["rows"] if blocks else []
+        adv = max(2, int(self.config.get("advance", 4)))
+        seeded = [r["entrant_id"] for r in rows[:adv]]
+        if len(seeded) < 2:
+            return
+        ko_sc = Scoring.from_dict(self.config.get("ko_scoring") or self.config.get("scoring"))
+        build_bracket(store, self.id, seeded, ko_sc,
+                      third_place=bool(self.config.get("third_place")))
+        self.phase = "ko"
+        store.append("format_update", {"id": self.id, "phase": "ko"})
+
+    def cut_to_ko(self, store):
+        """Admin override: stop the Swiss short of its planned rounds (or end
+        a continuous one) and build the bracket from standings as they stand
+        right now. Anything not yet seated on a table is scrapped."""
+        if self.phase == "ko" or self.status != "running":
+            return
+        stray = [m for m in store.matches.values()
+                 if m.format_id == self.id and m.status == "pending"]
+        for m in stray:
+            store.append("match_void", {"match_id": m.id})
+        self._start_ko(store)
+
     def next_match(self, store, busy, force=False):
-        if not self.config.get("continuous"):
+        if self.phase == "ko" or not self.config.get("continuous"):
             return self._pending(store, busy)
         entries = [q for q in store.queue
                    if q.format_id == self.id
@@ -683,7 +730,16 @@ class Swiss(Format):
             r["rank"] = i
         return [{"group": self.name, "rows": rows}]
 
+    def on_result(self, store, m):
+        if m.meta.get("phase") == "ko":
+            ko_on_result(store, m)
+
+    def view(self, store):
+        return {"bracket": bracket_view(store, self.id)}
+
     def is_complete(self, store):
+        if self.phase == "ko":
+            return super().is_complete(store)
         if self.config.get("continuous"):
             return False
         return super().is_complete(store) and \

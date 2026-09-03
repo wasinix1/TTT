@@ -85,6 +85,16 @@ class Table:
     name: str = ""
     paused: bool = False
     match_id: Optional[str] = None
+    cup_id: Optional[str] = None       # None = shared; tagged = reserved for that cup
+
+    def to_dict(self):
+        return asdict(self)
+
+
+@dataclass
+class Cup:
+    id: str
+    name: str
 
     def to_dict(self):
         return asdict(self)

@@ -289,6 +289,157 @@ def test_replay_and_undo():
     shutil.rmtree(d)
 
 
+def test_cups_and_tables():
+    print("\n[cups: two tournaments sharing five tables with a strict split]")
+    app, d = fresh()
+    s = app.store
+    app.act("admin", "set_table", {"number": 4, "name": "Table 4"})
+    app.act("admin", "set_table", {"number": 5, "name": "Table 5"})
+    cup_a = app.act("admin", "add_cup", {"name": "Cup A"})["cup_id"]
+    cup_b = app.act("admin", "add_cup", {"name": "Cup B"})["cup_id"]
+    for n in (1, 2, 3):
+        app.act("admin", "set_table", {"number": n, "cup_id": cup_a})
+    for n in (4, 5):
+        app.act("admin", "set_table", {"number": n, "cup_id": cup_b})
+
+    a_ents = [add_pair(app, f"A{i}a", 5, f"A{i}b", 5, f"A{i}") for i in range(6)]
+    b_ents = [add_pair(app, f"B{i}a", 5, f"B{i}b", 5, f"B{i}") for i in range(6)]
+    fa = app.act("admin", "add_format", {
+        "kind": "open_play", "name": "Cup A open",
+        "config": {"mode": "pairs", "cup_id": cup_a,
+                   "scoring": {"best_of": 3, "points_to": 11}}})["format_id"]
+    fb = app.act("admin", "add_format", {
+        "kind": "open_play", "name": "Cup B open",
+        "config": {"mode": "pairs", "cup_id": cup_b,
+                   "scoring": {"best_of": 3, "points_to": 11}}})["format_id"]
+    app.act("admin", "start_format", {"id": fa})
+    app.act("admin", "start_format", {"id": fb})
+    for e in a_ents:
+        app.act("admin", "join_queue", {"entrant_id": e, "format_id": fa})
+    for e in b_ents:
+        app.act("admin", "join_queue", {"entrant_id": e, "format_id": fb})
+
+    for _ in range(40):
+        for n in sorted(s.tables):
+            play_one(app, n)
+
+    bad = [(h["payload"]["match_id"], h["payload"]["table"])
+           for h in s.history(5000) if h["type"] == "match_assign"
+           and s.matches.get(h["payload"]["match_id"])
+           and ((s.matches[h["payload"]["match_id"]].format_id == fa
+                 and h["payload"]["table"] not in (1, 2, 3))
+                or (s.matches[h["payload"]["match_id"]].format_id == fb
+                    and h["payload"]["table"] not in (4, 5)))]
+    check(not bad, f"cup-tagged matches only ever used their own cup's tables (bad={bad[:5]})")
+    check(len(s.done_matches(fa)) > 5, "Cup A matches were played")
+    check(len(s.done_matches(fb)) > 5, "Cup B matches were played")
+    shutil.rmtree(d)
+
+
+def test_format_cleanup():
+    print("\n[removing/resetting a format leaves no residue]")
+    app, d = fresh()
+    s = app.store
+    ents = [add_pair(app, f"C{i}a", 5, f"C{i}b", 5, f"C{i}") for i in range(4)]
+    fid = app.act("admin", "add_format", {
+        "kind": "single_elim", "name": "Cup", "entrant_ids": ents,
+        "config": {"scoring": {"best_of": 3, "points_to": 11}}})["format_id"]
+    app.act("admin", "start_format", {"id": fid})
+    play_one(app, sorted(s.tables)[0])          # finish one, leave the other live/pending
+    app.act("admin", "remove_format", {"id": fid})
+    check(all(m.status == "void" for m in s.matches.values() if m.format_id == fid),
+          "every match from a removed format is voided")
+    check(all(t.match_id is None for t in s.tables.values()), "tables freed by the removal")
+    check(fid not in s.formats, "format itself is gone")
+
+    fid2 = app.act("admin", "add_format", {
+        "kind": "single_elim", "name": "Cup2", "entrant_ids": ents,
+        "config": {"scoring": {"best_of": 3, "points_to": 11}}})["format_id"]
+    app.act("admin", "start_format", {"id": fid2})
+    play_one(app, sorted(s.tables)[0])
+    app.act("admin", "reset_format", {"id": fid2})
+    check(all(m.status == "void" for m in s.matches.values() if m.format_id == fid2),
+          "reset voids the format's matches")
+    check(s.formats[fid2].status == "setup", "reset puts the format back in setup")
+    app.act("admin", "start_format", {"id": fid2})
+    check(any(m.status != "void" for m in s.matches.values() if m.format_id == fid2),
+          "format can be started again after a reset")
+    shutil.rmtree(d)
+
+
+def test_swiss_ko():
+    print("\n[Swiss into a knockout once rounds finish]")
+    app, d = fresh()
+    ents = [add_pair(app, f"W{i}a", 8 - i * 0.5, f"W{i}b", 8 - i * 0.5, f"W{i}")
+            for i in range(8)]
+    fid = app.act("admin", "add_format", {
+        "kind": "swiss", "name": "Swiss+KO", "entrant_ids": ents,
+        "config": {"rounds": 3, "then_ko": True, "advance": 4,
+                   "scoring": {"best_of": 3, "points_to": 11}}})["format_id"]
+    app.act("admin", "start_format", {"id": fid})
+    s, f = app.store, app.store.formats[fid]
+    drain(app)
+    check(f.phase == "ko", "Swiss crossed into the knockout once rounds finished")
+    ko = [m for m in s.matches.values() if m.format_id == fid and m.meta.get("phase") == "ko"]
+    check(len(ko) == 3, "4 advancers need exactly 3 knockout matches")
+    check(all(m.status == "done" for m in ko), "the bracket played out")
+    check(f.is_complete(s), "format reports complete once the bracket is done")
+    shutil.rmtree(d)
+
+
+def test_swiss_cut_ko():
+    print("\n[Swiss cut short into a knockout on demand]")
+    app, d = fresh()
+    ents = [add_pair(app, f"Z{i}a", 8 - i * 0.4, f"Z{i}b", 8 - i * 0.4, f"Z{i}")
+            for i in range(8)]
+    fid = app.act("admin", "add_format", {
+        "kind": "swiss", "name": "Continuous Swiss", "entrant_ids": ents,
+        "config": {"continuous": True, "advance": 4,
+                   "scoring": {"best_of": 3, "points_to": 11}}})["format_id"]
+    app.act("admin", "start_format", {"id": fid})
+    s, f = app.store, app.store.formats[fid]
+    for e in ents:
+        app.act("admin", "join_queue", {"entrant_id": e, "format_id": fid})
+    for _ in range(15):
+        for n in sorted(s.tables):
+            play_one(app, n)
+    check(f.phase != "ko", "still mid-Swiss before the cut")
+    app.act("admin", "swiss_cut_ko", {"id": fid})
+    check(f.phase == "ko", "cutting short built the knockout immediately")
+    stray = [m for m in s.matches.values() if m.format_id == fid
+             and m.meta.get("phase") == "swiss" and m.status == "pending"]
+    check(not stray, "no leftover swiss pending matches after the cut")
+    drain(app)
+    check(f.is_complete(s), "the cut-short knockout still finishes cleanly")
+    shutil.rmtree(d)
+
+
+def test_swiss_respects_sitout():
+    print("\n[Swiss stops pairing someone once they sit out]")
+    app, d = fresh()
+    s = app.store
+    for i in range(6):
+        add_player(app, f"P{i}", 5)
+    ents = [e.id for e in sorted(s.entrants.values(), key=lambda e: e.name)]
+    fid = app.act("admin", "add_format", {
+        "kind": "swiss", "name": "Swiss", "entrant_ids": ents,
+        "config": {"rounds": 3, "scoring": {"best_of": 3, "points_to": 11}}})["format_id"]
+    app.act("admin", "start_format", {"id": fid})
+    r0 = [m for m in s.matches.values() if m.format_id == fid and m.meta.get("round") == 0]
+    target = r0[0]
+    sitout_pid = s.entrants[target.entrant_a].player_ids[0]
+    for m in r0:
+        if m.id != target.id:
+            play_one(app, m.table)
+    app.act("admin", "update_player", {"id": sitout_pid, "active": False})
+    play_one(app, target.table)          # last round-0 result triggers round 1
+    round1 = [m for m in s.matches.values() if m.format_id == fid and m.meta.get("round") == 1]
+    check(bool(round1), "round 1 was generated")
+    check(not any(sitout_pid in m.players() for m in round1),
+          "the player who sat out mid-round-0 was excluded from round 1")
+    shutil.rmtree(d)
+
+
 def test_permissions():
     print("\n[roles]")
     app, d = fresh()
@@ -317,5 +468,10 @@ if __name__ == "__main__":
     test_swiss()
     test_parallel()
     test_replay_and_undo()
+    test_cups_and_tables()
+    test_format_cleanup()
+    test_swiss_ko()
+    test_swiss_cut_ko()
+    test_swiss_respects_sitout()
     test_permissions()
     print("\nall good\n")

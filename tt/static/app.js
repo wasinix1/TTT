@@ -12,6 +12,19 @@ let sheetTab = 'people';
 let sheetOpen = false;
 const form = {};           // sticky admin form values
 
+// which cup this browser is looking at — per-viewer, not shared with the
+// server, so admin and every spectator can each pick their own
+let selectedCup = localStorage.getItem('tt_cup') || '';
+function setCup(id) {
+  selectedCup = id || '';
+  try { localStorage.setItem('tt_cup', selectedCup); } catch (e) { }
+  render();
+}
+// true if an item with this cup_id (null = shared/ungrouped) belongs in the
+// current view: shared items always show, cup-specific ones only in "All"
+// or their own tab
+const inView = cupId => !selectedCup || cupId == null || cupId === selectedCup;
+
 const $ = id => document.getElementById(id);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c =>
   ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -94,6 +107,7 @@ function render() {
     S.role === 'admin' ? 'Admin' : S.role === 'referee' ? 'Referee' : 'Live';
   $('setup-btn').hidden = !isAdmin();
 
+  renderCupTabs();
   renderTables();
   renderQueues();
   renderUpcoming();
@@ -113,16 +127,35 @@ function render() {
   }
 }
 
+/* -- cup tabs ------------------------------------------------------------ */
+
+function renderCupTabs() {
+  const bar = $('cup-tabs');
+  if (!S.cups.length) { bar.hidden = true; return; }
+  if (selectedCup && !S.cups.some(c => c.id === selectedCup)) selectedCup = '';
+  bar.hidden = false;
+  bar.innerHTML = [['', 'All']].concat(S.cups.map(c => [c.id, c.name])).map(([id, name]) =>
+    `<button class="${selectedCup === id ? 'on' : ''}" data-cup="${id}">${esc(name)}</button>`
+  ).join('');
+}
+
 /* -- tables ------------------------------------------------------------ */
 
 function renderTables() {
-  if (!S.tables.length) {
+  const all = S.tables;
+  const vis = S._visibleTables = all.filter(t => inView(t.cup_id));
+  if (!all.length) {
     $('tables').innerHTML =
       `<div class="table-card"><div class="empty-table">No tables yet.` +
       (isAdmin() ? ' Add them in Setup.' : '') + `</div></div>`;
     return;
   }
-  $('tables').innerHTML = S.tables.map(t => {
+  if (!vis.length) {
+    $('tables').innerHTML =
+      `<div class="table-card"><div class="empty-table">No tables reserved for this cup — they're all on the other side.</div></div>`;
+    return;
+  }
+  $('tables').innerHTML = vis.map(t => {
     const m = t.match;
     const cls = ['table-card', m ? 'live' : '', t.paused ? 'paused' : ''].join(' ');
     let body;
@@ -190,8 +223,9 @@ function scorePad(m) {
 /* -- queues ------------------------------------------------------------ */
 
 function renderQueues() {
-  if (!S.queues.length) { $('queues').innerHTML = ''; return; }
-  $('queues').innerHTML = S.queues.map(q => {
+  const qs = S.queues.filter(q => inView(q.cup_id));
+  if (!qs.length) { $('queues').innerHTML = ''; return; }
+  $('queues').innerHTML = qs.map(q => {
     const rows = q.entries.length ? q.entries.map((e, i) => `
       <div class="row ${e.passes >= 2 ? 'waiting-long' : ''} ${e.blocked ? 'blocked' : ''}">
         <span class="pos">${i + 1}</span>
@@ -213,16 +247,26 @@ function renderQueues() {
 
 /* -- upcoming ---------------------------------------------------------- */
 
+function tableBadge(m) {
+  const all = S.tables.map(t => t.number).sort((a, b) => a - b).join(',');
+  const el = (m.eligible_tables || []).slice().sort((a, b) => a - b);
+  if (!el.length) return 'No table free for this cup';
+  return el.join(',') === all ? 'Any table' : 'Table ' + el.join(', ');
+}
+
 function renderUpcoming() {
-  const u = S.upcoming;
+  const u = S.upcoming.filter(m => inView(m.cup_id));
   if (!u.length) { $('upcoming').innerHTML = ''; return; }
   $('upcoming').innerHTML = `<div class="panel">
     <div class="panel-head"><h2>Still to play</h2><span class="note">${u.length}</span></div>
     <div class="panel-body flush">${u.slice(0, 14).map(m => `
-      <div class="row">
+      <div class="row ${m.blocked ? 'blocked' : ''}">
         <span class="nm">${esc(m.a)} <span style="color:var(--dim)">v</span> ${esc(m.b)}</span>
         <span class="chip">${esc(m.label)}</span>
-        ${isAdmin() ? `<button class="ghost tiny" data-act="jump" data-m="${m.id}">Next up</button>` : ''}
+        ${m.next ? `<span class="chip next">Up next</span>` : ''}
+        <span class="chip tables">${tableBadge(m)}</span>
+        ${m.blocked ? `<span class="chip">a player is still on another table</span>` : ''}
+        ${isAdmin() ? `<button class="ghost tiny" data-act="jump" data-m="${m.id}">Seat now</button>` : ''}
       </div>`).join('')}</div></div>`;
 }
 
@@ -231,6 +275,7 @@ function renderUpcoming() {
 function renderStandings() {
   const blocks = [];
   for (const f of S.formats) {
+    if (!inView(f.cup_id)) continue;
     if (!f.standings || !f.standings.length) continue;
     const adv = f.kind === 'groups' && f.config.then_ko
       ? +(f.config.advance_per_group || 2) : 0;
@@ -261,6 +306,7 @@ function renderStandings() {
 function renderBrackets() {
   const out = [];
   for (const f of S.formats) {
+    if (!inView(f.cup_id)) continue;
     const b = f.view && f.view.bracket;
     if (!b) continue;
     out.push(`<div class="panel">
@@ -283,10 +329,11 @@ function renderBrackets() {
 /* -- recent ------------------------------------------------------------ */
 
 function renderRecent() {
-  if (!S.recent.length) { $('recent').innerHTML = ''; return; }
+  const r = S.recent.filter(m => inView(m.cup_id));
+  if (!r.length) { $('recent').innerHTML = ''; return; }
   $('recent').innerHTML = `<div class="panel">
-    <div class="panel-head"><h2>Results</h2><span class="note">${S.recent.length}</span></div>
-    <div class="panel-body flush">${S.recent.map(m => {
+    <div class="panel-head"><h2>Results</h2><span class="note">${r.length}</span></div>
+    <div class="panel-body flush">${r.map(m => {
       const sc = m.games.map(g => `${g[0]}-${g[1]}`).join(', ');
       const w = m.winner === 'a' ? m.a : m.b, l = m.winner === 'a' ? m.b : m.a;
       return `<div class="row">
@@ -299,14 +346,15 @@ function renderRecent() {
 
 /* ---------------------------------------------------------------- sheet */
 
-const TABS = [['people', 'People'], ['tables', 'Tables'], ['formats', 'Formats'],
-              ['queue', 'Queue'], ['log', 'Log'], ['access', 'Access']];
+const TABS = [['people', 'People'], ['tables', 'Tables'], ['cups', 'Cups'],
+              ['formats', 'Formats'], ['queue', 'Queue'], ['log', 'Log'],
+              ['access', 'Access']];
 
 function renderSheet() {
   $('tabs').innerHTML = TABS.map(([k, l]) =>
     `<button class="${sheetTab === k ? 'on' : ''}" data-tab="${k}">${l}</button>`).join('');
   $('sheet-body').innerHTML = ({
-    people: tabPeople, tables: tabTables, formats: tabFormats,
+    people: tabPeople, tables: tabTables, cups: tabCups, formats: tabFormats,
     queue: tabQueue, log: tabLog, access: tabAccess,
   }[sheetTab])();
 }
@@ -358,15 +406,38 @@ function tabPeople() {
 
 function tabTables() {
   return `<div class="form">
-    <p class="sub">Tables are shared by every running format. Pause one and the dispatcher stops sending matches to it.</p>
+    <p class="sub">A table with no cup is shared by every running format. Give it a cup and it's reserved for that cup's formats only — that's how you split tables between two tournaments running at once. Pause a table and the dispatcher stops sending matches to it.</p>
     ${S.tables.map(t => `<div class="inline">
       <div class="field" style="max-width:70px"><label>Number</label><input value="${t.number}" disabled></div>
       <div class="field"><label>Name</label><input id="tn-${t.number}" value="${esc(t.name)}" data-f="tn-${t.number}"></div>
+      ${S.cups.length ? `<div class="field" style="max-width:150px"><label>Cup</label>
+        <select id="tc-${t.number}" data-f="tc-${t.number}">
+          <option value="">Shared</option>
+          ${S.cups.map(c => `<option value="${c.id}" ${t.cup_id === c.id ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}
+        </select></div>` : ''}
       <button class="tiny" data-act="save-table" data-t="${t.number}">Save</button>
       <button class="ghost tiny" data-act="pause" data-t="${t.number}">${t.paused ? 'Resume' : 'Pause'}</button>
       <button class="ghost tiny" data-act="rm-table" data-t="${t.number}">Remove</button>
     </div>`).join('')}
     <div><button class="primary" data-act="add-table">Add a table</button></div>
+  </div>`;
+}
+
+function tabCups() {
+  return `<div class="form">
+    <fieldset><legend>New cup</legend>
+      <div class="inline">
+        <div class="field"><label for="cup-name">Name</label>
+          <input id="cup-name" value="${esc(form.cupname || '')}" data-f="cupname" placeholder="Cup A"></div>
+        <button class="primary" data-act="add-cup">Add cup</button>
+      </div>
+      <p class="sub">A cup is a spectator-facing grouping — toggle at the top of the page to see just that cup's tables, queue, standings and bracket. Assign a format to a cup on the Formats tab, and optionally reserve specific tables for it on the Tables tab.</p>
+    </fieldset>
+    ${S.cups.map(c => `<div class="inline">
+      <div class="field"><input id="cn-${c.id}" value="${esc(c.name)}" data-f="cn-${c.id}"></div>
+      <button class="tiny" data-act="save-cup" data-c="${c.id}">Save</button>
+      <button class="ghost tiny" data-act="rm-cup" data-c="${c.id}">Remove</button>
+    </div>`).join('') || '<p class="blank">No cups yet — everything shows in one view until you add one.</p>'}
   </div>`;
 }
 
@@ -407,7 +478,14 @@ const KIND_FIELDS = {
         <input id="c-rounds" value="${esc(form.c_rounds ?? 5)}" data-f="c_rounds" inputmode="numeric"></div>
       <label class="pick"><input type="checkbox" id="c-cont" data-f="c_cont" ${form.c_cont ? 'checked' : ''}> continuous (no round barrier)</label>
     </div>
-    <p class="sub">Continuous Swiss pairs on demand instead of in lockstep rounds, so tables never idle waiting on the one match that went to deuce in the fifth.</p>`,
+    <p class="sub">Continuous Swiss pairs on demand instead of in lockstep rounds, so tables never idle waiting on the one match that went to deuce in the fifth.</p>
+    <div class="inline">
+      <label class="pick"><input type="checkbox" id="c-swko" data-f="c_swko" ${form.c_swko ? 'checked' : ''}> then a knockout</label>
+      <div class="field" style="max-width:150px"><label for="c-swadv">Advance to KO</label>
+        <input id="c-swadv" value="${esc(form.c_swadv ?? 4)}" data-f="c_swadv" inputmode="numeric"></div>
+      <label class="pick"><input type="checkbox" id="c-third" data-f="c_third" ${form.c_third ? 'checked' : ''}> third place match</label>
+    </div>
+    <p class="sub">With rounds set, the top finishers cross into a bracket the instant the last round is done. With "continuous", there's no round count to finish on — use "Cut to knockout now" on the running format when you're ready, or if you're short on time part-way through the rounds.</p>`,
 };
 
 function tabFormats() {
@@ -425,6 +503,11 @@ function tabFormats() {
           </select></div>
         <div class="field"><label for="f-name">Name</label>
           <input id="f-name" value="${esc(form.f_name || '')}" data-f="f_name" placeholder="Main draw"></div>
+        ${S.cups.length ? `<div class="field" style="max-width:150px"><label for="f-cup">Cup</label>
+          <select id="f-cup" data-f="f_cup">
+            <option value="">None</option>
+            ${S.cups.map(c => `<option value="${c.id}" ${form.f_cup === c.id ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}
+          </select></div>` : ''}
       </div>
       <div class="inline">
         <div class="field" style="max-width:120px"><label for="f-bo">Best of</label>
@@ -446,14 +529,21 @@ function tabFormats() {
     </fieldset>
 
     <div class="hr"></div>
-    ${S.formats.map(f => `<div class="inline" style="align-items:center">
+    ${S.formats.map(f => {
+      const cup = S.cups.find(c => c.id === f.cup_id);
+      const canCutKo = f.kind === 'swiss' && f.status === 'running' && f.phase !== 'ko';
+      return `<div class="inline" style="align-items:center">
       <div class="field"><label>${esc({open_play:'Open play',groups:'Groups',single_elim:'Knockout',swiss:'Swiss'}[f.kind]||f.kind)}</label>
         <input value="${esc(f.name)}" disabled></div>
+      ${cup ? `<span class="chip">${esc(cup.name)}</span>` : ''}
       <span class="chip">${f.status}${f.phase ? ' · ' + f.phase : ''}</span>
       ${f.status !== 'running' ? `<button class="primary tiny" data-act="start-format" data-i="${f.id}">Start</button>` : ''}
+      ${canCutKo ? `<button class="ghost tiny" data-act="cut-ko" data-i="${f.id}">Cut to knockout now</button>` : ''}
+      ${f.status !== 'setup' ? `<button class="ghost tiny" data-act="reset-format" data-i="${f.id}">Reset</button>` : ''}
       <button class="ghost tiny" data-act="rm-format" data-i="${f.id}">Remove</button>
-    </div>`).join('') || '<p class="blank">No formats yet.</p>'}
-    <p class="sub">Two formats can run at once and share the tables. A knockout on tables 1 and 2 while everyone already eliminated keeps playing open queue on table 3.</p>
+    </div>`;
+    }).join('') || '<p class="blank">No formats yet.</p>'}
+    <p class="sub">Two formats can run at once and share the tables. A knockout on tables 1 and 2 while everyone already eliminated keeps playing open queue on table 3. "Reset" clears a format's matches and results but keeps its settings and entrants, so you can start it again clean.</p>
   </div>`;
 }
 
@@ -480,6 +570,11 @@ function tabLog() {
       <span style="flex:1;font-size:13px">${esc(h.type)} <span style="color:var(--muted)">${esc(JSON.stringify(h.payload).slice(0, 70))}</span></span>
       <button class="ghost tiny" data-act="rewind" data-s="${h.seq}">Rewind here</button>
     </div>`).join('')}
+    <div class="hr"></div>
+    <fieldset><legend>Danger zone</legend>
+      <p class="sub">Wipes players, teams, tables, formats, cups and every match — a totally blank event. Your admin and referee links keep working, nothing to redistribute.</p>
+      <button class="danger" data-act="reset-event">Reset everything</button>
+    </fieldset>
   </div>`;
 }
 
@@ -538,6 +633,8 @@ document.addEventListener('change', e => {
 document.addEventListener('click', async e => {
   const tab = e.target.dataset.tab;
   if (tab) { sheetTab = tab; renderSheet(); return; }
+  const cup = e.target.closest('button[data-cup]');
+  if (cup) { setCup(cup.dataset.cup); return; }
   const b = e.target.closest('button[data-act]');
   if (!b) return;
   const a = b.dataset.act;
@@ -576,8 +673,26 @@ document.addEventListener('click', async e => {
     return void api('set_table', { number: n, name: 'Table ' + n });
   }
   if (a === 'rm-table') return void api('remove_table', { number: +b.dataset.t });
-  if (a === 'save-table') return void api('set_table', {
-    number: +b.dataset.t, name: form['tn-' + b.dataset.t] ?? '' });
+  if (a === 'save-table') {
+    const t = S.tables.find(x => x.number == b.dataset.t);
+    return void api('set_table', {
+      number: +b.dataset.t,
+      name: form['tn-' + b.dataset.t] ?? t.name,
+      cup_id: form['tc-' + b.dataset.t] ?? (t.cup_id || '') });
+  }
+
+  if (a === 'add-cup') {
+    if (!form.cupname) return toast('Give the cup a name');
+    await api('add_cup', { name: form.cupname });
+    form.cupname = ''; renderSheet();
+    return;
+  }
+  if (a === 'save-cup') return void api('update_cup', {
+    id: b.dataset.c, name: form['cn-' + b.dataset.c] ?? '' });
+  if (a === 'rm-cup') {
+    if (!confirm('Remove this cup? Its tables and formats stay, just ungrouped.')) return;
+    return void api('remove_cup', { id: b.dataset.c });
+  }
 
   if (a === 'add-player') {
     if (!form.pname) return toast('Give the player a name');
@@ -624,7 +739,10 @@ document.addEventListener('click', async e => {
     if (kind === 'single_elim') cfg.third_place = !!form.c_third;
     if (kind === 'swiss') Object.assign(cfg, {
       rounds: num(form.c_rounds ?? 5) || 5, continuous: !!form.c_cont,
+      then_ko: !!form.c_swko, advance: num(form.c_swadv ?? 4) || 4,
+      third_place: !!form.c_third,
     });
+    if (form.f_cup) cfg.cup_id = form.f_cup;
     const ents = Object.entries(form.ents || {}).filter(([, v]) => v).map(([k]) => k);
     if (kind !== 'open_play' && ents.length < 2) return toast('Pick at least two entrants');
     await api('add_format', { kind, name: form.f_name || '', config: cfg, entrant_ids: ents });
@@ -632,10 +750,25 @@ document.addEventListener('click', async e => {
     return;
   }
   if (a === 'start-format') return void api('start_format', { id: b.dataset.i });
-  if (a === 'rm-format') return void api('remove_format', { id: b.dataset.i });
+  if (a === 'rm-format') {
+    if (!confirm('Remove this format and void all of its matches?')) return;
+    return void api('remove_format', { id: b.dataset.i });
+  }
+  if (a === 'reset-format') {
+    if (!confirm('Clear this format\'s matches and results? Its settings and entrants stay, ready to start again.')) return;
+    return void api('reset_format', { id: b.dataset.i });
+  }
+  if (a === 'cut-ko') {
+    if (!confirm('Stop this Swiss now and build the knockout from current standings?')) return;
+    return void api('swiss_cut_ko', { id: b.dataset.i });
+  }
   if (a === 'rewind') {
     if (!confirm('Drop everything after event ' + b.dataset.s + '?')) return;
     return void api('rewind', { seq: +b.dataset.s });
+  }
+  if (a === 'reset-event') {
+    if (!confirm('Wipe EVERYTHING — players, teams, tables, formats, cups, all matches? This cannot be undone.')) return;
+    return void api('reset_event', {});
   }
   if (a === 'save-event') return void api('event_meta', { name: form.evname || '' });
 });

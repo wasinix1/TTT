@@ -69,6 +69,7 @@ class App:
             "table": m.table, "status": m.status, "games": m.games,
             "winner": m.winner, "scoring": m.scoring.to_dict(),
             "meta": m.meta, "seq": m.seq,
+            "cup_id": s.cup_of_format(s.formats.get(m.format_id)),
         }
 
     def state_json(self, role):
@@ -89,6 +90,7 @@ class App:
                 m = s.matches.get(t.match_id) if t.match_id else None
                 tables.append({
                     "number": n, "name": t.name, "paused": t.paused,
+                    "cup_id": s.cup_of_table(t),
                     "match": self.match_dto(m) if m else None,
                 })
 
@@ -102,6 +104,7 @@ class App:
                 busy = s.busy_players()
                 queues.append({
                     "format_id": fid, "format_name": f.name,
+                    "cup_id": s.cup_of_format(f),
                     "mode": f.config.get("mode", "pairs"),
                     "entries": [{
                         "entrant_id": q.entrant_id,
@@ -113,11 +116,36 @@ class App:
                     } for q in qs],
                 })
 
-            upcoming = []
+            # "Still to play" in real dispatch order: available-now matches
+            # first (a match whose players are mid-game elsewhere can't
+            # actually be next no matter where it sorts), then by the
+            # format's own table priority, then round/seq. Each one also
+            # gets the table numbers it could actually land on, which is the
+            # honest version of "which table" — the exact table is only
+            # decided the instant one frees up, so we show the set it's
+            # eligible for rather than guessing a single number.
+            busy_now = s.busy_players()
+            ranked = []
             for m in s.matches.values():
-                if m.status == "pending" and m.is_filled():
-                    upcoming.append(self.match_dto(m))
-            upcoming.sort(key=lambda m: (m["meta"].get("round", 0), m["seq"]))
+                if m.status != "pending" or not m.is_filled():
+                    continue
+                f = s.formats.get(m.format_id)
+                avail = (s.entrant_available(m.entrant_a, busy_now)
+                        and s.entrant_available(m.entrant_b, busy_now))
+                cup = s.cup_of_format(f)
+                dto = self.match_dto(m)
+                dto["blocked"] = not avail
+                dto["cup_id"] = cup
+                dto["eligible_tables"] = s.tables_for_cup(cup)
+                ranked.append((0 if avail else 1, f.priority() if f else 0,
+                              m.meta.get("round", 0), m.seq, dto))
+            ranked.sort(key=lambda x: x[:4])
+            upcoming = [r[4] for r in ranked]
+            flagged_cups = set()
+            for dto in upcoming:
+                if not dto["blocked"] and dto["cup_id"] not in flagged_cups:
+                    dto["next"] = True
+                    flagged_cups.add(dto["cup_id"])
 
             recent = sorted([m for m in s.matches.values() if m.status == "done"],
                             key=lambda m: -m.seq)[:15]
@@ -126,6 +154,7 @@ class App:
                 "version": s.version, "seq": s.seq, "role": role,
                 "event": s.event,
                 "tables": tables,
+                "cups": [s.cups[c].to_dict() for c in s.cup_order if c in s.cups],
                 "queues": queues,
                 "upcoming": [u for u in upcoming[:24]],
                 "recent": [self.match_dto(m) for m in recent],
@@ -228,6 +257,27 @@ class App:
     def op_remove_format(self, p):
         self.store.append("format_remove", p)
 
+    def op_reset_format(self, p):
+        self.store.append("format_reset", p)
+
+    def op_swiss_cut_ko(self, p):
+        s = self.store
+        f = s.formats[p["id"]]
+        f.cut_to_ko(s)
+
+    # cups
+    def op_add_cup(self, p):
+        s = self.store
+        cid = s.new_id("C", s.cups)
+        s.append("cup_add", {"id": cid, "name": p.get("name") or "Cup"})
+        return {"cup_id": cid}
+
+    def op_update_cup(self, p):
+        self.store.append("cup_update", p)
+
+    def op_remove_cup(self, p):
+        self.store.append("cup_remove", p)
+
     # queue
     def op_join_queue(self, p):
         self.store.append("queue_join", {"entrant_id": p["entrant_id"],
@@ -291,14 +341,25 @@ class App:
     def op_rewind(self, p):
         self.store.rewind(int(p["seq"]))
 
+    def op_reset_event(self, p):
+        """Danger zone: wipe the whole evening (players, teams, matches,
+        formats, cups) and start clean. Access keys live in a separate file
+        and are never touched by this."""
+        s = self.store
+        s.rewind(0)
+        for n in (1, 2, 3):
+            s.append("table_set", {"number": n, "name": f"Table {n}"})
+
 
 OP_LEVEL = {
     "add_player": 2, "update_player": 2, "add_team": 2, "update_entrant": 2,
     "set_table": 2, "remove_table": 2,
     "add_format": 2, "update_format": 2, "start_format": 2, "remove_format": 2,
+    "reset_format": 2, "swiss_cut_ko": 2,
+    "add_cup": 2, "update_cup": 2, "remove_cup": 2,
     "join_queue": 1, "leave_queue": 1,
     "report": 1, "void_match": 1, "unassign": 2, "assign": 2,
-    "manual_match": 2, "event_meta": 2, "rewind": 2,
+    "manual_match": 2, "event_meta": 2, "rewind": 2, "reset_event": 2,
 }
 
 
