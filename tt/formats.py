@@ -662,9 +662,18 @@ class Swiss(Format):
 
     def _start_ko(self, store):
         """Cross into the knockout stage: top N by standings, seeded bracket.
-        Shared by the normal end-of-rounds transition and the manual cut."""
+        Shared by the normal end-of-rounds transition and the manual cut.
+        Whatever path got us here, a swiss match still sitting in "pending"
+        would otherwise keep getting dispatched to tables forever — nothing
+        ever marks it done or void once the format has moved past it — so
+        it's scrapped here rather than trusting every caller to have done
+        that already."""
         if self.phase == "ko":
             return
+        stray = [m for m in store.matches.values()
+                 if m.format_id == self.id and m.status == "pending"]
+        for m in stray:
+            store.append("match_void", {"match_id": m.id})
         blocks = self.standings(store)
         rows = blocks[0]["rows"] if blocks else []
         adv = max(2, int(self.config.get("advance", 4)))
@@ -683,10 +692,6 @@ class Swiss(Format):
         right now. Anything not yet seated on a table is scrapped."""
         if self.phase == "ko" or self.status != "running":
             return
-        stray = [m for m in store.matches.values()
-                 if m.format_id == self.id and m.status == "pending"]
-        for m in stray:
-            store.append("match_void", {"match_id": m.id})
         self._start_ko(store)
 
     def next_match(self, store, busy, force=False):
