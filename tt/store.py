@@ -11,6 +11,7 @@ import sqlite3
 import threading
 import time
 from collections import defaultdict
+from typing import Optional
 
 from .models import (
     Player, Entrant, Match, Table, QueueEntry, Scoring, Cup, decide_winner,
@@ -49,6 +50,10 @@ class Store:
         # them back to open play when it finishes
         self.came_from: dict[str, str] = {}
         self.event: dict = {"name": "Table tennis evening", "note": ""}
+        # admin override: try this cup's formats first on every *shared*
+        # table (reserved tables are unaffected). None = normal priority
+        # order, unchanged from before this existed.
+        self.priority_cup: Optional[str] = None
         self.seq = 0
         self.version = 0             # bumped on every applied event, for polling
 
@@ -181,6 +186,9 @@ class Store:
         self.cup_order = [i for i in self.cup_order if i != p["id"]]
         # tables/formats that pointed at it fall back to shared/ungrouped —
         # cup_of_table / cup_of_format only trust ids still present in self.cups
+
+    def _ev_priority_cup_set(self, p, seq):
+        self.priority_cup = p.get("cup_id") or None
 
     def _ev_format_add(self, p, seq):
         from .formats import build_format
@@ -392,6 +400,9 @@ class Store:
     def cup_of_format(self, f):
         c = f.config.get("cup_id") if f else None
         return c if c in self.cups else None
+
+    def active_priority_cup(self):
+        return self.priority_cup if self.priority_cup in self.cups else None
 
     def tables_for_cup(self, cup_id):
         """Table numbers a format tagged `cup_id` may be dispatched to: the

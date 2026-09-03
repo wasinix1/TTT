@@ -155,6 +155,7 @@ class App:
                 "event": s.event,
                 "tables": tables,
                 "cups": [s.cups[c].to_dict() for c in s.cup_order if c in s.cups],
+                "priority_cup": s.active_priority_cup(),
                 "queues": queues,
                 "upcoming": [u for u in upcoming[:24]],
                 "recent": [self.match_dto(m) for m in recent],
@@ -301,6 +302,13 @@ class App:
     def op_remove_cup(self, p):
         self.store.append("cup_remove", p)
 
+    def op_set_priority_cup(self, p):
+        """Admin override for a cup that's losing every shared-table race to
+        another cup's format: try its formats first on shared tables until
+        cleared. Reserved tables are untouched; falls through to normal
+        order the moment it has nothing ready to play."""
+        self.store.append("priority_cup_set", {"cup_id": p.get("cup_id") or None})
+
     # queue
     def op_join_queue(self, p):
         self.store.append("queue_join", {"entrant_id": p["entrant_id"],
@@ -380,7 +388,7 @@ OP_LEVEL = {
     "set_table": 2, "remove_table": 2,
     "add_format": 2, "update_format": 2, "start_format": 2, "remove_format": 2,
     "reset_format": 2, "swiss_cut_ko": 2, "add_entrant": 2,
-    "add_cup": 2, "update_cup": 2, "remove_cup": 2,
+    "add_cup": 2, "update_cup": 2, "remove_cup": 2, "set_priority_cup": 2,
     "join_queue": 1, "leave_queue": 1,
     "report": 1, "void_match": 1, "unassign": 2, "assign": 2,
     "manual_match": 2, "event_meta": 2, "rewind": 2, "reset_event": 2,

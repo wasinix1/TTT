@@ -438,8 +438,12 @@ function tabCups() {
     ${S.cups.map(c => `<div class="inline">
       <div class="field"><input id="cn-${c.id}" value="${esc(c.name)}" data-f="cn-${c.id}"></div>
       <button class="tiny" data-act="save-cup" data-c="${c.id}">Save</button>
+      ${S.priority_cup === c.id
+        ? `<button class="danger tiny" data-act="clear-priority-cup">Prioritized — click to clear</button>`
+        : `<button class="ghost tiny" data-act="set-priority-cup" data-c="${c.id}">Prioritize queue</button>`}
       <button class="ghost tiny" data-act="rm-cup" data-c="${c.id}">Remove</button>
     </div>`).join('') || '<p class="blank">No cups yet — everything shows in one view until you add one.</p>'}
+    ${S.cups.length ? `<p class="sub">"Prioritize queue" is for when one cup keeps losing every open table to the other — it makes the dispatcher try that cup's formats first on shared tables (tables already reserved for a cup on the Tables tab are unaffected). It falls straight back to normal order the instant that cup has nobody ready to play, so tables never sit idle. Only one cup can be prioritized at a time; clear it once the queue's caught up.</p>` : ''}
   </div>`;
 }
 
@@ -710,6 +714,8 @@ document.addEventListener('click', async e => {
     if (!confirm('Remove this cup? Its tables and formats stay, just ungrouped.')) return;
     return void api('remove_cup', { id: b.dataset.c });
   }
+  if (a === 'set-priority-cup') return void api('set_priority_cup', { cup_id: b.dataset.c });
+  if (a === 'clear-priority-cup') return void api('set_priority_cup', { cup_id: null });
 
   if (a === 'add-player') {
     if (!form.pname) return toast('Give the player a name');

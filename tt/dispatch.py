@@ -20,8 +20,13 @@ def tick(store):
         def by_priority():
             fs = [store.formats[i] for i in store.format_order if i in store.formats]
             fs = [f for f in fs if f.status == "running"]
-            return sorted(fs, key=lambda f: (f.priority(),
-                                             store.format_order.index(f.id)))
+            # a boosted cup's formats go first on shared tables — pure
+            # tiebreak, so if it has nothing to play right now this falls
+            # straight through to normal order rather than idling a table
+            boost = store.active_priority_cup()
+            return sorted(fs, key=lambda f: (
+                0 if boost and store.cup_of_format(f) == boost else 1,
+                f.priority(), store.format_order.index(f.id)))
 
         for _ in range(96):                       # bounded, one seat per pass
             free = [n for n, t in sorted(store.tables.items())
