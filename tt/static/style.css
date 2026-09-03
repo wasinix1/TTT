@@ -105,6 +105,8 @@ main{padding:var(--gap) 18px 40px;max-width:1400px;margin:0 auto}
 .game .sep{color:var(--dim);font-size:13px}
 .pad-row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
 .hint{font-size:12px;color:var(--muted)}
+.upcoming-pad{padding:9px 15px 13px;background:var(--ground)}
+.upcoming-pad .pad{border-top:none;padding-top:0}
 
 /* --------------------------------------------------------------- buttons */
 button{
