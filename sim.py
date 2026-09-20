@@ -460,6 +460,268 @@ def test_permissions():
     shutil.rmtree(d)
 
 
+def solo_field(app, n, base=5.0, step=0.0):
+    return [add_player(app, f"P{i}", base + i * step) for i in range(n)]
+
+
+def entrant_ids(app):
+    return [e.id for e in app.store.entrants.values()]
+
+
+def test_fair_cup_share():
+    print("\n[two cups sharing tables get served fairly]")
+    app, d = fresh()
+    ca = app.act("admin", "add_cup", {"name": "Cup A"})["cup_id"]
+    cb = app.act("admin", "add_cup", {"name": "Cup B"})["cup_id"]
+    solo_field(app, 16)
+    es = entrant_ids(app)
+    fa = app.act("admin", "add_format", {"kind": "groups", "name": "A",
+         "config": {"n_groups": 1, "then_ko": False, "cup_id": ca},
+         "entrant_ids": es[:8]})["format_id"]
+    fb = app.act("admin", "add_format", {"kind": "groups", "name": "B",
+         "config": {"n_groups": 1, "then_ko": False, "cup_id": cb},
+         "entrant_ids": es[8:]})["format_id"]
+    app.act("admin", "start_format", {"id": fa})
+    app.act("admin", "start_format", {"id": fb})
+    seen = []
+    for _ in range(300):
+        moved = False
+        for n in sorted(app.store.tables):
+            t = app.store.tables[n]
+            if t.match_id:
+                seen.append("A" if app.store.matches[t.match_id].format_id == fa else "B")
+                play_one(app, n)
+                moved = True
+        if not moved:
+            break
+    first = "".join(seen[:20])
+    print("   first twenty dispatched:", first)
+    # the old dispatcher handed every table to whichever cup was created
+    # first until it ran out of matches entirely
+    check(6 <= first.count("B") <= 14, "neither cup starves early on")
+    check(seen.count("A") > 0 and seen.count("B") > 0, "both cups played out")
+    shutil.rmtree(d)
+
+
+def test_swiss_does_not_outrun_a_bigger_cup():
+    print("\n[a small cup cannot reach its knockout while a big one is in round one]")
+    app, d = fresh()
+    big = app.act("admin", "add_cup", {"name": "Big"})["cup_id"]
+    small = app.act("admin", "add_cup", {"name": "Small"})["cup_id"]
+    solo_field(app, 20)
+    es = entrant_ids(app)
+    fbig = app.act("admin", "add_format", {"kind": "swiss", "name": "Big draw",
+           "config": {"continuous": True, "paced": True, "rounds": 4,
+                      "cup_id": big}, "entrant_ids": es[:16]})["format_id"]
+    fsm = app.act("admin", "add_format", {"kind": "swiss", "name": "Small draw",
+          "config": {"continuous": True, "paced": True, "rounds": 4,
+                     "cup_id": small}, "entrant_ids": es[16:]})["format_id"]
+    for f in (fbig, fsm):
+        app.act("admin", "start_format", {"id": f})
+        for e in app.store.formats[f].entrant_ids:
+            app.act("admin", "join_queue", {"entrant_id": e, "format_id": f})
+    worst = 0
+    for _ in range(400):
+        moved = False
+        for n in sorted(app.store.tables):
+            if app.store.tables[n].match_id:
+                play_one(app, n)
+                moved = True
+        s = app.store
+        pb = s.formats[fbig].remaining_work(s)
+        ps = s.formats[fsm].remaining_work(s)
+        big_frac = 1 - pb / 32.0
+        small_frac = 1 - ps / 8.0
+        worst = max(worst, small_frac - big_frac)
+        if not moved:
+            break
+    print(f"   worst lead the small cup ever built: {worst:.0%} of its draw")
+    check(worst < 0.60, "the small draw never runs away with the tables")
+    check(app.store.formats[fbig].is_complete(app.store), "the big draw finished too")
+    shutil.rmtree(d)
+
+
+def test_paced_swiss_keeps_the_field_level():
+    print("\n[paced Swiss: on demand, but nobody gets ahead]")
+    app, d = fresh()
+    solo_field(app, 8, 5.0, 0.2)
+    f = app.act("admin", "add_format", {"kind": "swiss", "name": "Swiss",
+        "config": {"continuous": True, "paced": True, "rounds": 4},
+        "entrant_ids": entrant_ids(app)})["format_id"]
+    app.act("admin", "start_format", {"id": f})
+    for e in entrant_ids(app):
+        app.act("admin", "join_queue", {"entrant_id": e, "format_id": f})
+    worst = 0
+    for _ in range(120):
+        moved = False
+        for n in sorted(app.store.tables):
+            if app.store.tables[n].match_id:
+                play_one(app, n)
+                moved = True
+        pl = app.store.formats[f]._played(app.store)
+        if pl:
+            worst = max(worst, max(pl.values()) - min(pl.values()))
+        if not moved:
+            break
+    played = app.store.formats[f]._played(app.store)
+    print("   games played per entrant:", sorted(played.values()))
+    check(worst <= 1, f"nobody ever got more than one game ahead (worst {worst})")
+    check(set(played.values()) == {4}, "everyone played exactly the round budget")
+    check(app.store.formats[f].is_complete(app.store), "it knows when it is done")
+    shutil.rmtree(d)
+
+
+def test_swiss_ko_drops_the_queue():
+    print("\n[cutting a continuous Swiss to a knockout closes its queue]")
+    app, d = fresh()
+    solo_field(app, 8, 5.0, 0.1)
+    f = app.act("admin", "add_format", {"kind": "swiss", "name": "Swiss",
+        "config": {"continuous": True, "then_ko": True, "advance": 4},
+        "entrant_ids": entrant_ids(app)})["format_id"]
+    app.act("admin", "start_format", {"id": f})
+    for e in entrant_ids(app):
+        app.act("admin", "join_queue", {"entrant_id": e, "format_id": f})
+    for _ in range(12):
+        for n in sorted(app.store.tables):
+            play_one(app, n)
+    app.act("admin", "swiss_cut_ko", {"id": f})
+    check(not app.store.queue, "the cut empties the Swiss queue")
+    drain(app)
+    check(not app.store.queue,
+          "no knockout player gets dropped back into a queue nothing dispatches")
+    check(not [m for m in app.store.matches.values()
+               if m.format_id == f and m.status == "pending"
+               and m.meta.get("phase") == "swiss"],
+          "no stray Swiss fixtures survive the cut")
+    shutil.rmtree(d)
+
+
+def test_send_back_returns_players():
+    print("\n[sending an open-play match back off its table]")
+    app, d = fresh()
+    solo_field(app, 10)
+    f = app.act("admin", "add_format", {"kind": "open_play", "name": "Open",
+        "config": {"mode": "singles"}})["format_id"]
+    app.act("admin", "start_format", {"id": f})
+    for e in entrant_ids(app):
+        app.act("admin", "join_queue", {"entrant_id": e, "format_id": f})
+    s = app.store
+    m = [x for x in s.matches.values() if x.status == "live"][0]
+    pair = [m.entrant_a, m.entrant_b]
+    app.act("admin", "unassign", {"match_id": m.id})
+    queued = {q.entrant_id for q in s.queue}
+    playing = set()
+    for t in s.tables.values():
+        if t.match_id:
+            mm = s.matches[t.match_id]
+            playing |= {mm.entrant_a, mm.entrant_b}
+    check(all(e in queued or e in playing for e in pair),
+          "both players land back in the queue instead of vanishing")
+    check(not [x for x in s.matches.values()
+               if x.status == "pending" and x.format_id == f],
+          "no un-seatable open-play match is left behind")
+    shutil.rmtree(d)
+
+
+def test_undo_unwinds_a_bracket():
+    print("\n[undoing a result takes back what it decided]")
+    app, d = fresh()
+    solo_field(app, 4, 8.0, -1.0)
+    f = app.act("admin", "add_format", {"kind": "single_elim", "name": "KO",
+        "config": {}, "entrant_ids": entrant_ids(app)})["format_id"]
+    app.act("admin", "start_format", {"id": f})
+    s = app.store
+    semi = [m for m in s.matches.values()
+            if m.format_id == f and m.meta.get("round") == 0][0]
+    app.act("referee", "report", {"match_id": semi.id, "games": [[11, 5], [11, 5]]})
+    feeds = semi.meta["feeds"]
+    advanced = getattr(s.matches[feeds[0]], "entrant_" + feeds[1])
+    check(advanced is not None, "the winner went through to the next round")
+    app.act("referee", "reopen_match", {"match_id": semi.id})
+    check(getattr(s.matches[feeds[0]], "entrant_" + feeds[1]) is None,
+          "undoing it takes that player back out of the next round")
+    check(s.matches[semi.id].status in ("pending", "live"),
+          "and the match can be played again")
+    app.act("referee", "report", {"match_id": semi.id, "games": [[5, 11], [5, 11]]})
+    check(getattr(s.matches[feeds[0]], "entrant_" + feeds[1]) not in (None, advanced),
+          "re-scoring it sends the other player through")
+    shutil.rmtree(d)
+
+
+def test_correcting_a_result_in_place():
+    print("\n[fixing a score without undoing it first]")
+    app, d = fresh()
+    solo_field(app, 4, 8.0, -1.0)
+    f = app.act("admin", "add_format", {"kind": "single_elim", "name": "KO",
+        "config": {}, "entrant_ids": entrant_ids(app)})["format_id"]
+    app.act("admin", "start_format", {"id": f})
+    s = app.store
+    semi = [m for m in s.matches.values()
+            if m.format_id == f and m.meta.get("round") == 0][0]
+    app.act("referee", "report", {"match_id": semi.id, "games": [[11, 5], [11, 5]]})
+    feeds = semi.meta["feeds"]
+    before = getattr(s.matches[feeds[0]], "entrant_" + feeds[1])
+    app.act("referee", "report", {"match_id": semi.id, "games": [[5, 11], [5, 11]]})
+    check(getattr(s.matches[feeds[0]], "entrant_" + feeds[1]) != before,
+          "entering it the right way round re-resolves the bracket")
+    check(s.matches[semi.id].games == [[5, 11], [5, 11]], "the corrected score is stored")
+    shutil.rmtree(d)
+
+
+def test_housekeeping():
+    print("\n[sitting out, removing a table, seating by hand]")
+    app, d = fresh()
+    solo_field(app, 12)
+    f = app.act("admin", "add_format", {"kind": "open_play", "name": "Open",
+        "config": {"mode": "singles"}})["format_id"]
+    app.act("admin", "start_format", {"id": f})
+    for e in entrant_ids(app):
+        app.act("admin", "join_queue", {"entrant_id": e, "format_id": f})
+    s = app.store
+    waiting = [q.entrant_id for q in s.queue][0]
+    app.act("admin", "update_player",
+            {"id": s.entrants[waiting].player_ids[0], "active": False})
+    check(not any(q.entrant_id == waiting for q in s.queue),
+          "sitting a waiting player out takes them out of the queue")
+    check(not [e for q in app.state("admin")["queues"]
+               for e in q["entries"] if e["blocked"]],
+          "no permanently blocked ghost rows are left in the queue")
+
+    mid = s.tables[1].match_id
+    app.act("admin", "remove_table", {"number": 1})
+    check(s.matches[mid].status != "live",
+          "removing a table does not strand its match as unscoreable")
+
+    cup = app.act("admin", "add_cup", {"name": "Cup A"})["cup_id"]
+    app.act("admin", "set_table", {"number": 2, "cup_id": cup})
+    pend = [m for m in s.matches.values() if m.status == "pending"]
+    if pend:
+        blocked = False
+        try:
+            app.act("admin", "assign", {"match_id": pend[0].id, "table": 2})
+        except Exception:
+            blocked = True
+        check(blocked or s.tables[2].match_id != pend[0].id,
+              "seating by hand respects another cup's reserved table")
+    shutil.rmtree(d)
+
+
+def test_table_split_and_share():
+    print("\n[splitting tables between cups, and sharing them again]")
+    app, d = fresh()
+    ca = app.act("admin", "add_cup", {"name": "A"})["cup_id"]
+    cb = app.act("admin", "add_cup", {"name": "B"})["cup_id"]
+    app.act("admin", "split_tables", {"assignments": {"1": ca, "2": cb}})
+    s = app.store
+    check(s.tables[1].cup_id == ca and s.tables[2].cup_id == cb,
+          "split assigns the tables it was given")
+    check(s.tables[3].cup_id is None, "a table left out of the split stays shared")
+    app.act("admin", "share_tables", {})
+    check(all(t.cup_id is None for t in s.tables.values()),
+          "sharing again clears every reservation")
+    shutil.rmtree(d)
+
+
 if __name__ == "__main__":
     test_open_play()
     test_scramble()
@@ -474,4 +736,13 @@ if __name__ == "__main__":
     test_swiss_cut_ko()
     test_swiss_respects_sitout()
     test_permissions()
+    test_fair_cup_share()
+    test_swiss_does_not_outrun_a_bigger_cup()
+    test_paced_swiss_keeps_the_field_level()
+    test_swiss_ko_drops_the_queue()
+    test_send_back_returns_players()
+    test_undo_unwinds_a_bracket()
+    test_correcting_a_result_in_place()
+    test_housekeeping()
+    test_table_split_and_share()
     print("\nall good\n")

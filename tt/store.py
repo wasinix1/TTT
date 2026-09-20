@@ -51,6 +51,7 @@ class Store:
         self.event: dict = {"name": "Table tennis evening", "note": ""}
         self.seq = 0
         self.version = 0             # bumped on every applied event, for polling
+        self._now = 0.0              # timestamp of the event being applied
 
     # ------------------------------------------------------------- log core
 
@@ -64,7 +65,7 @@ class Store:
             )
             self.conn.commit()
             self.seq = cur.lastrowid
-            self.apply(etype, payload, self.seq)
+            self.apply(etype, payload, self.seq, ts)
             self.version += 1
             return self.seq
 
@@ -72,10 +73,10 @@ class Store:
         with self.lock:
             self._replaying = True
             self.reset_state()
-            for seq, etype, payload in self.conn.execute(
-                "SELECT seq, type, payload FROM events ORDER BY seq"
+            for seq, etype, payload, ts in self.conn.execute(
+                "SELECT seq, type, payload, ts FROM events ORDER BY seq"
             ):
-                self.apply(etype, json.loads(payload), seq)
+                self.apply(etype, json.loads(payload), seq, ts)
                 self.seq = seq
             self._replaying = False
             self.version += 1
@@ -99,10 +100,11 @@ class Store:
 
     # ---------------------------------------------------------------- apply
 
-    def apply(self, etype: str, p: dict, seq: int):
+    def apply(self, etype: str, p: dict, seq: int, ts: float = 0.0):
         fn = getattr(self, "_ev_" + etype, None)
         if fn is None:
             raise ValueError(f"unknown event type {etype!r}")
+        self._now = ts or time.time()
         fn(p, seq)
 
     def _ev_event_meta(self, p, seq):
@@ -131,6 +133,11 @@ class Store:
             pl.strength = float(p["strength"])
         if "active" in p:
             pl.active = bool(p["active"])
+            if not pl.active:
+                # otherwise they sit in the queue as a permanently "blocked"
+                # row that can never be dispatched and never goes away
+                stuck = {e.id for e in self.entrants.values() if pl.id in e.player_ids}
+                self.queue = [q for q in self.queue if q.entrant_id not in stuck]
 
     def _ev_entrant_add(self, p, seq):
         self.entrants[p["id"]] = Entrant(
@@ -162,7 +169,16 @@ class Store:
         self.tables[n] = t
 
     def _ev_table_remove(self, p, seq):
-        self.tables.pop(int(p["number"]), None)
+        n = int(p["number"])
+        t = self.tables.pop(n, None)
+        # a live match on a table that no longer exists is unreachable: it
+        # shows on no table card and in no list, so nobody can ever score it
+        if t and t.match_id and t.match_id in self.matches:
+            m = self.matches[t.match_id]
+            if m.status == "live":
+                m.status = "pending"
+            m.table = None
+            m.started_ts = None
 
     def _ev_cup_add(self, p, seq):
         self.cups[p["id"]] = Cup(id=p["id"], name=p.get("name") or "Cup")
@@ -317,6 +333,8 @@ class Store:
         m.table = n
         m.status = "live"
         m.queued_seq = seq
+        m.started_ts = self._now
+        m.done_ts = None
         if n in self.tables:
             self.tables[n].match_id = m.id
 
@@ -336,7 +354,13 @@ class Store:
             return
         m.games = [list(g) for g in p["games"]]
         m.winner = p.get("winner") or decide_winner(m.games, m.scoring)
+        was_done = m.status == "done"
+        prior = m.winner if was_done else None
         m.status = "done"
+        if not was_done:
+            m.done_ts = self._now
+        if was_done and prior and prior != m.winner:
+            self._unwind_bracket(m)
         if m.table in self.tables and self.tables[m.table].match_id == m.id:
             self.tables[m.table].match_id = None
         m.table = None
@@ -348,12 +372,57 @@ class Store:
         m = self.matches.get(p["match_id"])
         if not m:
             return
+        self._unwind_bracket(m)
         if m.table in self.tables and self.tables[m.table].match_id == m.id:
             self.tables[m.table].match_id = None
         m.table = None
         m.status = "void"
         m.games = []
         m.winner = None
+        m.started_ts = m.done_ts = None
+
+    def _ev_match_reopen(self, p, seq):
+        """Undo a result: the match goes back to unplayed and anything it
+        decided downstream is taken back with it. Voiding used to leave the
+        player it had advanced sitting in the next round, with the match
+        itself void and therefore impossible to replay."""
+        m = self.matches.get(p["match_id"])
+        if not m or m.status == "void":
+            return
+        self._unwind_bracket(m)
+        if m.table in self.tables and self.tables[m.table].match_id == m.id:
+            self.tables[m.table].match_id = None
+        m.table = None
+        m.status = "pending"
+        m.games = []
+        m.winner = None
+        m.started_ts = m.done_ts = None
+
+    def _unwind_bracket(self, m, _seen=None):
+        """Take back whatever this match's result did to the rounds after it:
+        empty the slot it fed, and reopen the match downstream if it has
+        already been played, because it was played against the wrong person."""
+        _seen = _seen if _seen is not None else set()
+        if m.id in _seen:
+            return
+        _seen.add(m.id)
+        for key in ("feeds", "loser_feeds"):
+            wiring = m.meta.get(key)
+            if not wiring:
+                continue
+            nxt = self.matches.get(wiring[0])
+            if not nxt:
+                continue
+            self._unwind_bracket(nxt, _seen)
+            self._fill_slot(nxt, wiring[1], None)
+            if nxt.status in ("done", "live"):
+                if nxt.table in self.tables and self.tables[nxt.table].match_id == nxt.id:
+                    self.tables[nxt.table].match_id = None
+                nxt.table = None
+                nxt.status = "pending"
+                nxt.games = []
+                nxt.winner = None
+                nxt.started_ts = nxt.done_ts = None
 
     # ------------------------------------------------------------- helpers
 
@@ -398,6 +467,43 @@ class Store:
         shared pool plus any table reserved for that same cup."""
         return [n for n, t in sorted(self.tables.items())
                 if self.cup_of_table(t) in (None, cup_id)]
+
+    def cup_key(self, f):
+        """The bucket a format competes in for tables. Formats with no cup
+        share one bucket, which keeps single-cup evenings behaving exactly
+        as they did before any of this existed."""
+        return self.cup_of_format(f)
+
+    def tables_held(self, cup_id):
+        """Tables this cup is playing on right now."""
+        n = 0
+        for t in self.tables.values():
+            m = self.matches.get(t.match_id) if t.match_id else None
+            if m and self.cup_of_format(self.formats.get(m.format_id)) == cup_id:
+                n += 1
+        return n
+
+    def median_match_seconds(self, cup_id=None, sample=15, default=None):
+        """How long a match actually takes, measured rather than guessed.
+
+        Used to turn a queue position into a time. Falls back to a plain
+        guess early on, when nothing has finished yet."""
+        durs = []
+        for m in sorted(self.matches.values(), key=lambda m: -m.seq):
+            if m.status != "done":
+                continue
+            if cup_id is not None and \
+                    self.cup_of_format(self.formats.get(m.format_id)) != cup_id:
+                continue
+            d = m.duration()
+            if d and 60 <= d <= 3600:        # ignore backfilled and abandoned
+                durs.append(d)
+            if len(durs) >= sample:
+                break
+        if not durs:
+            return default if default is not None else 12 * 60.0
+        durs.sort()
+        return durs[len(durs) // 2]
 
     def busy_players(self) -> set[str]:
         out = set()

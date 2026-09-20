@@ -252,6 +252,27 @@ class App:
     def op_remove_table(self, p):
         self.store.append("table_remove", p)
 
+    def op_share_tables(self, p):
+        """Every table back into the shared pool.
+
+        Shared and split are not a stored setting — they are read off the
+        tables themselves. No table tagged means shared, any table tagged
+        means split. One source of truth, so the mode can never disagree
+        with what the tables actually say."""
+        for n in sorted(self.store.tables):
+            self.store.append("table_set", {"number": n, "cup_id": ""})
+
+    def op_split_tables(self, p):
+        """Reserve tables for cups in one go: {"assignments": {"1": "C1"}}.
+        A table left out of the mapping goes back to shared."""
+        s = self.store
+        given = {int(k): (v or "") for k, v in (p.get("assignments") or {}).items()}
+        for cid in given.values():
+            if cid and cid not in s.cups:
+                raise ValueError("unknown cup")
+        for n in sorted(s.tables):
+            s.append("table_set", {"number": n, "cup_id": given.get(n, "")})
+
     # formats
     def op_add_format(self, p):
         s = self.store
@@ -322,12 +343,19 @@ class App:
             (m.meta.get("queued") or []) + [x for x in (m.entrant_a, m.entrant_b) if x]))
         s.append("match_result", {"match_id": m.id, "games": games,
                                   "winner": winner})
-        if not p.get("requeue", True):
-            return
-        # Hand players back to whichever queue they came out of. That covers
-        # both open play itself and someone who was pulled out of the queue
-        # into a scheduled draw match: when the draw is done with them for
-        # now, they rejoin the queue rather than standing around.
+        if p.get("requeue", True):
+            self._requeue(m, involved)
+
+    def _requeue(self, m, involved=None):
+        """Hand players back to whichever queue they came out of. That covers
+        both open play itself and someone who was pulled out of the queue
+        into a scheduled draw match: when the draw is done with them for now,
+        they rejoin the queue rather than standing around."""
+        s = self.store
+        if involved is None:
+            involved = list(dict.fromkeys(
+                (m.meta.get("queued") or [])
+                + [x for x in (m.entrant_a, m.entrant_b) if x]))
         for eid in involved:
             if eid in s.opted_out:
                 continue
@@ -340,11 +368,42 @@ class App:
         self.store.append("match_void", {"match_id": p["match_id"]})
 
     def op_unassign(self, p):
-        self.store.append("match_unassign", {"match_id": p["match_id"]})
+        """Send a match back off its table.
+
+        For a scheduled fixture that just means unseating it — it goes back
+        in the pile and gets dispatched again. For anything that pairs on
+        demand there is no pile: the match was invented at the moment it was
+        seated, so leaving it pending stranded it *and* both players, who had
+        already been taken out of the queue. Those go back where they came
+        from instead."""
+        s = self.store
+        m = s.matches[p["match_id"]]
+        f = s.formats.get(m.format_id)
+        s.append("match_unassign", {"match_id": m.id})
+        if f and not f.can_redispatch_pending():
+            s.append("match_void", {"match_id": m.id})
+            self._requeue(m)
+
+    def op_reopen_match(self, p):
+        """Undo a result. The match becomes unplayed again and anything it
+        decided in later rounds is taken back with it."""
+        self.store.append("match_reopen", {"match_id": p["match_id"]})
 
     def op_assign(self, p):
-        self.store.append("match_assign", {"match_id": p["match_id"],
-                                           "table": int(p["table"])})
+        s = self.store
+        m = s.matches[p["match_id"]]
+        n = int(p["table"])
+        t = s.tables.get(n)
+        if not t:
+            raise ValueError(f"there is no table {n}")
+        if t.paused:
+            raise ValueError(f"table {n} is paused")
+        if t.match_id and t.match_id != m.id:
+            raise ValueError(f"table {n} is already playing")
+        tcup = s.cup_of_table(t)
+        if tcup is not None and tcup != s.cup_of_format(s.formats.get(m.format_id)):
+            raise ValueError(f"table {n} is reserved for {s.cups[tcup].name}")
+        s.append("match_assign", {"match_id": m.id, "table": n})
 
     def op_manual_result(self, p):
         """Record a result for a match that never went through the queue or
@@ -400,12 +459,12 @@ class App:
 OP_LEVEL = {
     "add_player": 2, "update_player": 2, "add_team": 2, "update_entrant": 2,
     "reset_players": 2,
-    "set_table": 2, "remove_table": 2,
+    "set_table": 2, "remove_table": 2, "share_tables": 2, "split_tables": 2,
     "add_format": 2, "update_format": 2, "start_format": 2, "remove_format": 2,
     "reset_format": 2, "swiss_cut_ko": 2, "add_entrant": 2,
     "add_cup": 2, "update_cup": 2, "remove_cup": 2,
     "join_queue": 1, "leave_queue": 1,
-    "report": 1, "void_match": 1, "unassign": 2, "assign": 2,
+    "report": 1, "void_match": 1, "reopen_match": 1, "unassign": 2, "assign": 2,
     "manual_match": 2, "manual_result": 1, "event_meta": 2, "rewind": 2, "reset_event": 2,
 }
 

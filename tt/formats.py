@@ -6,13 +6,38 @@ only in how they answer it, which is why they can share a table pool.
 
 Replay safety: `on_result` may only mutate existing matches (filling bracket
 slots). Anything that *creates* a match happens in `start` / `tick` /
-`next_match`, which run at request time and emit events into the log.
+`commit`, which run at request time and emit events into the log.
+
+Deciding and committing are deliberately separate. `propose` works out what
+this format would put on a table and changes nothing; `Proposal.commit` is
+what actually writes it to the log. That split is what lets the dispatcher
+ask every cup what it wants *before* choosing between them, instead of
+handing the table to the first format that answered — which is how one cup
+used to take every table all evening.
 """
 
 import math
 from collections import defaultdict
 
 from .models import Scoring
+
+
+class Proposal:
+    """A match a format is offering to put on a table. Nothing is written
+    until `commit`, so proposals can be compared, ranked and thrown away."""
+
+    __slots__ = ("format_id", "match_id", "create", "entrants")
+
+    def __init__(self, format_id, match_id=None, create=None, entrants=()):
+        self.format_id = format_id
+        self.match_id = match_id          # an already-scheduled fixture
+        self.create = create              # or kwargs for a new pairing
+        self.entrants = tuple(entrants)   # who it takes out of the queue
+
+    def commit(self, store) -> str:
+        if self.match_id:
+            return self.match_id
+        return store.create_match(**self.create)
 
 
 # ----------------------------------------------------------------- matching
@@ -122,12 +147,33 @@ class Format:
         """Phase transitions and round generation. Runtime only."""
         return
 
-    def next_match(self, store, busy, force=False):
-        """Return a match id ready to be seated, or None.
+    def propose(self, store, busy, force=False):
+        """Return a Proposal for the match this format wants to seat, or None.
 
-        `force` means a table is free and nothing else could fill it, so pair
-        the best available option regardless of the strength tolerance."""
+        Must not change anything: the dispatcher asks several formats and
+        uses at most one answer. `force` means a table is free and nothing
+        else could fill it, so offer the best available pairing regardless
+        of the strength tolerance."""
         return None
+
+    def remaining_work(self, store):
+        """Matches this format still has to play, or None if it is open-ended.
+
+        Drives the share of tables it gets when cups compete: the cup with
+        the most left to do is furthest from finishing, so it needs them
+        most. An open-ended format returns None and only fills gaps."""
+        return None
+
+    def can_redispatch_pending(self) -> bool:
+        """Whether a match of this format, left pending, will find its way
+        onto a table again. False for anything that pairs on demand: those
+        matches are created at the moment they are seated, so one that gets
+        unseated is an orphan nothing will ever pick up."""
+        return True
+
+    def _scheduled_remaining(self, store):
+        return sum(1 for m in store.matches.values()
+                   if m.format_id == self.id and m.status in ("pending", "live"))
 
     def on_result(self, store, match):
         return
@@ -167,7 +213,9 @@ class Format:
         if not cands:
             return None
         cands.sort(key=order_key or (lambda m: (m.meta.get("round", 0), m.seq)))
-        return cands[0].id
+        m = cands[0]
+        return Proposal(self.id, match_id=m.id,
+                        entrants=[e for e in (m.entrant_a, m.entrant_b) if e])
 
 
 # ------------------------------------------------------------------ helpers
@@ -346,7 +394,10 @@ class OpenPlay(Format):
     def min_entries(self):
         return 4 if self.mode() == "scramble" else 2
 
-    def next_match(self, store, busy, force=False):
+    def can_redispatch_pending(self):
+        return False          # open play pairs at the moment of seating
+
+    def propose(self, store, busy, force=False):
         entries = self._entries(store, busy)
         if len(entries) < self.min_entries():
             return None
@@ -380,11 +431,11 @@ class OpenPlay(Format):
         if not found:
             return None
         a, b = found
-        return store.create_match(
+        return Proposal(self.id, create=dict(
             format_id=self.id, entrant_a=a.entrant_id, entrant_b=b.entrant_id,
             label="Open play", meta={"phase": "open"},
             scoring=self.scoring().to_dict(),
-        )
+        ), entrants=[a.entrant_id, b.entrant_id])
 
     # -- scramble doubles: four solo entrants, partners assigned on the spot
     def _scramble(self, store, entries, force=False):
@@ -437,14 +488,15 @@ class OpenPlay(Format):
         side_b = [store.entrants[q.entrant_id].player_ids[0] for q in pb]
         names_a = " / ".join(store.entrant_name(q.entrant_id) for q in pa)
         names_b = " / ".join(store.entrant_name(q.entrant_id) for q in pb)
-        return store.create_match(
+        drawn = [q.entrant_id for q in pa + pb]
+        return Proposal(self.id, create=dict(
             format_id=self.id, side_a=side_a, side_b=side_b,
             label="Scramble doubles",
             meta={"phase": "open", "scramble": True,
-                  "queued": [q.entrant_id for q in pa + pb],
+                  "queued": drawn,
                   "name_a": names_a, "name_b": names_b},
             scoring=self.scoring().to_dict(),
-        )
+        ), entrants=drawn)
 
     def standings(self, store):
         rec = _record(store, self.id)
@@ -512,10 +564,20 @@ class GroupStage(Format):
         self.phase = "ko"
         store.append("format_update", {"id": self.id, "phase": "ko"})
 
-    def next_match(self, store, busy, force=False):
+    def propose(self, store, busy, force=False):
         return self._pending(store, busy, order_key=lambda m: (
             0 if m.meta.get("phase") == "groups" else 1,
             m.meta.get("round", 0), m.meta.get("group", ""), m.seq))
+
+    def remaining_work(self, store):
+        left = self._scheduled_remaining(store)
+        if self.phase == "groups" and self.config.get("then_ko"):
+            # the bracket does not exist yet, but it is still work this cup
+            # has to get through, and the table share has to account for it
+            adv = max(1, int(self.config.get("advance_per_group", 2)))
+            n = adv * max(1, len(self._group_names(store)))
+            left += max(0, n - 1) + (1 if self.config.get("third_place") else 0)
+        return left
 
     def on_result(self, store, m):
         if m.meta.get("phase") == "ko":
@@ -548,8 +610,11 @@ class SingleElim(Format):
         build_bracket(store, self.id, ids, self.scoring(),
                       third_place=bool(self.config.get("third_place")))
 
-    def next_match(self, store, busy, force=False):
+    def propose(self, store, busy, force=False):
         return self._pending(store, busy)
+
+    def remaining_work(self, store):
+        return self._scheduled_remaining(store)
 
     def on_result(self, store, m):
         ko_on_result(store, m)
@@ -565,7 +630,29 @@ class Swiss(Format):
     label = "Swiss"
 
     def uses_queue(self):
-        return bool(self.config.get("continuous"))
+        # once the bracket is up the queue is over: leaving it open meant
+        # every knockout match that finished put both players back into a
+        # queue nothing would ever dispatch them from again
+        return bool(self.config.get("continuous")) and self.phase != "ko"
+
+    def paced(self):
+        """Continuous pairing, but nobody gets ahead: an entrant is only
+        paired against someone who has played the same number of matches,
+        and stops at the round budget.
+
+        This is the answer to the round barrier. Strict rounds make a cup's
+        demand bursty — it wants every table at once, then none while the
+        last long match finishes — and whoever it shares tables with soaks
+        up the idle capacity and runs away to their own knockout. Pairing on
+        demand within a games-played tier keeps the structure without ever
+        making a table wait."""
+        return bool(self.config.get("continuous")) and \
+            bool(self.config.get("paced", True)) and \
+            int(self.config.get("rounds", 0) or 0) > 0
+
+    def _played(self, store):
+        rec = _record(store, self.id)
+        return {e: rec.get(e, {"played": 0})["played"] for e in self.entrant_ids}
 
     def start(self, store):
         self.status = "running"
@@ -641,6 +728,8 @@ class Swiss(Format):
         if self.status != "running" or self.phase == "ko":
             return
         if self.config.get("continuous"):
+            if self._budget_spent(store) and self.config.get("then_ko"):
+                self._start_ko(store)
             return
         total = int(self.config.get("rounds", 5))
         cur = self._rounds_done(store)
@@ -660,6 +749,19 @@ class Swiss(Format):
         if not live:
             self._generate_round(store, cur)
 
+    def _budget_spent(self, store):
+        """Paced Swiss is over when everyone has had their rounds and no
+        match is still out on a table."""
+        budget = self._round_budget()
+        if not budget:
+            return False
+        if any(m.format_id == self.id and m.status in ("pending", "live")
+               for m in store.matches.values()):
+            return False
+        played = self._played(store)
+        field = [e for e in self.entrant_ids if self._eligible(store, e)]
+        return bool(field) and all(played.get(e, 0) >= budget for e in field)
+
     def _start_ko(self, store):
         """Cross into the knockout stage: top N by standings, seeded bracket.
         Shared by the normal end-of-rounds transition and the manual cut.
@@ -670,16 +772,21 @@ class Swiss(Format):
         that already."""
         if self.phase == "ko":
             return
-        stray = [m for m in store.matches.values()
-                 if m.format_id == self.id and m.status == "pending"]
-        for m in stray:
-            store.append("match_void", {"match_id": m.id})
         blocks = self.standings(store)
         rows = blocks[0]["rows"] if blocks else []
         adv = max(2, int(self.config.get("advance", 4)))
         seeded = [r["entrant_id"] for r in rows[:adv]]
         if len(seeded) < 2:
+            # bail out before scrapping anything: voiding first and then
+            # returning left the format mid-Swiss with its fixtures gone,
+            # happily generating replacements for the rest of the evening
             return
+        stray = [m for m in store.matches.values()
+                 if m.format_id == self.id and m.status == "pending"]
+        for m in stray:
+            store.append("match_void", {"match_id": m.id})
+        for q in [q.entrant_id for q in store.queue if q.format_id == self.id]:
+            store.append("queue_leave", {"entrant_id": q, "opt_out": False})
         ko_sc = Scoring.from_dict(self.config.get("ko_scoring") or self.config.get("scoring"))
         build_bracket(store, self.id, seeded, ko_sc,
                       third_place=bool(self.config.get("third_place")))
@@ -694,12 +801,21 @@ class Swiss(Format):
             return
         self._start_ko(store)
 
-    def next_match(self, store, busy, force=False):
+    def can_redispatch_pending(self):
+        # while it is pairing on demand, a pending match is one nothing will
+        # pick up again; once the bracket is up, fixtures are real again
+        return self.phase == "ko" or not self.config.get("continuous")
+
+    def propose(self, store, busy, force=False):
         if self.phase == "ko" or not self.config.get("continuous"):
             return self._pending(store, busy)
         entries = [q for q in store.queue
                    if q.format_id == self.id
                    and store.entrant_available(q.entrant_id, busy)]
+        played, budget = self._played(store), self._round_budget()
+        if budget:
+            entries = [q for q in entries
+                       if played.get(q.entrant_id, 0) < budget]
         entries.sort(key=lambda q: (-q.passes, q.joined_seq))
         if len(entries) < 2:
             return None
@@ -707,22 +823,50 @@ class Swiss(Format):
         meets = store.meetings()
         gap = float(self.config.get("base_gap", 1.0))
         widen = max(1, int(self.config.get("widen_every", 3)))
+        tiered = self.paced()
+
+        def penalty(a, b):
+            rep = 1.2 * meets.get(frozenset((a.entrant_id, b.entrant_id)), 0)
+            if not tiered:
+                return rep
+            behind = abs(played.get(a.entrant_id, 0) - played.get(b.entrant_id, 0))
+            # same number of games played, or close enough that waiting for a
+            # better tier would cost a table more than the mismatch is worth
+            allowed = 99 if force else a.passes // widen
+            return rep if behind <= allowed else 1e6
 
         found = anchor_pair(
             entries,
             dist=lambda a, b: abs(score.get(a.entrant_id, 0) - score.get(b.entrant_id, 0)),
             tol=lambda a: 99.0 if force else min(gap + a.passes // widen, 6.0),
-            penalty=lambda a, b: 1.2 * meets.get(
-                frozenset((a.entrant_id, b.entrant_id)), 0),
+            penalty=penalty,
         )
         if not found:
             return None
         a, b = found
-        return store.create_match(
+        return Proposal(self.id, create=dict(
             format_id=self.id, entrant_a=a.entrant_id, entrant_b=b.entrant_id,
             label="Swiss", meta={"phase": "swiss", "round": self._rounds_done(store)},
             scoring=self.scoring().to_dict(),
-        )
+        ), entrants=[a.entrant_id, b.entrant_id])
+
+    def _round_budget(self):
+        if not self.config.get("continuous"):
+            return 0
+        return int(self.config.get("rounds", 0) or 0) if self.paced() else 0
+
+    def remaining_work(self, store):
+        if self.phase == "ko":
+            return self._scheduled_remaining(store)
+        field = [e for e in self.entrant_ids if store.entrants.get(e)]
+        if self.config.get("continuous"):
+            budget = self._round_budget()
+            if not budget:
+                return None                 # free-running: never finishes
+            played = self._played(store)
+            return sum(max(0, budget - played.get(e, 0)) for e in field) // 2
+        total = int(self.config.get("rounds", 5)) * (len(field) // 2)
+        return max(0, total - len(store.done_matches(self.id)))
 
     def standings(self, store):
         rec = _record(store, self.id)
@@ -750,7 +894,7 @@ class Swiss(Format):
         if self.phase == "ko":
             return super().is_complete(store)
         if self.config.get("continuous"):
-            return False
+            return self._budget_spent(store)
         return super().is_complete(store) and \
             self._rounds_done(store) >= int(self.config.get("rounds", 5))
 
