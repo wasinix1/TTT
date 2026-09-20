@@ -112,9 +112,13 @@ function render() {
   const sel = focus && focus.selectionStart != null ? focus.selectionStart : null;
 
   $('ev-name').textContent = S.event.name || 'Table tennis';
+  const base = S.role === 'admin' ? 'Admin' : S.role === 'referee' ? 'Referee' : 'Live';
   $('role-tag').textContent =
-    S.role === 'admin' ? 'Admin' : S.role === 'referee' ? 'Referee' : 'Live';
+    (S.phase && S.phase !== 'live' && S.role !== 'public')
+      ? base + ' · ' + S.phase : base;
+  const waiting = (S.registrations || []).filter(r => r.status === 'pending').length;
   $('setup-btn').hidden = !isAdmin();
+  $('setup-btn').textContent = waiting ? `Setup · ${waiting}` : 'Setup';
 
   renderCupTabs();
   renderTables();
@@ -499,17 +503,383 @@ function renderRecent() {
 
 /* ---------------------------------------------------------------- sheet */
 
-const TABS = [['people', 'People'], ['tables', 'Tables'], ['cups', 'Cups'],
-              ['formats', 'Formats'], ['queue', 'Queue'], ['log', 'Log'],
-              ['access', 'Access']];
+const TABS = [['event', 'Event'], ['entries', 'Entries'], ['people', 'People'],
+              ['tables', 'Tables'], ['cups', 'Cups'], ['formats', 'Formats'],
+              ['queue', 'Queue'], ['log', 'Log'], ['access', 'Access']];
 
 function renderSheet() {
+  if (wiz) return renderWizard();
   $('tabs').innerHTML = TABS.map(([k, l]) =>
     `<button class="${sheetTab === k ? 'on' : ''}" data-tab="${k}">${l}</button>`).join('');
   $('sheet-body').innerHTML = ({
-    people: tabPeople, tables: tabTables, cups: tabCups, formats: tabFormats,
-    queue: tabQueue, log: tabLog, access: tabAccess,
+    event: tabEvent, entries: tabEntries, people: tabPeople, tables: tabTables,
+    cups: tabCups, formats: tabFormats, queue: tabQueue, log: tabLog,
+    access: tabAccess,
   }[sheetTab])();
+}
+
+/* ------------------------------------------------------- new event wizard
+
+   The wizard is the front door to the same event_new the Setup tabs use —
+   it writes ordinary events, not a parallel configuration. It opens filled
+   in from the event that is still on screen, so next month is a name and a
+   date rather than a rebuild. */
+
+let wiz = null;              // null = closed
+const WIZ_STEPS = ['Event', 'Cups', 'Tables', 'Review'];
+
+const KIND_NAME = {
+  open_play: 'Open play', groups: 'Groups', single_elim: 'Knockout', swiss: 'Swiss',
+};
+
+function openWizard() {
+  // carry forward: last event's cups, their formats and the table layout
+  const cups = S.cups.map((c, i) => {
+    const f = S.formats.find(x => x.id === c.format_id)
+           || S.formats.find(x => x.cup_id === c.id);
+    seedFormat('w' + i + '_', f ? f.kind : '', f ? f.config : null);
+    return {
+      name: c.name, blurb: c.blurb || '',
+      entry: c.entry || 'single',
+      registration: c.registration || 'closed',
+      kind: f ? f.kind : 'swiss',
+    };
+  });
+  if (!cups.length) {
+    seedFormat('w0_', 'swiss', null);
+    cups.push({ name: '', blurb: '', entry: 'single', registration: 'open', kind: 'swiss' });
+  }
+  wiz = {
+    step: 0,
+    name: '', venue: S.event.venue || '', blurb: S.event.blurb || '', starts_at: '',
+    cups,
+    tables: S.tables.length
+      ? S.tables.map(t => ({ name: t.name, cup: S.cups.findIndex(c => c.id === t.cup_id) }))
+      : [1, 2, 3].map(n => ({ name: 'Table ' + n, cup: -1 })),
+  };
+  sheetOpen = true;
+  $('sheet').hidden = false;
+  renderSheet();
+}
+
+function wizCarried() {
+  return S.cups.length || S.formats.length || S.tables.length;
+}
+
+function renderWizard() {
+  $('tabs').innerHTML = WIZ_STEPS.map((l, i) =>
+    `<button class="${wiz.step === i ? 'on' : ''}" data-wstep="${i}">${i + 1}. ${l}</button>`).join('');
+  $('sheet-body').innerHTML =
+    [wizEvent, wizCups, wizTables, wizReview][wiz.step]() + wizNav();
+}
+
+function wizNav() {
+  const last = wiz.step === WIZ_STEPS.length - 1;
+  return `<div class="hr"></div><div class="inline" style="align-items:center">
+    <button class="ghost" data-act="wiz-cancel">Cancel</button>
+    <span style="flex:1"></span>
+    ${wiz.step ? `<button class="ghost" data-act="wiz-back">Back</button>` : ''}
+    ${last ? `<button class="danger" data-act="wiz-create">Create the event</button>`
+           : `<button class="primary" data-act="wiz-next">Next</button>`}
+  </div>`;
+}
+
+function wizEvent() {
+  return `<div class="form">
+    <fieldset><legend>The event</legend>
+      <div class="inline">
+        <div class="field"><label for="w-name">Name</label>
+          <input id="w-name" value="${esc(wiz.name)}" data-w="name" placeholder="October open"></div>
+        <div class="field" style="max-width:240px"><label for="w-start">Starts at</label>
+          <input id="w-start" type="datetime-local" value="${esc(wiz.starts_at)}" data-w="starts_at"></div>
+      </div>
+      <div class="field"><label for="w-venue">Venue</label>
+        <input id="w-venue" value="${esc(wiz.venue)}" data-w="venue" placeholder="Turnhalle, Hauptstraße 3"></div>
+      <div class="field"><label for="w-blurb">Blurb</label>
+        <textarea id="w-blurb" rows="3" data-w="blurb" placeholder="Open to everyone, bats provided, first match at seven.">${esc(wiz.blurb)}</textarea></div>
+      <p class="sub">Name and blurb are what the landing page shows. Until the start time the plain URL is that page; at the start time it becomes the console on its own.</p>
+    </fieldset>
+    ${wizCarried() ? `<p class="sub">Cups, formats and tables below are carried over from ${esc(S.event.name || 'the last event')} — change what moved, leave the rest.</p>` : ''}
+  </div>`;
+}
+
+function wizCups() {
+  return `<div class="form">
+    <p class="sub">A cup is a sub-tournament and the unit of entry: a registration names one cup, and whoever you confirm at the door lands in that cup's format. One cup is the normal case; two is how you run singles and doubles side by side.</p>
+    ${wiz.cups.map((c, i) => {
+      const pfx = 'w' + i + '_';
+      return `<fieldset><legend>Cup ${i + 1}</legend>
+      <div class="inline">
+        <div class="field"><label for="wc-name-${i}">Name</label>
+          <input id="wc-name-${i}" value="${esc(c.name)}" data-wc="${i}|name" placeholder="Singles cup"></div>
+        <div class="field" style="max-width:150px"><label for="wc-entry-${i}">Entry</label>
+          <select id="wc-entry-${i}" data-wc="${i}|entry">
+            <option value="single" ${c.entry === 'single' ? 'selected' : ''}>On your own</option>
+            <option value="pair" ${c.entry === 'pair' ? 'selected' : ''}>As a pair</option>
+          </select></div>
+        <div class="field" style="max-width:170px"><label for="wc-reg-${i}">Pre-registration</label>
+          <select id="wc-reg-${i}" data-wc="${i}|registration">
+            <option value="open" ${c.registration === 'open' ? 'selected' : ''}>Open — taking entries</option>
+            <option value="closed" ${c.registration === 'closed' ? 'selected' : ''}>Closed</option>
+          </select></div>
+        ${wiz.cups.length > 1 ? `<button class="ghost tiny" data-act="wiz-rm-cup" data-i="${i}">Remove</button>` : ''}
+      </div>
+      <div class="field"><label for="wc-blurb-${i}">One line for the landing page</label>
+        <input id="wc-blurb-${i}" value="${esc(c.blurb)}" data-wc="${i}|blurb" placeholder="Five rounds, then a cut to the last eight."></div>
+      <div class="inline">
+        <div class="field" style="max-width:200px"><label for="wc-kind-${i}">Format</label>
+          <select id="wc-kind-${i}" data-wc="${i}|kind">
+            <option value="" ${!c.kind ? 'selected' : ''}>Decide later</option>
+            ${Object.entries(KIND_NAME).map(([k, l]) =>
+              `<option value="${k}" ${c.kind === k ? 'selected' : ''}>${l}</option>`).join('')}
+          </select></div>
+        ${c.kind ? `<div class="field" style="max-width:110px"><label for="${pfx}f-bo">Best of</label>
+          <select id="${pfx}f-bo" data-f="${pfx}f_bo">${[1, 3, 5, 7].map(n =>
+            `<option value="${n}" ${+(form[pfx + 'f_bo'] ?? 3) === n ? 'selected' : ''}>${n}</option>`).join('')}</select></div>
+        <div class="field" style="max-width:110px"><label for="${pfx}f-pts">Points to</label>
+          <select id="${pfx}f-pts" data-f="${pfx}f_pts">${[11, 21].map(n =>
+            `<option value="${n}" ${+(form[pfx + 'f_pts'] ?? 11) === n ? 'selected' : ''}>${n}</option>`).join('')}</select></div>` : ''}
+      </div>
+      ${c.kind ? (fieldsFor(pfx)[c.kind] || (() => ''))() : ''}
+      </fieldset>`;
+    }).join('')}
+    <div><button class="ghost" data-act="wiz-add-cup">Add another cup</button></div>
+    <p class="sub">Nobody is entered yet — a format starts empty and fills up as you confirm people at the door.</p>
+  </div>`;
+}
+
+function wizTables() {
+  return `<div class="form">
+    <p class="sub">A table with no cup is shared by everything running. Give it a cup and it is reserved for that cup — that is how you split the hall between two draws going at once.</p>
+    ${wiz.tables.map((t, i) => `<div class="inline">
+      <div class="field" style="max-width:70px"><label>Number</label><input value="${i + 1}" disabled></div>
+      <div class="field"><label for="wt-name-${i}">Name</label>
+        <input id="wt-name-${i}" value="${esc(t.name)}" data-wt="${i}|name"></div>
+      <div class="field" style="max-width:180px"><label for="wt-cup-${i}">Cup</label>
+        <select id="wt-cup-${i}" data-wt="${i}|cup">
+          <option value="-1" ${t.cup < 0 ? 'selected' : ''}>Shared</option>
+          ${wiz.cups.map((c, ci) =>
+            `<option value="${ci}" ${t.cup === ci ? 'selected' : ''}>${esc(c.name || 'Cup ' + (ci + 1))}</option>`).join('')}
+        </select></div>
+      <button class="ghost tiny" data-act="wiz-rm-table" data-i="${i}">Remove</button>
+    </div>`).join('') || '<p class="blank">No tables. Add at least one or nothing can be dispatched.</p>'}
+    <div><button class="ghost" data-act="wiz-add-table">Add a table</button></div>
+  </div>`;
+}
+
+function wizReview() {
+  const gone = [
+    S.players.length ? S.players.length + ' players' : '',
+    S.entrants.length ? S.entrants.length + ' teams and entries' : '',
+    S.formats.length ? S.formats.length + ' formats and all their matches' : '',
+    (S.registrations || []).filter(r => r.status === 'pending').length
+      ? (S.registrations || []).filter(r => r.status === 'pending').length + ' entries nobody has confirmed yet'
+      : '',
+  ].filter(Boolean);
+  return `<div class="form">
+    <fieldset><legend>About to create</legend>
+      <div class="inline" style="align-items:baseline">
+        <h2 style="font-size:19px;margin:0">${esc(wiz.name || 'Untitled event')}</h2>
+        <span class="sub" style="margin:0">${esc(wiz.starts_at ? new Date(wiz.starts_at).toLocaleString() : 'no start time — the console shows immediately')}</span>
+      </div>
+      ${wiz.venue ? `<p class="sub">${esc(wiz.venue)}</p>` : ''}
+      ${wiz.cups.map(c => `<div class="inline" style="align-items:center">
+        <span class="chip">${esc(KIND_NAME[c.kind] || 'no format yet')}</span>
+        <span style="flex:1">${esc(c.name || 'Unnamed cup')}
+          <span class="sub" style="margin:0">· ${c.entry === 'pair' ? 'pairs' : 'singles'}</span></span>
+        <span class="chip">${c.registration === 'open' ? 'taking entries' : 'registration closed'}</span>
+      </div>`).join('')}
+      <p class="sub">${wiz.tables.length} table${wiz.tables.length === 1 ? '' : 's'}${
+        wiz.tables.some(t => t.cup >= 0) ? ', some reserved for a cup' : ', all shared'}.</p>
+    </fieldset>
+    <fieldset><legend>And clearing</legend>
+      ${gone.length
+        ? `<p class="sub">${esc(gone.join(', '))} — gone from the live state. Tables and your access links stay, and nothing is deleted from the log, so Setup → Log still rewinds back across this.</p>`
+        : `<p class="sub">Nothing to clear — the event is already empty.</p>`}
+    </fieldset>
+  </div>`;
+}
+
+const PHASE_LABEL = {
+  announced: 'Announced — the site shows the event, registration is shut',
+  registration: 'Registration open — the site is taking entries',
+  doors: 'Doors — the console is up, confirming who showed',
+  live: 'Live — the console is the public page',
+  done: 'Done — the site shows results',
+};
+
+function tabEvent() {
+  const ev = S.event || {};
+  const pinned = !!ev.phase_pin;
+  return `<div class="form">
+    <fieldset><legend>What the site says</legend>
+      <div class="inline">
+        <div class="field"><label for="ev-title">Event name</label>
+          <input id="ev-title" value="${esc(ev.name || '')}" data-f="evname"></div>
+        <div class="field" style="max-width:220px"><label for="ev-venue">Venue</label>
+          <input id="ev-venue" value="${esc(ev.venue || '')}" data-f="evvenue" placeholder="Turnhalle, Hauptstraße 3"></div>
+      </div>
+      <div class="field"><label for="ev-blurb">Blurb</label>
+        <textarea id="ev-blurb" data-f="evblurb" rows="3" placeholder="Open to everyone, bats provided, first match at seven.">${esc(ev.blurb || '')}</textarea></div>
+      <div class="inline">
+        <div class="field" style="max-width:240px"><label for="ev-start">Starts at</label>
+          <input id="ev-start" type="datetime-local" value="${esc(ev.starts_at || '')}" data-f="evstart"></div>
+        <button class="primary" data-act="save-event">Save</button>
+      </div>
+      <p class="sub">This is the landing page anyone gets at the plain URL before the event starts. At the start time it flips by itself to the live console — no button to remember to press.</p>
+    </fieldset>
+
+    <fieldset><legend>Phase</legend>
+      <div class="inline" style="align-items:center">
+        <span class="chip">${esc(S.phase || 'live')}</span>
+        <span class="sub" style="flex:1;margin:0">${esc(PHASE_LABEL[S.phase] || '')}</span>
+      </div>
+      <div class="inline">
+        <div class="field" style="max-width:220px"><label for="ev-phase">Override</label>
+          <select id="ev-phase" data-f="evphase">
+            <option value="" ${!pinned ? 'selected' : ''}>Follow the clock</option>
+            ${Object.keys(PHASE_LABEL).map(k =>
+              `<option value="${k}" ${ev.phase_pin === k ? 'selected' : ''}>Pin to ${k}</option>`).join('')}
+          </select></div>
+        <button class="tiny" data-act="save-phase">Apply</button>
+      </div>
+      <p class="sub">Pin it to open the doors early, hold them, or put the landing page back up afterwards. Your admin and referee links always show the console, whatever the phase.</p>
+    </fieldset>
+
+    <fieldset><legend>New event</legend>
+      <p class="sub">Four steps: the event, its cups, the tables, then a review before anything happens. It opens filled in from this one, so next month is a name and a date rather than a rebuild.</p>
+      <p class="sub">Players, teams, matches and formats are cleared. Your access links stay, and nothing is deleted from the log — Setup → Log still rewinds back across it.</p>
+      <div><button class="primary" data-act="wiz-open">Set up a new event</button></div>
+    </fieldset>
+  </div>`;
+}
+
+const REG_KIND = { single: '', pair: 'pair', seeking: 'needs a partner' };
+
+/* The door. An entry is an intention; this is where whoever actually walked
+   in becomes a player. The claimed strength sits next to what we remember
+   about them, and what you type wins over both. */
+
+function knownFor(name) {
+  const k = (name || '').trim().toLowerCase().replace(/\s+/g, ' ');
+  return (S.people || []).find(p =>
+    p.name.trim().toLowerCase().replace(/\s+/g, ' ') === k);
+}
+
+/* What the door will actually use, before anyone touches the box. Rendering
+   and submitting both go through this: the first version of it worked these
+   out separately, so the box showed what we remembered and then sent what
+   they claimed. */
+function admitDefaults(r) {
+  const k = knownFor(r.name);
+  const pk = r.partner_name ? knownFor(r.partner_name) : null;
+  return {
+    strength: form['rs-' + r.id] ?? (k ? k.strength : r.strength),
+    partner_strength: form['rps-' + r.id] ?? (pk ? pk.strength : r.partner_strength),
+    name: form['rn-' + r.id] ?? r.name,
+    partner_name: form['rp-' + r.id] ?? r.partner_name,
+  };
+}
+
+function admitPayload(r) {
+  const d = admitDefaults(r);
+  return {
+    registration_id: r.id,
+    name: d.name,
+    strength: parseFloat(d.strength),
+    partner_name: d.partner_name,
+    partner_strength: parseFloat(d.partner_strength),
+    kind: d.partner_name ? 'pair' : 'single',
+  };
+}
+
+function strengthBox(id, dflt, claimed, known) {
+  return `<div class="field" style="max-width:82px"><label>Strength</label>
+      <input id="${id}" value="${esc(dflt)}" data-f="${id}" inputmode="decimal"></div>
+    <span class="sub" style="margin:0;white-space:nowrap">${
+      known ? `last time ${known.strength}` : ''}${
+      known && +known.strength !== +claimed ? ` · said ${claimed}` : ''}${
+      !known ? `said ${claimed}` : ''}</span>`;
+}
+
+function regRow(r) {
+  const known = knownFor(r.name);
+  const pKnown = r.partner_name ? knownFor(r.partner_name) : null;
+  const seeking = r.kind === 'seeking';
+  const d = admitDefaults(r);
+  return `<div class="inline" style="align-items:flex-end">
+      <div class="field"><label>${esc(r.name)}${
+        known ? ' <span style="color:var(--signal)">known</span>' : ''}</label>
+        <input id="rn-${r.id}" value="${esc(d.name)}" data-f="rn-${r.id}"></div>
+      ${strengthBox('rs-' + r.id, d.strength, r.strength, known)}
+    </div>
+    ${r.kind === 'pair' || seeking ? `<div class="inline" style="align-items:flex-end">
+      <div class="field"><label>${seeking ? 'Partner — pair them with' : 'Partner'}${
+        pKnown ? ' <span style="color:var(--signal)">known</span>' : ''}</label>
+        <input id="rp-${r.id}" value="${esc(d.partner_name)}"
+               data-f="rp-${r.id}" placeholder="${seeking ? 'leave blank to enter them alone' : ''}"></div>
+      ${strengthBox('rps-' + r.id, d.partner_strength, r.partner_strength, pKnown)}
+    </div>` : ''}
+    ${r.note ? `<p class="sub" style="margin:2px 0 0">\u201c${esc(r.note)}\u201d</p>` : ''}
+    <div class="inline" style="margin-top:6px">
+      ${r.team_name ? `<span class="chip">${esc(r.team_name)}</span>` : ''}
+      <span style="flex:1"></span>
+      <button class="primary tiny" data-act="admit" data-r="${r.id}">Confirm</button>
+      <button class="ghost tiny" data-act="drop-reg" data-r="${r.id}">No show</button>
+    </div>
+    <div class="hr"></div>`;
+}
+
+function tabEntries() {
+  const regs = S.registrations || [];
+  const pending = regs.filter(r => r.status === 'pending');
+  const inCups = S.cups.length ? S.cups : [{ id: '', name: 'This event' }];
+  const open = S.cups.filter(c => c.registration === 'open');
+  const wcup = form.w_cup ?? (S.cups[0] ? S.cups[0].id : '');
+  const wpair = (S.cups.find(c => c.id === wcup) || {}).entry === 'pair';
+  return `<div class="form">
+    <p class="sub">Who put their name down at <span class="key">${location.origin}/join</span>, and who actually walked in. Confirming is what creates the player and puts them in the draw — an entry on its own has reached nothing.</p>
+    ${open.length ? '' : `<p class="sub">No cup is taking entries. Open one on the Cups tab if you still want the form live.</p>`}
+
+    <fieldset><legend>Somebody at the door</legend>
+      <div class="inline" style="align-items:flex-end">
+        ${S.cups.length > 1 ? `<div class="field" style="max-width:170px"><label for="w-cup">Cup</label>
+          <select id="w-cup" data-f="w_cup">${S.cups.map(c =>
+            `<option value="${c.id}" ${wcup === c.id ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}</select></div>` : ''}
+        <div class="field"><label for="w-name">Name</label>
+          <input id="w-name" value="${esc(form.w_name || '')}" data-f="w_name"
+                 list="known-people" placeholder="Jana Berger"></div>
+        <div class="field" style="max-width:82px"><label for="w-str">Strength</label>
+          <input id="w-str" value="${esc(form.w_str ?? (knownFor(form.w_name) || {}).strength ?? 5)}" data-f="w_str" inputmode="decimal"></div>
+        ${wpair ? `<div class="field"><label for="w-pname">Partner</label>
+          <input id="w-pname" value="${esc(form.w_pname || '')}" data-f="w_pname" list="known-people"></div>
+        <div class="field" style="max-width:82px"><label for="w-pstr">Strength</label>
+          <input id="w-pstr" value="${esc(form.w_pstr ?? 5)}" data-f="w_pstr" inputmode="decimal"></div>` : ''}
+        <button class="primary" data-act="walk-in">Add</button>
+      </div>
+      <datalist id="known-people">${(S.people || []).map(p =>
+        `<option value="${esc(p.name)}">`).join('')}</datalist>
+      ${knownFor(form.w_name) ? `<p class="sub">${esc(form.w_name)} is in the directory — last played at ${knownFor(form.w_name).strength}.</p>` : ''}
+    </fieldset>
+
+    <div class="hr"></div>
+    ${inCups.map(c => {
+      const rows = pending.filter(r => r.cup_id === c.id);
+      if (!rows.length) return '';
+      return `<fieldset><legend>${esc(c.name)} · ${rows.length} waiting</legend>
+        ${rows.map(regRow).join('')}
+        <button class="ghost tiny" data-act="admit-all" data-c="${c.id}">Confirm all ${rows.length}</button>
+      </fieldset>`;
+    }).join('') || `<p class="blank">Nobody waiting.</p>`}
+
+    ${regs.some(r => r.status === 'confirmed') ? `<div class="hr"></div>
+      <h2 style="font-size:14px;margin:0 0 6px">Already in</h2>
+      ${regs.filter(r => r.status === 'confirmed').map(r =>
+        `<div class="inline" style="align-items:center">
+          <span style="flex:1;font-size:13.5px;color:var(--muted)">${esc(r.name)}${
+            r.partner_name ? ' &amp; ' + esc(r.partner_name) : ''}</span>
+          <span class="chip">confirmed</span></div>`).join('')}` : ''}
+  </div>`;
 }
 
 function tabPeople() {
@@ -548,7 +918,7 @@ function tabPeople() {
     <div class="hr"></div>
     <div class="inline" style="align-items:center;justify-content:space-between">
       <h2 style="font-size:14px;margin:0">Players</h2>
-      ${S.players.length ? `<button class="danger tiny" data-act="reset-players">Reset players</button>` : ''}
+
     </div>
     <p class="sub">Strength is your estimate, not a rating. Nudge it after the first round; that beats any rating system at this sample size.</p>
     ${S.players.map(p => `<div class="inline">
@@ -557,7 +927,30 @@ function tabPeople() {
       <button class="tiny" data-act="save-player" data-p="${p.id}">Save</button>
       <button class="ghost tiny" data-act="toggle-player" data-p="${p.id}">${p.active ? 'Sit out' : 'Bring back'}</button>
     </div>`).join('') || '<p class="blank">Nobody yet.</p>'}
-    <p class="sub">"Reset players" clears every player and team and voids their matches — tables, cups and format setups stay, so you can bring in a new roster without rebuilding the event.</p>
+    <p class="sub">To clear the roster for a fresh evening, use Setup → Event → new event: it rebuilds the cups and tables with it, rather than leaving half of last time behind.</p>
+
+    <div class="hr"></div>
+    <h2 style="font-size:14px;margin:0">Club directory</h2>
+    <p class="sub">Everyone the club has seen, and the strength you last settled on for them. This outlives the event — a new event clears the roster above, never this. Adding a regular from here starts them at the number you tuned last time instead of a guess.</p>
+    ${form.dir_q === undefined ? '' : ''}
+    <div class="inline">
+      <div class="field"><label for="dir-q">Search</label>
+        <input id="dir-q" value="${esc(form.dir_q || '')}" data-f="dir_q" placeholder="Name"></div>
+    </div>
+    ${(() => {
+      const q = (form.dir_q || '').trim().toLowerCase();
+      const list = (S.people || []).filter(p => !q || p.name.toLowerCase().includes(q));
+      if (!list.length) return `<p class="blank">${(S.people || []).length ? 'Nobody by that name.' : 'Empty until you confirm somebody — everyone you add gets remembered.'}</p>`;
+      return list.slice(0, 60).map(p => `<div class="inline" style="align-items:flex-end">
+        <div class="field"><label>${p.playing ? '<span style="color:var(--signal)">playing tonight</span>' : '&nbsp;'}</label>
+          <input value="${esc(p.name)}" disabled></div>
+        <div class="field" style="max-width:82px"><label>Strength</label>
+          <input id="nn-${p.id}" value="${esc(form['nn-' + p.id] ?? p.strength)}" data-f="nn-${p.id}" inputmode="decimal"></div>
+        <button class="tiny" data-act="save-person" data-n="${p.id}">Save</button>
+        ${p.playing ? '' : `<button class="primary tiny" data-act="from-directory" data-n="${p.id}">Add to tonight</button>`}
+        <button class="ghost tiny" data-act="rm-person" data-n="${p.id}">Forget</button>
+      </div>`).join('') + (list.length > 60 ? `<p class="sub">…and ${list.length - 60} more. Search to narrow it.</p>` : '');
+    })()}
   </div>`;
 }
 
@@ -611,53 +1004,76 @@ function tabCups() {
       <p class="sub">A cup is a spectator-facing grouping — toggle at the top of the page to see just that cup's tables, queue, standings and bracket. Assign a format to a cup on the Formats tab, and optionally reserve specific tables for it on the Tables tab.</p>
     </fieldset>
     ${S.cups.map(c => `<div class="inline">
-      <div class="field"><input id="cn-${c.id}" value="${esc(c.name)}" data-f="cn-${c.id}"></div>
+      <div class="field"><label>Name</label>
+        <input id="cn-${c.id}" value="${esc(c.name)}" data-f="cn-${c.id}"></div>
+      <div class="field" style="max-width:150px"><label>Entry</label>
+        <select id="ce-${c.id}" data-f="ce-${c.id}">
+          <option value="single" ${c.entry !== 'pair' ? 'selected' : ''}>On your own</option>
+          <option value="pair" ${c.entry === 'pair' ? 'selected' : ''}>As a pair</option>
+        </select></div>
+      <div class="field" style="max-width:170px"><label>Pre-registration</label>
+        <select id="cr-${c.id}" data-f="cr-${c.id}">
+          <option value="open" ${c.registration === 'open' ? 'selected' : ''}>Open</option>
+          <option value="closed" ${c.registration !== 'open' ? 'selected' : ''}>Closed</option>
+        </select></div>
       <button class="tiny" data-act="save-cup" data-c="${c.id}">Save</button>
       <button class="ghost tiny" data-act="rm-cup" data-c="${c.id}">Remove</button>
-    </div>`).join('') || '<p class="blank">No cups yet — everything shows in one view until you add one.</p>'}
+    </div>
+    <div class="inline"><div class="field"><label>One line for the landing page</label>
+      <input id="cb-${c.id}" value="${esc(c.blurb || '')}" data-f="cb-${c.id}"
+             placeholder="Five rounds, then a cut to the last eight."></div></div>`).join('')
+      || '<p class="blank">No cups yet — everything shows in one view until you add one.</p>'}
+    <p class="sub">A cup that is open appears on the landing page with a button to enter. Whoever the form sends you shows up under Entries.</p>
   </div>`;
 }
 
-const KIND_FIELDS = {
-  open_play: () => `
+/* Format settings, defined once and bound to a prefix, so the Formats tab
+   and the new-event wizard render the same controls instead of two copies
+   that drift apart. `v` reads a value, `k` names the sticky form key. */
+const fieldsFor = pfx => {
+  const k = key => pfx + key;
+  const v = (key, dflt) => form[pfx + key] ?? dflt;
+  const id = name => pfx + name;
+  return {
+    open_play: () => `
     <div class="inline">
-      <div class="field"><label for="c-mode">Who plays whom</label>
-        <select id="c-mode" data-f="c_mode">
-          <option value="pairs" ${form.c_mode === 'pairs' ? 'selected' : ''}>Fixed pairs</option>
-          <option value="singles" ${form.c_mode === 'singles' ? 'selected' : ''}>Singles</option>
-          <option value="scramble" ${form.c_mode === 'scramble' ? 'selected' : ''}>Scramble doubles</option>
+      <div class="field"><label for="${id('c-mode')}">Who plays whom</label>
+        <select id="${id('c-mode')}" data-f="${k('c_mode')}">
+          <option value="pairs" ${v('c_mode') === 'pairs' ? 'selected' : ''}>Fixed pairs</option>
+          <option value="singles" ${v('c_mode') === 'singles' ? 'selected' : ''}>Singles</option>
+          <option value="scramble" ${v('c_mode') === 'scramble' ? 'selected' : ''}>Scramble doubles</option>
         </select></div>
-      <div class="field" style="max-width:120px"><label for="c-gap">Strength gap</label>
-        <input id="c-gap" value="${esc(form.c_gap ?? 1.5)}" data-f="c_gap" inputmode="decimal"></div>
-      <div class="field" style="max-width:130px"><label for="c-widen">Widen after</label>
-        <input id="c-widen" value="${esc(form.c_widen ?? 3)}" data-f="c_widen" inputmode="numeric"></div>
-      <div class="field" style="max-width:150px"><label for="c-rw">Avoid rematches</label>
-        <select id="c-rw" data-f="c_rw">
-          <option value="0" ${form.c_rw === '0' ? 'selected' : ''}>Off — closest match always</option>
-          <option value="0.6" ${(form.c_rw ?? '0.6') === '0.6' ? 'selected' : ''}>Balanced</option>
-          <option value="1.2" ${form.c_rw === '1.2' ? 'selected' : ''}>Strong</option>
+      <div class="field" style="max-width:120px"><label for="${id('c-gap')}">Strength gap</label>
+        <input id="${id('c-gap')}" value="${esc(v('c_gap', 1.5))}" data-f="${k('c_gap')}" inputmode="decimal"></div>
+      <div class="field" style="max-width:130px"><label for="${id('c-widen')}">Widen after</label>
+        <input id="${id('c-widen')}" value="${esc(v('c_widen', 3))}" data-f="${k('c_widen')}" inputmode="numeric"></div>
+      <div class="field" style="max-width:150px"><label for="${id('c-rw')}">Avoid rematches</label>
+        <select id="${id('c-rw')}" data-f="${k('c_rw')}">
+          <option value="0" ${v('c_rw') === '0' ? 'selected' : ''}>Off — closest match always</option>
+          <option value="0.6" ${v('c_rw', '0.6') === '0.6' ? 'selected' : ''}>Balanced</option>
+          <option value="1.2" ${v('c_rw') === '1.2' ? 'selected' : ''}>Strong</option>
         </select></div>
     </div>
     <p class="sub">The gap widens by one every few times a waiting entrant is passed over, so nobody sits all night waiting for a perfect match. Avoiding rematches is priced in strength points: on a lopsided field, "strong" buys variety by pairing people further apart.</p>`,
-  groups: () => `
+    groups: () => `
     <div class="inline">
-      <div class="field" style="max-width:110px"><label for="c-groups">Groups</label>
-        <input id="c-groups" value="${esc(form.c_groups ?? 2)}" data-f="c_groups" inputmode="numeric"></div>
-      <div class="field" style="max-width:150px"><label for="c-adv">Advance per group</label>
-        <input id="c-adv" value="${esc(form.c_adv ?? 2)}" data-f="c_adv" inputmode="numeric"></div>
-      <label class="pick"><input type="checkbox" id="c-ko" data-f="c_ko" ${form.c_ko !== false ? 'checked' : ''}> then a knockout</label>
-      <label class="pick"><input type="checkbox" id="c-third" data-f="c_third" ${form.c_third ? 'checked' : ''}> third place match</label>
+      <div class="field" style="max-width:110px"><label for="${id('c-groups')}">Groups</label>
+        <input id="${id('c-groups')}" value="${esc(v('c_groups', 2))}" data-f="${k('c_groups')}" inputmode="numeric"></div>
+      <div class="field" style="max-width:150px"><label for="${id('c-adv')}">Advance per group</label>
+        <input id="${id('c-adv')}" value="${esc(v('c_adv', 2))}" data-f="${k('c_adv')}" inputmode="numeric"></div>
+      <label class="pick"><input type="checkbox" id="${id('c-ko')}" data-f="${k('c_ko')}" ${v('c_ko') !== false ? 'checked' : ''}> then a knockout</label>
+      <label class="pick"><input type="checkbox" id="${id('c-third')}" data-f="${k('c_third')}" ${v('c_third') ? 'checked' : ''}> third place match</label>
     </div>`,
-  single_elim: () => `<label class="pick"><input type="checkbox" id="c-third" data-f="c_third" ${form.c_third ? 'checked' : ''}> third place match</label>`,
-  swiss: () => `
+    single_elim: () => `<label class="pick"><input type="checkbox" id="${id('c-third')}" data-f="${k('c_third')}" ${v('c_third') ? 'checked' : ''}> third place match</label>`,
+    swiss: () => `
     <div class="inline">
-      <div class="field" style="max-width:110px"><label for="c-rounds">Rounds</label>
-        <input id="c-rounds" value="${esc(form.c_rounds ?? 5)}" data-f="c_rounds" inputmode="numeric"></div>
-      <div class="field"><label for="c-pace">Pairing</label>
-        <select id="c-pace" data-f="c_pace">
-          <option value="paced" ${(form.c_pace ?? 'paced') === 'paced' ? 'selected' : ''}>Paced — on demand, nobody gets ahead</option>
-          <option value="strict" ${form.c_pace === 'strict' ? 'selected' : ''}>Strict rounds — everyone waits for the round</option>
-          <option value="free" ${form.c_pace === 'free' ? 'selected' : ''}>Free-running — on demand, no round limit</option>
+      <div class="field" style="max-width:110px"><label for="${id('c-rounds')}">Rounds</label>
+        <input id="${id('c-rounds')}" value="${esc(v('c_rounds', 5))}" data-f="${k('c_rounds')}" inputmode="numeric"></div>
+      <div class="field"><label for="${id('c-pace')}">Pairing</label>
+        <select id="${id('c-pace')}" data-f="${k('c_pace')}">
+          <option value="paced" ${v('c_pace', 'paced') === 'paced' ? 'selected' : ''}>Paced — on demand, nobody gets ahead</option>
+          <option value="strict" ${v('c_pace') === 'strict' ? 'selected' : ''}>Strict rounds — everyone waits for the round</option>
+          <option value="free" ${v('c_pace') === 'free' ? 'selected' : ''}>Free-running — on demand, no round limit</option>
         </select></div>
     </div>
     <p class="sub"><b>Paced</b> pairs people the moment a table frees up, but only against
@@ -669,13 +1085,76 @@ const KIND_FIELDS = {
       every round. <b>Free-running</b> never ends on its own — cut it to a knockout when
       you are ready.</p>
     <div class="inline">
-      <label class="pick"><input type="checkbox" id="c-swko" data-f="c_swko" ${form.c_swko ? 'checked' : ''}> then a knockout</label>
-      <div class="field" style="max-width:150px"><label for="c-swadv">Advance to KO</label>
-        <input id="c-swadv" value="${esc(form.c_swadv ?? 4)}" data-f="c_swadv" inputmode="numeric"></div>
-      <label class="pick"><input type="checkbox" id="c-third" data-f="c_third" ${form.c_third ? 'checked' : ''}> third place match</label>
+      <label class="pick"><input type="checkbox" id="${id('c-swko')}" data-f="${k('c_swko')}" ${v('c_swko') ? 'checked' : ''}> then a knockout</label>
+      <div class="field" style="max-width:150px"><label for="${id('c-swadv')}">Advance to KO</label>
+        <input id="${id('c-swadv')}" value="${esc(v('c_swadv', 4))}" data-f="${k('c_swadv')}" inputmode="numeric"></div>
+      <label class="pick"><input type="checkbox" id="${id('c-third')}" data-f="${k('c_third')}" ${v('c_third') ? 'checked' : ''}> third place match</label>
     </div>
     <p class="sub">The top finishers cross into a bracket the moment the Swiss is done. A free-running Swiss has no finish of its own — use "Cut to knockout now" on the running format when you are ready, which also works part-way through if you are short on time.</p>`,
+  };
 };
+
+const KIND_FIELDS = fieldsFor('');
+
+/* The inverse pair: read the form back into a format config, and seed the
+   form from one. Carry-forward in the wizard is `seedFormat` over last
+   event's settings — nothing is inherited invisibly, it is just the form
+   arriving filled in. */
+function formatConfig(pfx, kind) {
+  const n = key => { const x = parseFloat(form[pfx + key]); return isNaN(x) ? null : x; };
+  const v = (key, dflt) => form[pfx + key] ?? dflt;
+  const cfg = {
+    scoring: { best_of: +v('f_bo', 3), points_to: +v('f_pts', 11) },
+  };
+  if (kind === 'open_play') Object.assign(cfg, {
+    mode: v('c_mode', 'pairs'),
+    base_gap: n('c_gap') ?? 1.5,
+    widen_every: n('c_widen') || 3,
+    rematch_weight: n('c_rw') ?? 0.6,
+    avoid_rematch: (n('c_rw') ?? 0.6) > 0,
+  });
+  if (kind === 'groups') Object.assign(cfg, {
+    n_groups: n('c_groups') || 2, then_ko: v('c_ko') !== false,
+    advance_per_group: n('c_adv') || 2, third_place: !!v('c_third'),
+  });
+  if (kind === 'single_elim') cfg.third_place = !!v('c_third');
+  if (kind === 'swiss') {
+    const pace = v('c_pace', 'paced');
+    Object.assign(cfg, {
+      rounds: n('c_rounds') || 5,
+      continuous: pace !== 'strict', paced: pace === 'paced',
+      then_ko: !!v('c_swko'), advance: n('c_swadv') || 4,
+      third_place: !!v('c_third'),
+    });
+  }
+  return cfg;
+}
+
+function seedFormat(pfx, kind, cfg) {
+  cfg = cfg || {};
+  const set = (key, val) => { if (val !== undefined && val !== null) form[pfx + key] = val; };
+  const sc = cfg.scoring || {};
+  set('f_bo', sc.best_of ?? 3);
+  set('f_pts', sc.points_to ?? 11);
+  if (kind === 'open_play') {
+    set('c_mode', cfg.mode); set('c_gap', cfg.base_gap);
+    set('c_widen', cfg.widen_every);
+    if (cfg.rematch_weight !== undefined) form[pfx + 'c_rw'] = String(cfg.rematch_weight);
+  }
+  if (kind === 'groups') {
+    set('c_groups', cfg.n_groups); set('c_adv', cfg.advance_per_group);
+    form[pfx + 'c_ko'] = cfg.then_ko !== false;
+    form[pfx + 'c_third'] = !!cfg.third_place;
+  }
+  if (kind === 'single_elim') form[pfx + 'c_third'] = !!cfg.third_place;
+  if (kind === 'swiss') {
+    set('c_rounds', cfg.rounds);
+    form[pfx + 'c_pace'] = cfg.continuous === false ? 'strict' : (cfg.paced ? 'paced' : 'free');
+    form[pfx + 'c_swko'] = !!cfg.then_ko;
+    set('c_swadv', cfg.advance);
+    form[pfx + 'c_third'] = !!cfg.third_place;
+  }
+}
 
 function tabFormats() {
   const kind = form.f_kind || 'open_play';
@@ -772,10 +1251,7 @@ function tabLog() {
       <button class="ghost tiny" data-act="rewind" data-s="${h.seq}">Rewind here</button>
     </div>`).join('')}
     <div class="hr"></div>
-    <fieldset><legend>Danger zone</legend>
-      <p class="sub">Wipes players, teams, tables, formats, cups and every match — a totally blank event. Your admin and referee links keep working, nothing to redistribute.</p>
-      <button class="danger" data-act="reset-event">Reset everything</button>
-    </fieldset>
+    <p class="sub">To start the next evening clean, Setup → Event → new event does it properly: one pass that clears the old one and sets up the next, instead of a wipe you then have to rebuild from.</p>
   </div>`;
 }
 
@@ -789,17 +1265,13 @@ function tabAccess() {
       <div class="key">${base}/a/${esc(S.keys.admin || '')}</div></div>
     <p class="sub">No accounts, no logins. Keep the referee link to the people running tables — anyone who has it can enter results.</p>
     <div class="inline">
-      <a href="/print?base=${encodeURIComponent(base + '/')}" target="_blank"><button class="primary">Open printable poster</button></a>
+      <a href="/print?mode=event&base=${encodeURIComponent(base + '/')}" target="_blank"><button class="primary">Poster for this event</button></a>
+      <a href="/print?base=${encodeURIComponent(base + '/')}" target="_blank"><button class="primary">Poster for the live link</button></a>
       <a href="/board" target="_blank"><button class="primary">Open the wall display</button></a>
     </div>
-    <p class="sub">The poster is a QR code for the spectator link, sized to print and tape to the wall. Your URL never changes, so print it once.</p>
+    <p class="sub">The event poster carries the name, the date, the venue and a QR code — that is the one for the noticeboard beforehand. The live-link poster is the plain one for the wall on the night. Both point at the same permanent URL, which serves the landing page before the event and the console once it starts.</p>
+    <p class="sub">Pasting that URL into a chat shows the event name, date and blurb as a card, so the link does the advertising on its own.</p>
     <p class="sub">The wall display is <span class="key">${base}/board</span> — put it on the big screen and it answers "when am I playing" by itself: who is on which table now, then the running order with a rough time against each one. It needs no key and has no controls, so it is safe on a screen anyone can reach.</p>
-    <div class="hr"></div>
-    <div class="inline">
-      <div class="field"><label for="ev-title">Event name</label>
-        <input id="ev-title" value="${esc(S.event.name || '')}" data-f="evname"></div>
-      <button class="tiny" data-act="save-event">Save</button>
-    </div>
   </div>`;
 }
 
@@ -831,11 +1303,42 @@ document.addEventListener('input', e => {
     if (back) { back.focus(); try { back.setSelectionRange(99, 99); } catch (x) { } }
     return;
   }
+  if (wizInput(e)) return;
   const f = e.target.dataset.f;
-  if (f) form[f] = e.target.type === 'checkbox' ? e.target.checked : e.target.value;
+  if (f) {
+    form[f] = e.target.type === 'checkbox' ? e.target.checked : e.target.value;
+    // typing a name the club already knows should bring their number with it
+    if ((f === 'w_name' || f === 'w_pname') && sheetTab === 'entries') {
+      const k = knownFor(form[f]);
+      if (k) { form[f === 'w_name' ? 'w_str' : 'w_pstr'] = k.strength; renderSheet(); }
+    }
+  }
   const rq = e.target.dataset.rq;
   if (rq) drafts['rq-' + rq] = e.target.checked;
 });
+
+/* The wizard keeps its own draft rather than writing through to the server:
+   nothing exists until you confirm on the review step. */
+function wizInput(e) {
+  if (!wiz) return false;
+  const val = e.target.type === 'checkbox' ? e.target.checked : e.target.value;
+  const w = e.target.dataset.w;
+  if (w) { wiz[w] = val; return true; }
+  const wc = e.target.dataset.wc;
+  if (wc) {
+    const [i, key] = wc.split('|');
+    wiz.cups[+i][key] = val;
+    if (key === 'kind') { seedFormat('w' + i + '_', val, null); renderSheet(); }
+    return true;
+  }
+  const wt = e.target.dataset.wt;
+  if (wt) {
+    const [i, key] = wt.split('|');
+    wiz.tables[+i][key] = key === 'cup' ? +val : val;
+    return true;
+  }
+  return false;
+}
 
 document.addEventListener('change', e => {
   const mf = e.target.dataset.mf;
@@ -845,6 +1348,7 @@ document.addEventListener('change', e => {
     renderManual();
     return;
   }
+  if (wizInput(e)) return;
   const f = e.target.dataset.f;
   if (f) {
     form[f] = e.target.type === 'checkbox' ? e.target.checked : e.target.value;
@@ -863,12 +1367,114 @@ document.addEventListener('change', e => {
 document.addEventListener('click', async e => {
   const tab = e.target.dataset.tab;
   if (tab) { sheetTab = tab; renderSheet(); return; }
+  const wstep = e.target.dataset.wstep;
+  if (wstep && wiz) { wiz.step = +wstep; renderSheet(); return; }
   const cup = e.target.closest('button[data-cup]');
   if (cup) { setCup(cup.dataset.cup); return; }
   const b = e.target.closest('button[data-act]');
   if (!b) return;
   const a = b.dataset.act;
   const num = v => { const n = parseFloat(v); return isNaN(n) ? 0 : n; };
+
+  if (a === 'admit') {
+    const r = (S.registrations || []).find(x => x.id === b.dataset.r);
+    const out = await api('admit', admitPayload(r));
+    if (out && out.where === 'roster') toast(`Added to the roster — ${out.why}`);
+    return;
+  }
+  if (a === 'admit-all') {
+    const rows = (S.registrations || []).filter(
+      r => r.status === 'pending' && r.cup_id === b.dataset.c);
+    if (!confirm(`Confirm all ${rows.length}? You can still sit anyone out afterwards.`)) return;
+    const payloads = rows.map(admitPayload);   // before the list re-renders under us
+    for (const data of payloads) await api('admit', data);
+    return;
+  }
+  if (a === 'walk-in') {
+    if (!form.w_name) return toast('Give them a name');
+    const known = knownFor(form.w_name);
+    const out = await api('admit', {
+      cup_id: form.w_cup ?? (S.cups[0] ? S.cups[0].id : ''),
+      name: form.w_name, strength: num(form.w_str ?? (known ? known.strength : 5)),
+      partner_name: form.w_pname || '',
+      partner_strength: num(form.w_pstr ?? 5),
+      kind: form.w_pname ? 'pair' : 'single',
+      person_id: known ? known.id : undefined,
+    });
+    if (out) {
+      form.w_name = form.w_pname = ''; form.w_str = form.w_pstr = undefined;
+      renderSheet();
+      if (out.where === 'roster') toast(`Added to the roster — ${out.why}`);
+    }
+    return;
+  }
+  if (a === 'from-directory') {
+    const out = await api('add_from_directory', {
+      person_id: b.dataset.n,
+      cup_id: S.cups.length === 1 ? S.cups[0].id : (form.w_cup || ''),
+    });
+    if (out && out.where === 'roster' && out.why) toast(out.why);
+    return;
+  }
+  if (a === 'rm-person') {
+    if (!confirm('Forget this player? Tonight\'s roster is untouched; we just stop remembering them between events.')) return;
+    return void api('remove_person', { id: b.dataset.n });
+  }
+  if (a === 'save-person') return void api('update_person', {
+    id: b.dataset.n, strength: num(form['nn-' + b.dataset.n] ?? 5) });
+  if (a === 'drop-reg') {
+    if (!confirm('Remove this entry from the list?')) return;
+    return void api('update_registration', { id: b.dataset.r, status: 'dropped' });
+  }
+  if (a === 'wiz-open') { openWizard(); return; }
+  if (a === 'wiz-cancel') { wiz = null; renderSheet(); return; }
+  if (a === 'wiz-back') { wiz.step = Math.max(0, wiz.step - 1); renderSheet(); return; }
+  if (a === 'wiz-next') {
+    if (wiz.step === 0 && !wiz.name.trim()) return toast('Give the event a name');
+    if (wiz.step === 1 && wiz.cups.some(c => !c.name.trim()))
+      return toast('Every cup needs a name');
+    wiz.step = Math.min(WIZ_STEPS.length - 1, wiz.step + 1);
+    renderSheet();
+    return;
+  }
+  if (a === 'wiz-add-cup') {
+    seedFormat('w' + wiz.cups.length + '_', 'swiss', null);
+    wiz.cups.push({ name: '', blurb: '', entry: 'single', registration: 'open', kind: 'swiss' });
+    renderSheet();
+    return;
+  }
+  if (a === 'wiz-rm-cup') {
+    const gone = +b.dataset.i;
+    wiz.cups.splice(gone, 1);
+    // format settings are keyed by position, so re-seat what is left
+    wiz.cups.forEach((c, i) => seedFormat('w' + i + '_', c.kind, null));
+    wiz.tables.forEach(t => {
+      if (t.cup === gone) t.cup = -1;
+      else if (t.cup > gone) t.cup -= 1;
+    });
+    renderSheet();
+    return;
+  }
+  if (a === 'wiz-add-table') {
+    wiz.tables.push({ name: 'Table ' + (wiz.tables.length + 1), cup: -1 });
+    renderSheet();
+    return;
+  }
+  if (a === 'wiz-rm-table') { wiz.tables.splice(+b.dataset.i, 1); renderSheet(); return; }
+  if (a === 'wiz-create') {
+    if (!confirm('Create "' + wiz.name + '"? The current players, teams, formats and matches go.')) return;
+    const ok = await api('create_event', {
+      name: wiz.name, venue: wiz.venue, blurb: wiz.blurb, starts_at: wiz.starts_at,
+      cups: wiz.cups.map((c, i) => ({
+        name: c.name, blurb: c.blurb, entry: c.entry, registration: c.registration,
+        kind: c.kind || '',
+        config: c.kind ? formatConfig('w' + i + '_', c.kind) : {},
+      })),
+      tables: wiz.tables.map(t => ({ name: t.name, cup: t.cup })),
+    });
+    if (ok) { wiz = null; sheetTab = 'event'; renderSheet(); toast('Event created'); }
+    return;
+  }
 
   if (a === 'clear') { drafts[b.dataset.m] = [['', '']]; render(); return; }
   if (a === 'edit' || a === 'score') return openEditor(b.dataset.m);
@@ -951,8 +1557,16 @@ document.addEventListener('click', async e => {
     form.cupname = ''; renderSheet();
     return;
   }
-  if (a === 'save-cup') return void api('update_cup', {
-    id: b.dataset.c, name: form['cn-' + b.dataset.c] ?? '' });
+  if (a === 'save-cup') {
+    const c = S.cups.find(x => x.id === b.dataset.c) || {};
+    return void api('update_cup', {
+      id: b.dataset.c,
+      name: form['cn-' + b.dataset.c] ?? c.name,
+      blurb: form['cb-' + b.dataset.c] ?? c.blurb ?? '',
+      entry: form['ce-' + b.dataset.c] ?? c.entry ?? 'single',
+      registration: form['cr-' + b.dataset.c] ?? c.registration ?? 'closed',
+    });
+  }
   if (a === 'rm-cup') {
     if (!confirm('Remove this cup? Its tables and formats stay, just ungrouped.')) return;
     return void api('remove_cup', { id: b.dataset.c });
@@ -982,11 +1596,6 @@ document.addEventListener('click', async e => {
     const p = S.players.find(x => x.id === b.dataset.p);
     return void api('update_player', { id: p.id, active: !p.active });
   }
-  if (a === 'reset-players') {
-    if (!confirm('Remove every player and team, and void their matches? Tables, cups and format settings stay. This cannot be undone.')) return;
-    form.ents = {};
-    return void api('reset_players', {});
-  }
 
   if (a === 'pick-all') {
     form.ents = {};
@@ -995,26 +1604,7 @@ document.addEventListener('click', async e => {
   }
   if (a === 'add-format') {
     const kind = form.f_kind || 'open_play';
-    const cfg = { scoring: { best_of: +(form.f_bo ?? 3), points_to: +(form.f_pts ?? 11) } };
-    if (kind === 'open_play') Object.assign(cfg, {
-      mode: form.c_mode || 'pairs', base_gap: num(form.c_gap ?? 1.5),
-      widen_every: num(form.c_widen ?? 3) || 3,
-      rematch_weight: num(form.c_rw ?? 0.6), avoid_rematch: num(form.c_rw ?? 0.6) > 0,
-    });
-    if (kind === 'groups') Object.assign(cfg, {
-      n_groups: num(form.c_groups ?? 2) || 1, then_ko: form.c_ko !== false,
-      advance_per_group: num(form.c_adv ?? 2) || 1, third_place: !!form.c_third,
-    });
-    if (kind === 'single_elim') cfg.third_place = !!form.c_third;
-    if (kind === 'swiss') {
-      const pace = form.c_pace ?? 'paced';
-      Object.assign(cfg, {
-        rounds: num(form.c_rounds ?? 5) || 5,
-        continuous: pace !== 'strict', paced: pace === 'paced',
-        then_ko: !!form.c_swko, advance: num(form.c_swadv ?? 4) || 4,
-        third_place: !!form.c_third,
-      });
-    }
+    const cfg = formatConfig('', kind);
     if (form.f_cup) cfg.cup_id = form.f_cup;
     const ents = Object.entries(form.ents || {}).filter(([, v]) => v).map(([k]) => k);
     if (kind !== 'open_play' && ents.length < 2) return toast('Pick at least two entrants');
@@ -1039,11 +1629,14 @@ document.addEventListener('click', async e => {
     if (!confirm('Drop everything after event ' + b.dataset.s + '?')) return;
     return void api('rewind', { seq: +b.dataset.s });
   }
-  if (a === 'reset-event') {
-    if (!confirm('Wipe EVERYTHING — players, teams, tables, formats, cups, all matches? This cannot be undone.')) return;
-    return void api('reset_event', {});
-  }
-  if (a === 'save-event') return void api('event_meta', { name: form.evname || '' });
+  if (a === 'save-event') return void api('event_meta', {
+    name: form.evname ?? S.event.name ?? '',
+    venue: form.evvenue ?? S.event.venue ?? '',
+    blurb: form.evblurb ?? S.event.blurb ?? '',
+    starts_at: form.evstart ?? S.event.starts_at ?? '',
+  });
+  if (a === 'save-phase') return void api('set_phase', {
+    phase: form.evphase ?? S.event.phase_pin ?? '' });
 });
 
 $('setup-btn').onclick = () => { sheetOpen = true; $('sheet').hidden = false; renderSheet(); };
