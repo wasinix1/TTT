@@ -20,11 +20,13 @@ Formats:
 - **Groups** — snake-seeded round robin, optionally feeding a knockout that
   builds itself when the last group match finishes.
 - **Knockout** — seeded single elimination, byes handled, optional third place.
-- **Swiss** — Buchholz, in one of three shapes. *Paced* is the default: pair
-  on demand the moment a table frees up, but only against someone who has
-  played the same number of games, and stop at the round count. *Strict
-  rounds* is classic lockstep Swiss. *Free-running* pairs on demand with no
-  round limit and ends when you cut it to a knockout.
+- **Swiss** — Buchholz, in one of three shapes. *Paced* is the default for a
+  new one: pair on demand the moment a table frees up, but only against
+  someone who has played the same number of games, and stop at the round
+  count. *Strict rounds* is classic lockstep Swiss. *Free-running* pairs on
+  demand with no round limit and ends when you cut it to a knockout. A Swiss
+  set up before paced mode existed keeps running free — an event already
+  under way does not change shape because the server was updated.
 
 Any two can run at once and share the same tables. A knockout on tables 1 and
 2 while everyone already eliminated keeps playing open queue on table 3.

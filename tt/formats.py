@@ -658,9 +658,14 @@ class Swiss(Format):
         last long match finishes — and whoever it shares tables with soaks
         up the idle capacity and runs away to their own knockout. Pairing on
         demand within a games-played tier keeps the structure without ever
-        making a table wait."""
+        making a table wait.
+
+        Off unless the format says otherwise. The console always writes
+        this key, so the only configs missing it were written before paced
+        mode existed — and an event already under way must not change shape
+        because the server was updated between rounds."""
         return bool(self.config.get("continuous")) and \
-            bool(self.config.get("paced", True)) and \
+            bool(self.config.get("paced")) and \
             int(self.config.get("rounds", 0) or 0) > 0
 
     def _played(self, store):
