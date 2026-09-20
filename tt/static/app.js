@@ -202,7 +202,7 @@ function bestOfLine(m) {
   return `<div class="table-state">Best of ${s.best_of} to ${s.points_to}</div>`;
 }
 
-function scorePad(m, inEditor) {
+function scorePad(m) {
   const s = m.scoring;
   const need = Math.floor(s.best_of / 2) + 1;
   const d = drafts[m.id] || (drafts[m.id] = [['', '']]);
@@ -232,7 +232,7 @@ function scorePad(m, inEditor) {
       ${rq && !done ? `<label class="hint"><input type="checkbox" id="rq-${m.id}" ${(drafts['rq-' + m.id] !== false) ? 'checked' : ''} data-rq="${m.id}"> back in queue</label>` : ''}
       <button class="ghost tiny" data-act="clear" data-m="${m.id}">Clear</button>
       ${done ? `<button class="ghost tiny" data-act="undo" data-m="${m.id}">Undo result</button>` : ''}
-      ${!inEditor && isAdmin() ? `<button class="ghost tiny" data-act="unassign" data-m="${m.id}">Send back</button>` : ''}
+      ${isAdmin() && m.table ? `<button class="ghost tiny" data-act="unassign" data-m="${m.id}">Send back</button>` : ''}
     </div>
     <div class="hint">Best of ${s.best_of} to ${s.points_to}</div>
   </div>`;
@@ -342,7 +342,7 @@ function renderEditor() {
         <div class="vs">plays</div>
         <div class="side"><span class="side-name">${esc(m.b)}</span></div>
       </div>
-      ${scorePad(m, true)}
+      ${scorePad(m)}
       ${done ? `<p class="sub">Saving a different score puts the match right and
         re-resolves anything it decided in later rounds. "Undo" takes the result
         back altogether and leaves the match to be played again.</p>` : ''}
