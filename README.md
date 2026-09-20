@@ -77,13 +77,16 @@ that happens rather than quietly wasting it.
 is on which table now, then the running order with a rough time against each
 name. No key, no controls.
 
-It commits to **order** and never to **place**. Order is a promise that can
-be kept: it is read from the same function the dispatcher seats matches
-with, so what a spectator sees is what actually happens. Pre-assigning a
-table is what creates idle-table time — table 2 comes free but the next
-match is "on table 3", so table 2 waits. The table is decided the instant
-one frees up; until then a match shows the set it could land on, which for a
-cup with reserved tables is already a definite answer.
+It commits to **order** and never to a single **table**. Order is a promise
+that can be kept: it is read from the same function the dispatcher seats
+matches with, so what a spectator sees is what actually happens. Naming one
+table in advance is what creates idle-table time — table 2 comes free but
+the next match is "on table 3", so table 2 waits.
+
+What it names instead is the set a match can land on, once per cup rather
+than on every line: `Tables 1-3` for a cup with its own tables, `Any table`
+for one drawing on the shared pool. Split the tables and "which table" has
+an exact answer without anything being pinned to a number too early.
 
 Times are measured, not guessed: the median of what matches have actually
 taken tonight, divided by the tables serving that cup. They drift as the

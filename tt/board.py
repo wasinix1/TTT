@@ -27,6 +27,34 @@ def _tables_serving(store, cup_id):
             if not store.tables[n].paused]
 
 
+def _range_label(nums):
+    """[1,2,3] -> "Tables 1-3"; [1,3,4,7] -> "Tables 1, 3-4, 7".
+
+    Which table you are on is the other half of "when am I playing", and a
+    cup with its own tables can answer it exactly. Collapsing runs is what
+    makes that readable across a hall instead of "table 1 or 2 or 3"."""
+    nums = sorted(nums)
+    if not nums:
+        return "No table"
+    runs, start, prev = [], nums[0], nums[0]
+    for n in nums[1:]:
+        if n == prev + 1:
+            prev = n
+            continue
+        runs.append((start, prev))
+        start = prev = n
+    runs.append((start, prev))
+    parts = [str(a) if a == b else f"{a}\u2013{b}" for a, b in runs]
+    return ("Table " if len(nums) == 1 else "Tables ") + ", ".join(parts)
+
+
+def _reserved_for(store, cup_id, tables):
+    """True when every table this cup can use is held for it, so naming
+    them is a promise rather than a guess at the shared pool."""
+    return bool(tables) and cup_id is not None and all(
+        store.cup_of_table(store.tables[n]) == cup_id for n in tables)
+
+
 def _share(store, cup_id, tables):
     """How many tables this cup can really expect to be using at once.
 
@@ -134,11 +162,20 @@ def cup_board(store, cup_id, app):
         r["tables"] = tables
         r["on_deck"] = (not r["blocked"]) and secs is not None and secs < per
 
+    reserved = _reserved_for(store, cup_id, tables)
     return {
         "cup_id": cup_id,
         "playing": now,
         "up": rows,
         "tables": tables,
+        # the set a match here could land on: named, because that is the
+        # other half of the question, and a cup with its own tables can
+        # answer it exactly. Only a cup that could turn up anywhere gets
+        # the vague version.
+        "tables_label": ("Any table"
+                         if not reserved and len(tables) == len(store.tables)
+                         else _range_label(tables)),
+        "reserved": reserved,
         "match_minutes": int(per // 60),
         "waiting": sum(1 for r in rows if r["kind"] == "waiting"),
         "fixtures": sum(1 for r in rows if r["kind"] == "fixture"),
