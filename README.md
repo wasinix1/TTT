@@ -20,8 +20,13 @@ Formats:
 - **Groups** — snake-seeded round robin, optionally feeding a knockout that
   builds itself when the last group match finishes.
 - **Knockout** — seeded single elimination, byes handled, optional third place.
-- **Swiss** — fixed rounds with Buchholz, or continuous, which pairs on demand
-  instead of in lockstep so tables never idle waiting on one long match.
+- **Swiss** — Buchholz, in one of three shapes. *Paced* is the default for a
+  new one: pair on demand the moment a table frees up, but only against
+  someone who has played the same number of games, and stop at the round
+  count. *Strict rounds* is classic lockstep Swiss. *Free-running* pairs on
+  demand with no round limit and ends when you cut it to a knockout. A Swiss
+  set up before paced mode existed keeps running free — an event already
+  under way does not change shape because the server was updated.
 
 Any two can run at once and share the same tables. A knockout on tables 1 and
 2 while everyone already eliminated keeps playing open queue on table 3.
@@ -35,6 +40,55 @@ Roles are three URLs, no accounts:
 | `/` | watch |
 | `/r/<key>` | enter results, manage the queue |
 | `/a/<key>` | everything |
+| `/board` | the wall display |
+
+## Sharing tables between cups
+
+Group formats into **cups** and each gets its own tab, standings and bracket.
+Two cups can share one set of tables, and the question is who gets the next
+one free.
+
+Not the cup that asked first — that is not a bias, it is starvation. Not an
+equal share either, and this is the part that matters. A Swiss cup's demand
+is bursty: it wants every table at once and then none while the last long
+match of a round finishes. Hand that idle capacity to the smaller cup on an
+equal share and the smaller cup reaches its knockout while the big one is
+still in round one.
+
+So the table goes to whichever cup is **furthest from finishing** — matches
+left, times how long a match is actually taking tonight, over the tables it
+already holds. A cup that gets ahead of schedule has less left to do, so it
+starts losing every table it contests until the other catches up. Both
+finish around the same time, which is the thing you actually wanted.
+
+Paced Swiss attacks the same problem from the other end: with no round
+barrier there is no burst to absorb.
+
+Tables are **shared** or **split**, and that is read off the tables
+themselves rather than stored as a mode — no table tagged with a cup means
+shared, any table tagged means split, so the two can never disagree. Split
+makes "which table" a real answer for a spectator, at the cost of a reserved
+table standing idle when its own cup has nothing ready. It tells you when
+that happens rather than quietly wasting it.
+
+## When am I playing
+
+`/board` is a wall display for that question, so people stop asking it. Who
+is on which table now, then the running order with a rough time against each
+name. No key, no controls.
+
+It commits to **order** and never to **place**. Order is a promise that can
+be kept: it is read from the same function the dispatcher seats matches
+with, so what a spectator sees is what actually happens. Pre-assigning a
+table is what creates idle-table time — table 2 comes free but the next
+match is "on table 3", so table 2 waits. The table is decided the instant
+one frees up; until then a match shows the set it could land on, which for a
+cup with reserved tables is already a definite answer.
+
+Times are measured, not guessed: the median of what matches have actually
+taken tonight, divided by the tables serving that cup. They drift as the
+evening speeds up or slows down. The next wave is flagged *get ready*
+instead, which is what a tournament desk would call out anyway.
 
 ## How the pairing works
 
@@ -76,10 +130,15 @@ ignoring it. An idle table is worse than an imperfect pairing.
 ## Corrections
 
 Every change is an event appended to `data/event.db`; the live state is a
-replay of that log. Nothing is updated in place. So *Undo* on a result works,
-and Setup → Log rewinds to any point and rebuilds the evening from there,
-including re-resolving a bracket after a first-round score was entered
-backwards. A crashed laptop loses nothing but the last request.
+replay of that log. Nothing is updated in place. A crashed laptop loses
+nothing but the last request.
+
+Hover any result and *Edit result* reopens the same pad it was entered on.
+Saving a different score puts it right and re-resolves whatever it decided
+in later rounds — a first-round score entered backwards fixes the bracket
+under it. *Undo result* takes it back altogether and leaves the match to be
+played again, taking the player it advanced back out of the next round with
+it. Setup → Log still rewinds the whole evening to any point.
 
 ## Hosting
 
@@ -133,7 +192,8 @@ the first round instead.
 tt/models.py     dataclasses
 tt/store.py      event log, replay, derived state
 tt/formats.py    the four formats behind one interface
-tt/dispatch.py   tables
+tt/dispatch.py   tables, and which cup gets the next one
+tt/board.py      who plays next, and roughly when
 tt/server.py     HTTP, roles, JSON state
 tt/static/       the client
 sim.py           plays full events through every format
@@ -141,7 +201,11 @@ sim.py           plays full events through every format
 
 `python3 sim.py` runs the lot: starvation, rematch bounds, byes, bracket
 byes, Swiss byes scoring a point, two formats sharing tables, replay
-determinism, and correcting a result mid-bracket.
+determinism, correcting a result mid-bracket, fair table share between cups,
+a small draw not outrunning a big one, and paced Swiss holding the field to
+within one game of itself.
 
-Adding a format means implementing `next_match`, `on_result` and `standings`,
+Adding a format means implementing `propose`, `on_result` and `standings`,
 then adding it to `KINDS`. The dispatcher does not need to know it exists.
+`propose` must not change anything — it is asked speculatively, and only one
+answer per pass is committed.

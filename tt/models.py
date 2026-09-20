@@ -66,6 +66,15 @@ class Match:
     winner: Optional[str] = None                      # 'a' | 'b'
     seq: int = 0
     queued_seq: int = 0
+    # wall-clock, taken from the event log so a replay reproduces them: how
+    # long matches actually take is what turns a queue position into a time
+    started_ts: Optional[float] = None
+    done_ts: Optional[float] = None
+
+    def duration(self) -> Optional[float]:
+        if self.started_ts and self.done_ts and self.done_ts > self.started_ts:
+            return self.done_ts - self.started_ts
+        return None
 
     def is_filled(self) -> bool:
         return bool(self.entrant_a and self.entrant_b)

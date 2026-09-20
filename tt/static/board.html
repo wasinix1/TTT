@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Coming up</title>
+<link rel="stylesheet" href="/static/style.css">
+<style>
+/* Sized for a room, not a hand: everything here has to be readable from the
+   far side of a hall, so there is no chrome, no controls and no scrolling. */
+body{overflow:hidden}
+.screen{padding:2.2vh 2.4vw;height:100vh;display:flex;flex-direction:column;gap:1.6vh}
+.screen h1{font-size:3.4vh;letter-spacing:-.02em;margin:0}
+.screen .sub{font-size:1.9vh;color:var(--muted);margin:0}
+.head{display:flex;align-items:baseline;justify-content:space-between;gap:2vw}
+.cups{display:flex;gap:1.6vw;flex:1;min-height:0}
+.cup{flex:1;display:flex;flex-direction:column;min-width:0;
+     border:1px solid var(--edge);border-radius:var(--r);overflow:hidden;background:var(--surface)}
+.cup h2{font-size:2.4vh;margin:0;padding:1.4vh 1.2vw;border-bottom:1px solid var(--edge)}
+.cup h2 span{float:right;font-size:1.7vh;color:var(--muted);font-weight:400}
+.live{display:flex;flex-wrap:wrap;gap:.8vh;padding:1.2vh 1.2vw;border-bottom:1px solid var(--edge)}
+.now{flex:1 1 44%;background:var(--raised);border-radius:var(--r);padding:1vh 1vw;min-width:0}
+.now .t{font-size:1.6vh;color:var(--signal);font-weight:650;letter-spacing:.06em}
+.now .p{font-size:2.3vh;color:var(--chalk);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.list{flex:1;overflow:hidden;padding:.6vh 0}
+.q{display:flex;align-items:center;gap:1vw;padding:1.05vh 1.2vw;font-size:2.2vh;
+   border-bottom:1px solid rgba(39,69,61,.45)}
+.q .n{color:var(--dim);font-size:1.8vh;width:2.2vw;flex:none}
+.q .w{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.q .e{font-size:1.7vh;color:var(--muted);flex:none}
+.q.ondeck{background:rgba(214,106,42,.13)}
+.q.ondeck .n{color:var(--signal)}
+.q.ondeck .e.when{color:#150803;background:var(--signal);border-radius:9px;padding:.2vh .7vw;font-weight:650}
+.foot{display:flex;justify-content:space-between;font-size:1.7vh;color:var(--dim)}
+</style>
+</head>
+<body>
+<div class="screen">
+  <div class="head">
+    <h1 id="title">Coming up</h1>
+    <p class="sub" id="sub"></p>
+  </div>
+  <div class="cups" id="cups"></div>
+  <div class="foot">
+    <span id="note"></span>
+    <span>Times are estimates — they move as the evening does</span>
+  </div>
+</div>
+<script src="/static/board.js"></script>
+</body>
+</html>
