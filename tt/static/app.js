@@ -248,18 +248,6 @@ function whenLabel(r) {
   return 'in about ' + r.eta_min + ' min';
 }
 
-/* The exact table is only decided the instant one frees up — promising one
-   in advance is what leaves a table standing empty while its match waits.
-   So show the set it can land on, which a cup with reserved tables already
-   narrows to a real answer. */
-function whereLabel(r) {
-  const all = S.tables.map(t => t.number).sort((a, b) => a - b);
-  const el = (r.tables || []).slice().sort((a, b) => a - b);
-  if (!el.length) return 'no table yet';
-  if (el.length === all.length) return 'any table';
-  return el.length === 1 ? 'table ' + el[0] : 'table ' + el.join(' or ');
-}
-
 function cupName(id) {
   const c = S.cups.find(x => x.id === id);
   return c ? c.name : '';
@@ -275,7 +263,6 @@ function renderBoard() {
         <span class="pos">${r.position}</span>
         <span class="nm">${esc(r.a)}${r.b ? ` <span style="color:var(--dim)">v</span> ${esc(r.b)}` : ''}</span>
         ${whenLabel(r) ? `<span class="chip when">${esc(whenLabel(r))}</span>` : ''}
-        <span class="chip where">${esc(whereLabel(r))}</span>
         ${r.kind === 'fixture' && canScore()
           ? `<button class="ghost tiny on-hover" data-act="score" data-m="${r.id}">Enter result</button>` : ''}
         ${r.kind === 'fixture' && isAdmin()
@@ -288,6 +275,9 @@ function renderBoard() {
     const note = [
       b.fixtures ? b.fixtures + ' to play' : '',
       b.waiting ? b.waiting + ' waiting' : '',
+      // the exact table is only picked the instant one frees up, so a cup
+      // on the shared pool gets no number; its own tables are a promise
+      b.tables_label,
       '~' + b.match_minutes + ' min a match',
     ].filter(Boolean).join(' · ');
     return `<div class="panel">
