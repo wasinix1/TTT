@@ -598,8 +598,8 @@ def test_swiss_ko_drops_the_queue():
     shutil.rmtree(d)
 
 
-def test_send_back_returns_players():
-    print("\n[sending an open-play match back off its table]")
+def test_put_back_returns_players():
+    print("\n[putting an open-play match back off its table]")
     app, d = fresh()
     solo_field(app, 10)
     f = app.act("admin", "add_format", {"kind": "open_play", "name": "Open",
@@ -610,7 +610,7 @@ def test_send_back_returns_players():
     s = app.store
     m = [x for x in s.matches.values() if x.status == "live"][0]
     pair = [m.entrant_a, m.entrant_b]
-    app.act("admin", "unassign", {"match_id": m.id})
+    app.act("admin", "put_back", {"match_id": m.id})
     queued = {q.entrant_id for q in s.queue}
     playing = set()
     for t in s.tables.values():
@@ -622,6 +622,62 @@ def test_send_back_returns_players():
     check(not [x for x in s.matches.values()
                if x.status == "pending" and x.format_id == f],
           "no un-seatable open-play match is left behind")
+    shutil.rmtree(d)
+
+
+def test_put_back_frees_the_table():
+    print("\n[putting a scheduled fixture back gives the table to the next one]")
+    app, d = fresh()
+    solo_field(app, 16)
+    f = app.act("admin", "add_format", {"kind": "groups", "name": "Main",
+        "config": {"n_groups": 1, "then_ko": False},
+        "entrant_ids": entrant_ids(app)})["format_id"]
+    app.act("admin", "start_format", {"id": f})
+    s = app.store
+    first = s.tables[1].match_id
+    app.act("admin", "put_back", {"match_id": first})
+    # unseating alone put the identical fixture straight back on the same
+    # table, because it was still the next one due
+    check(s.tables[1].match_id != first, "the table goes to a different match")
+    check(s.matches[first].status == "pending", "the put-back match is still to be played")
+    check(s.matches[first].table is None, "and is not holding a table")
+    check(s.matches[first].meta.get("deferred") == 1, "it is marked as put back once")
+
+    order = app.store.formats[f].pending_fixtures(s)
+    check(order and order[-1].id == first, "it sits at the back of the queue")
+
+    app.act("admin", "put_back", {"match_id": s.tables[1].match_id})
+    check(s.matches[first].meta.get("deferred") == 1, "putting another back leaves the first alone")
+
+    # it must still get played rather than being lost
+    drain(app)
+    check(s.matches[first].status == "done", "a put-back match still gets played in the end")
+    check(all(m.status == "done" for m in s.matches.values()
+              if m.format_id == f and m.status != "void"),
+          "and the draw finishes completely")
+    shutil.rmtree(d)
+
+
+def test_put_back_comes_round_again():
+    print("\n[a put-back match returns when nothing else can use the table]")
+    app, d = fresh()
+    solo_field(app, 2)
+    f = app.act("admin", "add_format", {"kind": "groups", "name": "Solo",
+        "config": {"n_groups": 1, "then_ko": False},
+        "entrant_ids": entrant_ids(app)})["format_id"]
+    app.act("admin", "start_format", {"id": f})
+    s = app.store
+    mid = s.tables[1].match_id
+    app.act("admin", "put_back", {"match_id": mid})
+    check(s.matches[mid].meta.get("deferred") == 1, "it was put back once")
+    # the only fixture there is, so the table has nothing else to offer and
+    # it comes straight back rather than the evening stalling
+    check(s.tables[1].match_id == mid,
+          "with nothing else to play it comes round again by itself")
+    app.act("admin", "put_back", {"match_id": mid})
+    check(s.matches[mid].meta.get("deferred") == 2, "putting it back again counts again")
+    drain(app)
+    check(s.matches[mid].status == "done", "and it still gets played")
     shutil.rmtree(d)
 
 
@@ -1261,7 +1317,9 @@ if __name__ == "__main__":
     test_swiss_does_not_outrun_a_bigger_cup()
     test_paced_swiss_keeps_the_field_level()
     test_swiss_ko_drops_the_queue()
-    test_send_back_returns_players()
+    test_put_back_returns_players()
+    test_put_back_frees_the_table()
+    test_put_back_comes_round_again()
     test_undo_unwinds_a_bracket()
     test_correcting_a_result_in_place()
     test_housekeeping()

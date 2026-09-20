@@ -446,22 +446,29 @@ class App:
     def op_void_match(self, p):
         self.store.append("match_void", {"match_id": p["match_id"]})
 
-    def op_unassign(self, p):
-        """Send a match back off its table.
+    def op_put_back(self, p):
+        """Free the table and put this match back in the queue.
 
-        For a scheduled fixture that just means unseating it — it goes back
-        in the pile and gets dispatched again. For anything that pairs on
-        demand there is no pile: the match was invented at the moment it was
-        seated, so leaving it pending stranded it *and* both players, who had
-        already been taken out of the queue. Those go back where they came
-        from instead."""
+        One button, because the two halves of it are never wanted apart: an
+        organiser clicking this has two people standing at a table who are
+        not going to play right now, and wants the table used.
+
+        Unseating alone was not enough. For a scheduled fixture the
+        dispatcher runs again in the same request and put the identical
+        match straight back on the identical table, so the button looked
+        broken — it is deferred now, which sends it behind the other
+        fixtures and gives the table to the next one. For anything that
+        pairs on demand there is no fixture to defer: the match was invented
+        at the moment it was seated, so it is scrapped and its players go
+        back to the queue they came out of."""
         s = self.store
         m = s.matches[p["match_id"]]
         f = s.formats.get(m.format_id)
-        s.append("match_unassign", {"match_id": m.id})
         if f and not f.can_redispatch_pending():
             s.append("match_void", {"match_id": m.id})
             self._requeue(m)
+        else:
+            s.append("match_defer", {"match_id": m.id})
 
     def op_reopen_match(self, p):
         """Undo a result. The match becomes unplayed again and anything it
@@ -785,7 +792,7 @@ OP_LEVEL = {
     "reset_format": 2, "swiss_cut_ko": 2, "add_entrant": 2,
     "add_cup": 2, "update_cup": 2, "remove_cup": 2,
     "join_queue": 1, "leave_queue": 1,
-    "report": 1, "void_match": 1, "reopen_match": 1, "unassign": 2, "assign": 2,
+    "report": 1, "void_match": 1, "reopen_match": 1, "put_back": 2, "assign": 2,
     "manual_match": 2, "manual_result": 1, "event_meta": 2, "rewind": 2,
     "new_event": 2, "create_event": 2, "set_phase": 2,
     "register": 0, "update_registration": 2,
