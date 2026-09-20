@@ -63,7 +63,7 @@ main{padding:var(--gap) 18px 40px;max-width:1400px;margin:0 auto}
 .cup-tabs button.on{background:var(--raised);border-color:var(--edge);color:var(--chalk);font-weight:600}
 
 /* ---------------------------------------------------------------- tables */
-.tables{
+#tables{
   display:grid;gap:var(--gap);
   grid-template-columns:repeat(auto-fit,minmax(290px,1fr));
   margin-bottom:26px;
@@ -152,7 +152,9 @@ button:disabled{opacity:.4;cursor:default}
 }
 .chip.hot{color:var(--signal);border-color:var(--signal-dim)}
 .chip.next{color:#150803;background:var(--signal);border-color:var(--signal);font-weight:650}
-.chip.tables{color:var(--muted)}
+.chip.where{color:var(--muted)}
+/* a state, not an action — orange is reserved for things you can press */
+.chip.state{color:var(--chalk);background:var(--raised)}
 .chip.when{color:var(--chalk)}
 /* whoever should be putting their shoes on */
 .row.ondeck{background:rgba(214,106,42,.09)}

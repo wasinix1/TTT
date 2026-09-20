@@ -27,11 +27,29 @@ def _tables_serving(store, cup_id):
             if not store.tables[n].paused]
 
 
-def _eta(index, tables, per, a_table_is_free):
+def _share(store, cup_id, tables):
+    """How many tables this cup can really expect to be using at once.
+
+    Not the same as the tables it is allowed on. A cup with nothing reserved
+    is competing for the shared pool, and saying "get ready" to everyone who
+    could theoretically be on the next free table is how you get six people
+    standing around while another cup plays on all three. Reserved tables
+    count in full; shared ones are divided between the cups contending for
+    them."""
+    reserved = [n for n in tables if store.cup_of_table(store.tables[n]) == cup_id]
+    shared = len(tables) - len(reserved)
+    if not shared:
+        return float(len(reserved))
+    rivals = {store.cup_key(store.formats[i]) for i in store.format_order
+              if i in store.formats and store.formats[i].status == "running"}
+    return len(reserved) + shared / max(1, len(rivals))
+
+
+def _eta(index, share, per, a_table_is_free):
     """Seconds until the match at this position is likely to start."""
-    if not tables:
+    if share <= 0:
         return None
-    waves = index // len(tables)
+    waves = int(index // share)
     # if every table is busy, the first one off still has to finish; on
     # average that is half a match away
     head = 0 if a_table_is_free else per / 2
@@ -52,6 +70,7 @@ def cup_board(store, cup_id, app):
     running.sort(key=lambda f: (f.priority(), store.format_order.index(f.id)))
 
     tables = _tables_serving(store, cup_id)
+    share = _share(store, cup_id, tables)
     per = store.median_match_seconds(cup_id)
     free = any(store.tables[n].match_id is None for n in tables)
     busy = store.busy_players()
@@ -110,7 +129,7 @@ def cup_board(store, cup_id, app):
             r["_slot"] = seat
             seat += 1
     for r in rows:
-        secs = _eta(r.pop("_slot"), tables, per, free)
+        secs = _eta(r.pop("_slot"), share, per, free)
         r["eta_min"] = _round_to(secs)
         r["tables"] = tables
         r["on_deck"] = (not r["blocked"]) and secs is not None and secs < per

@@ -46,8 +46,8 @@ function render(S) {
       <div class="q ${r.on_deck ? 'ondeck' : ''}">
         <span class="n">${r.position}</span>
         <span class="w">${esc(r.a)}${r.b ? ' v ' + esc(r.b) : ''}</span>
-        <span class="e">${esc(where(r, total))}</span>
-        <span class="e">${esc(when(r))}</span>
+        ${where(r, total) ? `<span class="e where">${esc(where(r, total))}</span>` : ''}
+        ${when(r) ? `<span class="e when">${esc(when(r))}</span>` : ''}
       </div>`).join('');
     const more = b.total > cap ? `<div class="q"><span class="n"></span>
       <span class="w" style="color:var(--dim)">and ${b.total - cap} more</span></div>` : '';

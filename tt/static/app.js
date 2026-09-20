@@ -19,6 +19,7 @@ let editing = null;
 // manual result entry — a match that never touched the queue or a table
 let manualDraft = { a: '', b: '', format_id: '', bo: 3, pts: 11 };
 let manualGames = [['', '']];
+let manualOpen = false;
 
 // which cup this browser is looking at — per-viewer, not shared with the
 // server, so admin and every spectator can each pick their own
@@ -273,8 +274,8 @@ function renderBoard() {
       <div class="row hoverable ${r.blocked ? 'blocked' : ''} ${r.on_deck ? 'ondeck' : ''}">
         <span class="pos">${r.position}</span>
         <span class="nm">${esc(r.a)}${r.b ? ` <span style="color:var(--dim)">v</span> ${esc(r.b)}` : ''}</span>
-        <span class="chip when">${esc(whenLabel(r))}</span>
-        <span class="chip tables">${esc(whereLabel(r))}</span>
+        ${whenLabel(r) ? `<span class="chip when">${esc(whenLabel(r))}</span>` : ''}
+        <span class="chip where">${esc(whereLabel(r))}</span>
         ${r.kind === 'fixture' && canScore()
           ? `<button class="ghost tiny on-hover" data-act="score" data-m="${r.id}">Enter result</button>` : ''}
         ${r.kind === 'fixture' && isAdmin()
@@ -357,6 +358,15 @@ function renderManual() {
   if (!canScore()) { el.innerHTML = ''; return; }
   const entrants = S.entrants.slice().sort((a, b) => a.name.localeCompare(b.name));
   if (entrants.length < 2) { el.innerHTML = ''; return; }
+  if (!manualOpen) {
+    el.innerHTML = `<div class="panel"><div class="panel-body">
+      <button class="ghost tiny" data-act="manual-open">Add a result by hand</button>
+      <p class="sub" style="margin-top:6px">For a game played off the queue — a walk-up
+        match, or one that happened before anyone was keeping track. Anything the console
+        arranged is scored on the match itself.</p>
+    </div></div>`;
+    return;
+  }
   const runningFormats = S.formats.filter(f => f.status === 'running');
   const need = Math.floor(+manualDraft.bo / 2) + 1;
   let wa = 0, wb = 0;
@@ -374,7 +384,8 @@ function renderManual() {
 
   const ready = decided && manualDraft.a && manualDraft.b && manualDraft.a !== manualDraft.b;
   el.innerHTML = `<div class="panel">
-    <div class="panel-head"><h2>Enter a result</h2><span class="note">for a match played off the queue</span></div>
+    <div class="panel-head"><h2>Add a result by hand</h2>
+      <button class="ghost tiny" data-act="manual-close">Close</button></div>
     <div class="panel-body">
       <div class="inline">
         <div class="field"><label for="man-a">Side A</label>
@@ -561,7 +572,7 @@ function tabTables() {
   const modeBar = S.cups.length > 1 ? `
     <fieldset><legend>Sharing</legend>
       <div class="inline" style="align-items:center">
-        <span class="chip ${split ? '' : 'next'}">${split ? 'Split between cups' : 'All tables shared'}</span>
+        <span class="chip state">${split ? 'Split between cups' : 'All tables shared'}</span>
         ${split
           ? `<button class="ghost tiny" data-act="share-tables">Share every table instead</button>`
           : `<button class="tiny" data-act="split-tables">Split them between cups</button>`}
@@ -885,10 +896,12 @@ document.addEventListener('click', async e => {
       games,
       scoring: { best_of: +manualDraft.bo, points_to: +manualDraft.pts, win_by: 2 },
     });
-    if (ok) { manualDraft.a = ''; manualDraft.b = ''; manualGames = [['', '']]; renderManual(); }
+    if (ok) { manualDraft.a = ''; manualDraft.b = ''; manualGames = [['', '']]; manualOpen = false; renderManual(); }
     return;
   }
   if (a === 'manual-clear') { manualGames = [['', '']]; renderManual(); return; }
+  if (a === 'manual-open') { manualOpen = true; renderManual(); return; }
+  if (a === 'manual-close') { manualOpen = false; renderManual(); return; }
   if (a === 'unassign') return void api('unassign', { match_id: b.dataset.m });
   if (a === 'jump') {
     const row = (S.board || []).flatMap(x => x.up).find(r => r.id === b.dataset.m);
