@@ -32,6 +32,7 @@ class App:
         self.store = Store(os.path.join(data_dir, "event.db"))
         self.keys = self._load_keys()
         self._cache = {}          # (version, role) -> encoded state JSON
+        self._reg_hits = {}       # ip -> recent registration timestamps
         if not self.store.tables:
             for n in (1, 2, 3):
                 self.store.append("table_set", {"number": n, "name": f"Table {n}"})
@@ -44,6 +45,24 @@ class App:
         keys = {"admin": secrets.token_urlsafe(12), "referee": secrets.token_urlsafe(9)}
         json.dump(keys, open(path, "w"), indent=2)
         return keys
+
+    # A phone filling in a form does this once or twice. Anything hammering
+    # it is not a person, and a cheap ceiling here beats a CAPTCHA on a page
+    # that club members have to get through.
+    REG_BURST, REG_WINDOW = 6, 600
+
+    def registration_allowed(self, ip) -> bool:
+        now = time.time()
+        if len(self._reg_hits) > 512:            # never grow without bound
+            self._reg_hits = {k: v for k, v in self._reg_hits.items()
+                              if v and now - v[-1] < self.REG_WINDOW}
+        hits = [t for t in self._reg_hits.get(ip, []) if now - t < self.REG_WINDOW]
+        if len(hits) >= self.REG_BURST:
+            self._reg_hits[ip] = hits
+            return False
+        hits.append(now)
+        self._reg_hits[ip] = hits
+        return True
 
     def role_for(self, token):
         if token and secrets.compare_digest(token, self.keys["admin"]):
@@ -66,6 +85,73 @@ class App:
             return s.entrant_name(eid)
         ids = m.side_a if which == "a" else m.side_b
         return " / ".join(s.players[p].name for p in ids if p in s.players) or "—"
+    FORMAT_LINE = {
+        "open_play": "Open play — a queue, paired on strength",
+        "groups": "Group stage, then a knockout",
+        "single_elim": "Straight knockout",
+        "swiss": "Swiss — everyone plays every round",
+    }
+
+    def _podium(self, f):
+        """Who won, for the page the event leaves behind.
+
+        A draw that ended in a bracket is decided by its final; anything else
+        by its own standings, merged across groups so the answer is the
+        event's, not group A's."""
+        s = self.store
+        done = [m for m in s.matches.values()
+                if m.format_id == f.id and m.status == "done"]
+        if not done:
+            return []
+        if f.phase == "ko" or f.kind == "single_elim":
+            final = max(done, key=lambda m: (m.meta.get("round", 0), m.seq))
+            win, lose = ((final.entrant_a, final.entrant_b) if final.winner == "a"
+                         else (final.entrant_b, final.entrant_a))
+            out = [{"place": 1, "name": s.entrant_name(win)}]
+            if lose:
+                out.append({"place": 2, "name": s.entrant_name(lose)})
+            return out
+        rows = [r for sec in f.standings(s) for r in sec["rows"]]
+        rows.sort(key=lambda r: (-r["won"], -r["game_diff"], -r["point_diff"], r["name"]))
+        return [{"place": i, "name": r["name"], "record": f"{r['won']}–{r['lost']}"}
+                for i, r in enumerate(rows[:3], 1)]
+
+    def public_state(self):
+        """What the landing page gets. Deliberately not `state()`: no roster,
+        no strengths, no contact details, nothing admin-shaped — so the
+        public page cannot leak anything, and loads fast on hall wifi."""
+        s = self.store
+        with s.lock:
+            phase = s.phase()
+            return {
+                "phase": phase,
+                "now": time.time(),
+                "name": s.event.get("name") or "Table tennis",
+                "blurb": s.event.get("blurb") or "",
+                "venue": s.event.get("venue") or "",
+                "starts_at": s.event.get("starts_at") or "",
+                "starts_ts": s.starts_at_ts(),
+                "open": phase == "registration",
+                "cups": [self._public_cup(c, phase)
+                         for c in (s.cups[i] for i in s.cup_order if i in s.cups)],
+            }
+
+    def _public_cup(self, c, phase):
+        s = self.store
+        f = s.formats.get(c.format_id)
+        sc = (f.config.get("scoring") if f else None) or {}
+        out = {
+            "id": c.id, "name": c.name, "blurb": c.blurb,
+            "entry": c.entry,
+            "registration": c.registration,
+            "format": f.kind if f else "",
+            "format_line": self.FORMAT_LINE.get(f.kind, "") if f else "",
+            "scoring": (f"Best of {sc.get('best_of', 3)} to {sc.get('points_to', 11)}"
+                        if f else ""),
+        }
+        if phase == "done" and f:
+            out["podium"] = self._podium(f)
+        return out
 
     def match_dto(self, m):
         s = self.store
@@ -139,7 +225,8 @@ class App:
 
             return {
                 "version": s.version, "seq": s.seq, "role": role,
-                "event": s.event,
+                "event": s.event, "phase": s.phase(),
+                "now": time.time(),
                 "tables": tables,
                 "cups": [s.cups[c].to_dict() for c in s.cup_order if c in s.cups],
                 "queues": queues,
@@ -159,6 +246,13 @@ class App:
                                              for t in s.tables.values() if t.match_id)}
                              for e in sorted(s.entrants.values(),
                                              key=lambda e: e.name.lower())],
+                "people": [{**s.people[i].to_dict(),
+                            "playing": bool(s.person_playing(i))}
+                           for i in s.people_order if i in s.people]
+                          if role == "admin" else [],
+                "registrations": [r.to_dict() for r in (
+                    s.registrations[i] for i in s.registration_order
+                    if i in s.registrations)] if role == "admin" else [],
                 "history": s.history(40) if role == "admin" else [],
                 "keys": self.keys if role == "admin" else {},
             }
@@ -182,9 +276,7 @@ class App:
     # players & entrants
     def op_add_player(self, p):
         s = self.store
-        pid = s.new_id("P", s.players)
-        s.append("player_add", {"id": pid, "name": p["name"].strip(),
-                                "strength": float(p.get("strength", 5))})
+        pid = self._make_player(p["name"].strip(), float(p.get("strength", 5)))
         if p.get("solo", True):
             eid = s.new_id("E", s.entrants)
             s.append("entrant_add", {"id": eid, "name": p["name"].strip(),
@@ -192,16 +284,22 @@ class App:
         return {"player_id": pid}
 
     def op_update_player(self, p):
-        self.store.append("player_update", p)
+        s = self.store
+        s.append("player_update", p)
+        pl = s.players.get(p.get("id"))
+        if pl and pl.person_id and pl.person_id in s.people and "strength" in p:
+            # the whole point of the directory: tonight's tuning is next
+            # month's starting point
+            s.append("person_update", {"id": pl.person_id,
+                                       "strength": float(p["strength"]),
+                                       "last_seen": s.event.get("id", "")})
+        if pl and pl.person_id and "name" in p:
+            s.append("person_update", {"id": pl.person_id, "name": p["name"]})
 
     def op_add_team(self, p):
         s = self.store
-        pids = []
-        for name, strength in p["members"]:
-            pid = s.new_id("P", s.players)
-            s.append("player_add", {"id": pid, "name": name.strip(),
-                                    "strength": float(strength)})
-            pids.append(pid)
+        pids = [self._make_player(name.strip(), float(strength))
+                for name, strength in p["members"]]
         eid = s.new_id("E", s.entrants)
         label = p.get("name") or " / ".join(n for n, _ in p["members"])
         s.append("entrant_add", {"id": eid, "name": label, "player_ids": pids})
@@ -227,13 +325,6 @@ class App:
         if f.uses_queue() and f.status == "running":
             s.append("queue_join", {"entrant_id": eid, "format_id": f.id})
 
-    def op_reset_players(self, p):
-        """Danger zone: wipe players/entrants and void whatever matches or
-        queue entries depended on them. Tables, cups and format settings
-        are kept, so the event doesn't need rebuilding for a fresh roster."""
-        self.store.append("players_reset", {})
-
-    # tables
     def op_set_table(self, p):
         self.store.append("table_set", p)
 
@@ -427,33 +518,278 @@ class App:
             s.append("match_assign", {"match_id": mid, "table": int(p["table"])})
         return {"match_id": mid}
 
-    # admin
+    # the event itself
     def op_event_meta(self, p):
         self.store.append("event_meta", p)
+
+    def op_new_event(self, p):
+        """Start a new event. Players, teams, matches and formats go; tables,
+        cups and your access keys carry forward. This is what the old
+        danger-zone resets were reaching for."""
+        s = self.store
+        s.append("event_new", {
+            "name": (p.get("name") or "").strip() or "Table tennis evening",
+            "blurb": p.get("blurb", ""), "venue": p.get("venue", ""),
+            "starts_at": p.get("starts_at", ""),
+            "keep_cups": bool(p.get("keep_cups", True)),
+        })
+        return {"event_id": s.event["id"]}
+
+    def op_create_event(self, p):
+        """Everything the wizard collected, written in one go.
+
+        It emits exactly the events the Setup tabs emit — event_new, cup_add,
+        format_add, table_set — so there is no second configuration path and
+        anything it sets stays correctable in the normal place afterwards.
+        Doing it as one action rather than a dozen round trips also means it
+        cannot half-fail and leave a mangled event behind."""
+        s = self.store
+        cups = p.get("cups") or []
+        tables = p.get("tables") or []
+
+        # the wizard is authoritative over cups: it clears them and writes
+        # the ones it was given, rather than merging into whatever was there
+        s.append("event_new", {
+            "name": (p.get("name") or "").strip() or "Table tennis evening",
+            "blurb": p.get("blurb", ""), "venue": p.get("venue", ""),
+            "starts_at": p.get("starts_at", ""),
+            "keep_cups": False,
+        })
+
+        cup_ids = []
+        for c in cups:
+            cid = s.new_id("C", s.cups)
+            s.append("cup_add", {
+                "id": cid, "name": (c.get("name") or "").strip() or "Cup",
+                "blurb": c.get("blurb", ""),
+                "entry": c.get("entry") or "single",
+                "registration": c.get("registration") or "closed",
+            })
+            cup_ids.append(cid)
+
+        for c, cid in zip(cups, cup_ids):
+            kind = c.get("kind")
+            if not kind:
+                continue
+            cfg = dict(c.get("config") or {})
+            cfg["cup_id"] = cid
+            cfg["entrant_ids"] = []          # nobody is in it until the door
+            fid = s.new_id("F", s.formats)
+            s.append("format_add", {
+                "id": fid, "kind": kind,
+                "name": c.get("format_name") or c.get("name") or "",
+                "config": cfg,
+            })
+            s.append("cup_update", {"id": cid, "format_id": fid})
+
+        if tables:
+            wanted = {}
+            for n, t in enumerate(tables, start=1):
+                ci = t.get("cup")
+                wanted[n] = {
+                    "number": n, "name": (t.get("name") or "").strip() or f"Table {n}",
+                    "cup_id": cup_ids[ci] if isinstance(ci, int) and 0 <= ci < len(cup_ids) else "",
+                    "paused": False,
+                }
+            for n in list(s.tables):
+                if n not in wanted:
+                    s.append("table_remove", {"number": n})
+            for spec in wanted.values():
+                s.append("table_set", spec)
+
+        return {"event_id": s.event["id"], "cup_ids": cup_ids}
+
+    # registration — the one thing the public side of the wall can write
+    MAX_PER_CUP = 300
+
+    def op_register(self, p):
+        """Take an entry from the landing page.
+
+        Everything here is a claim, including the strength: it creates a
+        Registration and nothing else, so no amount of nonsense arriving on
+        this path can reach the dispatcher. It becomes a player when somebody
+        confirms it at the door."""
+        s = self.store
+        cup = s.cups.get(p.get("cup_id") or "")
+        if not cup:
+            raise ValueError("pick which cup you are entering")
+        if cup.registration != "open" or s.shows_console():
+            raise ValueError("that cup is not taking entries")
+
+        text = lambda v, n: " ".join(str(v or "").split())[:n]
+        name = text(p.get("name"), 60)
+        if not name:
+            raise ValueError("we need a name to put down")
+
+        kind = p.get("kind") or "single"
+        if cup.entry != "pair":
+            kind = "single"
+        elif kind not in ("pair", "seeking"):
+            kind = "seeking"
+
+        partner = text(p.get("partner_name"), 60)
+        if kind == "pair" and not partner:
+            raise ValueError("a pair needs both names — or pick "
+                             "\u201clooking for a partner\u201d")
+
+        if len(s.regs_for_cup(cup.id, status=None)) >= self.MAX_PER_CUP:
+            raise ValueError("that cup is full")
+
+        clamp = lambda v: max(1.0, min(10.0, float(v)))
+        try:
+            strength = clamp(p.get("strength", 5))
+            partner_strength = clamp(p.get("partner_strength", 5))
+        except (TypeError, ValueError):
+            raise ValueError("strength should be a number from 1 to 10")
+
+        rid = s.new_id("R", s.registrations)
+        s.append("registration_add", {
+            "id": rid, "cup_id": cup.id, "kind": kind,
+            "name": name, "strength": strength,
+            "partner_name": partner if kind == "pair" else "",
+            "partner_strength": partner_strength if kind == "pair" else 5.0,
+            "team_name": text(p.get("team_name"), 60) if kind == "pair" else "",
+            "note": text(p.get("note"), 500),
+            "ts": time.time(),
+        })
+        return {"registration_id": rid, "cup": cup.name}
+
+    # -------------------------------------------------------------- the door
+
+    def _person_for(self, name, strength, person_id=None):
+        """Find this person in the club directory, or add them to it.
+
+        Every admin path that creates a player comes through here, so the
+        directory fills itself up over an evening rather than being a list
+        somebody has to maintain."""
+        s = self.store
+        who = s.people.get(person_id) if person_id else s.person_by_name(name)
+        if who is None:
+            pid = s.new_id("N", s.people)
+            s.append("person_add", {"id": pid, "name": name,
+                                    "strength": float(strength)})
+            return s.people[pid]
+        s.append("person_update", {"id": who.id, "strength": float(strength),
+                                   "last_seen": s.event.get("id", "")})
+        return who
+
+    def _make_player(self, name, strength, person_id=None):
+        s = self.store
+        who = self._person_for(name, strength, person_id)
+        pid = s.new_id("P", s.players)
+        s.append("player_add", {"id": pid, "name": name,
+                                "strength": float(strength),
+                                "person_id": who.id})
+        return pid
+
+    def _enter(self, entrant_id, cup):
+        """Put a confirmed entrant into the cup's draw if the draw can still
+        take them. A knockout that has already started cannot, and quietly
+        dropping them would be worse than saying so."""
+        s = self.store
+        f = s.formats.get(cup.format_id) if cup else None
+        if not f:
+            return "roster", "no draw set up for that cup yet"
+        if f.status != "running":
+            if entrant_id not in f.entrant_ids:
+                s.append("format_update", {"id": f.id,
+                                           "entrant_ids": f.entrant_ids + [entrant_id]})
+            return "entered", ""
+        if f.kind == "swiss" and f.phase != "ko":
+            self.op_add_entrant({"id": f.id, "entrant_id": entrant_id})
+            return "entered", ""
+        return "roster", f"{f.name or f.kind} has already started"
+
+    def op_admit(self, p):
+        """Confirm somebody at the door — pre-registered or a walk-in.
+
+        This is where an intent becomes a player. One path for both, because
+        a walk-in is just a confirmation with no registration behind it."""
+        s = self.store
+        reg = s.registrations.get(p.get("registration_id") or "")
+        if p.get("registration_id") and not reg:
+            raise ValueError("no such entry")
+        if reg and reg.status == "confirmed":
+            raise ValueError("that one is already in")
+
+        cup = s.cups.get(p.get("cup_id") or (reg.cup_id if reg else ""))
+        kind = p.get("kind") or (reg.kind if reg else "single")
+        name = " ".join(str(p.get("name") or (reg.name if reg else "")).split())[:60]
+        if not name:
+            raise ValueError("we need a name")
+        partner = " ".join(str(p.get("partner_name")
+                                or (reg.partner_name if reg else "")).split())[:60]
+        if kind == "pair" and not partner:
+            raise ValueError("a pair needs both names")
+
+        num = lambda v, dflt: max(1.0, min(10.0, float(v if v not in (None, "") else dflt)))
+        strength = num(p.get("strength"), reg.strength if reg else 5.0)
+
+        ids = [self._make_player(name, strength, p.get("person_id"))]
+        if kind == "pair":
+            ps = num(p.get("partner_strength"), reg.partner_strength if reg else 5.0)
+            ids.append(self._make_player(partner, ps, p.get("partner_person_id")))
+
+        label = (p.get("team_name") or (reg.team_name if reg else "")
+                 or " / ".join(s.players[i].name for i in ids))
+        eid = s.new_id("E", s.entrants)
+        s.append("entrant_add", {"id": eid, "name": label, "player_ids": ids})
+
+        where, why = self._enter(eid, cup)
+        if reg:
+            s.append("registration_update", {"id": reg.id, "status": "confirmed",
+                                             "entrant_id": eid})
+        return {"entrant_id": eid, "where": where, "why": why,
+                "cup": cup.name if cup else ""}
+
+    def op_update_person(self, p):
+        self.store.append("person_update", p)
+
+    def op_remove_person(self, p):
+        self.store.append("person_remove", p)
+
+    def op_add_from_directory(self, p):
+        """Put a known player into tonight's event without retyping them."""
+        s = self.store
+        who = s.people.get(p.get("person_id") or "")
+        if not who:
+            raise ValueError("no such person")
+        if s.person_playing(who.id):
+            raise ValueError(f"{who.name} is already in this event")
+        pid = self._make_player(who.name, p.get("strength", who.strength), who.id)
+        eid = s.new_id("E", s.entrants)
+        s.append("entrant_add", {"id": eid, "name": who.name, "player_ids": [pid]})
+        cup = s.cups.get(p.get("cup_id") or "")
+        where, why = self._enter(eid, cup) if cup else ("roster", "")
+        return {"entrant_id": eid, "where": where, "why": why}
+
+    def op_update_registration(self, p):
+        self.store.append("registration_update", p)
+
+    def op_set_phase(self, p):
+        """Pin the phase, or clear the pin and go back to the clock."""
+        from .store import PHASES
+        ph = p.get("phase") or ""
+        if ph and ph not in PHASES:
+            raise ValueError(f"unknown phase {ph!r}")
+        self.store.append("event_meta", {"phase_pin": ph})
 
     def op_rewind(self, p):
         self.store.rewind(int(p["seq"]))
 
-    def op_reset_event(self, p):
-        """Danger zone: wipe the whole evening (players, teams, matches,
-        formats, cups) and start clean. Access keys live in a separate file
-        and are never touched by this."""
-        s = self.store
-        s.rewind(0)
-        for n in (1, 2, 3):
-            s.append("table_set", {"number": n, "name": f"Table {n}"})
-
 
 OP_LEVEL = {
     "add_player": 2, "update_player": 2, "add_team": 2, "update_entrant": 2,
-    "reset_players": 2,
     "set_table": 2, "remove_table": 2, "share_tables": 2, "split_tables": 2,
     "add_format": 2, "update_format": 2, "start_format": 2, "remove_format": 2,
     "reset_format": 2, "swiss_cut_ko": 2, "add_entrant": 2,
     "add_cup": 2, "update_cup": 2, "remove_cup": 2,
     "join_queue": 1, "leave_queue": 1,
     "report": 1, "void_match": 1, "reopen_match": 1, "unassign": 2, "assign": 2,
-    "manual_match": 2, "manual_result": 1, "event_meta": 2, "rewind": 2, "reset_event": 2,
+    "manual_match": 2, "manual_result": 1, "event_meta": 2, "rewind": 2,
+    "new_event": 2, "create_event": 2, "set_phase": 2,
+    "register": 0, "update_registration": 2,
+    "admit": 2, "update_person": 2, "remove_person": 2, "add_from_directory": 2,
 }
 
 
@@ -501,6 +837,9 @@ class Handler(BaseHTTPRequestHandler):
                 return
             return self._send(200, body, etag=tag)
 
+        if path == "/api/public":
+            return self._send(200, self.app.public_state())
+
         if path == "/api/stream":
             return self._stream()
 
@@ -516,8 +855,20 @@ class Handler(BaseHTTPRequestHandler):
         if path.startswith("/static/"):
             return self._static(path[len("/static/"):])
 
-        # role-scoped entry points; all serve the same page
-        return self._static("index.html")
+        if path == "/join":
+            return self._site_page()
+
+        # Role-scoped entry points always get the console: an admin holding
+        # the key wants the console whatever phase the event is in. The key
+        # is in the path on this first load — the client only starts sending
+        # it as a header once the page it is asking for is running — so the
+        # prefix is what we have to go on here.
+        #
+        # The bare root is phase-driven: the site before the doors open, the
+        # console once they have.
+        if path.startswith(("/a/", "/r/")) or self.app.store.shows_console():
+            return self._static("index.html")
+        return self._site_page()
 
     def do_POST(self):
         u = urlparse(self.path)
@@ -530,6 +881,10 @@ class Handler(BaseHTTPRequestHandler):
         except Exception:
             return self._send(400, {"error": "bad json"})
         role = self.app.role_for(self._token(q) or body.get("token", ""))
+        if body.get("op") == "register" and role == "public" \
+                and not self.app.registration_allowed(self.client_address[0]):
+            return self._send(429, {"error": "too many entries from here just now — "
+                                             "give it a few minutes"})
         try:
             out = self.app.act(role, body["op"], body.get("data", {}))
         except PermissionError as e:
@@ -586,10 +941,60 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(500, f"could not build a QR code: {e}", "text/plain")
         self._send(200, svg, "image/svg+xml")
 
+    def _site_page(self):
+        """The landing page, with its head filled in from the event.
+
+        Pasted into a club chat, a bare link is a bare link — these tags are
+        what turn it into a card with the name, the date and the blurb, which
+        is most of what advertising an event actually is."""
+        s = self.app.store
+        ev = s.event
+        name = ev.get("name") or "Table tennis"
+        bits = []
+        ts = s.starts_at_ts()
+        if ts:
+            bits.append(time.strftime("%A %d %B, %H:%M", time.localtime(ts)))
+        if ev.get("venue"):
+            bits.append(ev["venue"])
+        desc = ev.get("blurb") or " · ".join(bits) or "Table tennis"
+        if bits and ev.get("blurb"):
+            desc = " · ".join(bits) + " — " + desc
+        esc = lambda t: (str(t).replace("&", "&amp;").replace("<", "&lt;")
+                         .replace(">", "&gt;").replace('"', "&quot;"))
+        meta = (
+            f'<title>{esc(name)}</title>\n'
+            f'<meta name="description" content="{esc(desc)}">\n'
+            f'<meta property="og:type" content="website">\n'
+            f'<meta property="og:title" content="{esc(name)}">\n'
+            f'<meta property="og:description" content="{esc(desc)}">\n'
+            f'<meta name="twitter:card" content="summary">\n'
+            f'<meta name="twitter:title" content="{esc(name)}">\n'
+            f'<meta name="twitter:description" content="{esc(desc)}">'
+        )
+        path = os.path.join(STATIC, "site.html")
+        with open(path, encoding="utf-8") as fh:
+            html = fh.read()
+        html = html.replace("<!--META-->", meta)
+        self._send(200, html, "text/html; charset=utf-8")
+
     def _print_page(self, q):
         """A sheet to print and tape to the wall."""
         base = q.get("base", [""])[0] or ""
-        name = self.app.store.event.get("name") or "Table tennis"
+        ev = self.app.store.event
+        name = ev.get("name") or "Table tennis"
+        # two posters, one page: the live link for the wall during the
+        # evening, and the event itself for the noticeboard beforehand
+        announce = q.get("mode", [""])[0] == "event"
+        ts = self.app.store.starts_at_ts()
+        when = time.strftime("%A %d %B · %H:%M", time.localtime(ts)) if ts else ""
+        lead = ("Scan to see what is on and enter your name"
+                if announce else
+                "Scan for live tables, the queue and results")
+        detail = ""
+        if announce:
+            detail = "".join(
+                f'<div class="detail">{x}</div>'
+                for x in (when, ev.get("venue") or "", ev.get("blurb") or "") if x)
         has_qr = True
         try:
             import segno  # noqa
@@ -608,10 +1013,13 @@ class Handler(BaseHTTPRequestHandler):
  h1{{font-size:34px;margin:0 0 6px;letter-spacing:-.02em}}
  p{{color:#5d7972;margin:0 0 28px;font-size:17px}}
  .url{{font-size:23px;margin-top:22px;font-weight:600;word-break:break-all}}
+ .detail{{font-size:19px;margin-bottom:8px;max-width:30em}}
+ .detail:last-of-type{{color:#5d7972;font-size:16px;margin-bottom:24px}}
  @media print{{.sheet{{padding:0}}}}
 </style>
 <div class="sheet"><h1>{name}</h1>
-<p>Scan for live tables, the queue and results</p>
+<p>{lead}</p>
+{detail}
 {qr}<div class="url">{base.replace('https://','')}</div></div>"""
         self._send(200, html, "text/html; charset=utf-8")
 

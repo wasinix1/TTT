@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0d1b1a">
+<!--META-->
+<link rel="stylesheet" href="/static/style.css">
+<style>
+/* The public face of the club. Same visual language as the console — dark
+   table surface, chalk lines, one orange — but laid out to be read by
+   someone deciding whether to come, not by a referee at four metres. */
+body{padding-bottom:0}
+.site{max-width:680px;margin:0 auto;padding:0 20px 64px}
+.hero{padding:56px 0 34px;border-bottom:1px solid var(--edge)}
+.kicker{display:flex;align-items:center;gap:10px;color:var(--muted);
+        font-size:13px;letter-spacing:.06em;text-transform:uppercase}
+.hero h1{font-size:clamp(30px,7vw,44px);line-height:1.08;margin:14px 0 0}
+.blurb{color:var(--muted);font-size:17px;margin:16px 0 0;max-width:52ch}
+.facts{display:flex;flex-wrap:wrap;gap:26px;margin-top:26px}
+.fact .k{font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:var(--dim)}
+.fact .v{font-size:17px;font-weight:600;margin-top:3px}
+.count{margin-top:28px;display:flex;gap:16px}
+.count div{text-align:center;min-width:58px}
+.count .n{font-size:30px;font-weight:650;line-height:1}
+.count .l{font-size:11px;letter-spacing:.07em;text-transform:uppercase;color:var(--dim);margin-top:5px}
+.section{padding:34px 0}
+.section h2{font-size:13px;letter-spacing:.07em;text-transform:uppercase;color:var(--muted);margin-bottom:14px}
+.cup{border:1px solid var(--edge);border-radius:var(--r);padding:16px 18px;margin-bottom:10px;
+     background:var(--surface);display:flex;gap:14px;align-items:flex-start}
+.cup .body{flex:1;min-width:0}
+.cup .name{font-size:18px;font-weight:650}
+.cup .meta{color:var(--muted);font-size:14px;margin-top:4px}
+.cup .line{color:var(--dim);font-size:13.5px;margin-top:6px}
+.podium{margin-top:10px;display:flex;flex-direction:column;gap:4px}
+.podium div{display:flex;gap:10px;align-items:baseline;font-size:15px}
+.podium .pl{color:var(--dim);font-size:12px;width:22px;flex:none}
+.podium .who{font-weight:600}
+.podium .rec{color:var(--dim);font-size:13px}
+.podium .win .who{color:var(--signal)}
+.tag{font-size:11.5px;letter-spacing:.05em;text-transform:uppercase;padding:4px 8px;
+     border-radius:2px;background:var(--raised);color:var(--muted);white-space:nowrap}
+.tag.open{background:var(--signal-dim);color:#ffd9c4}
+.foot{border-top:1px solid var(--edge);padding-top:22px;color:var(--dim);font-size:14px;
+      display:flex;justify-content:space-between;gap:14px;flex-wrap:wrap}
+.foot a{color:var(--muted)}
+.blank{color:var(--dim)}
+.cta{display:block;width:100%;text-align:center;background:var(--signal);color:#160b04;
+     border:0;border-radius:var(--r);padding:15px 20px;font-size:17px;font-weight:650;
+     margin-top:22px;cursor:pointer;text-decoration:none}
+.cta:hover{filter:brightness(1.07)}
+.cta.ghost{background:transparent;color:var(--chalk);border:1px solid var(--edge);font-weight:600}
+.form-field{margin-top:18px}
+.form-field label{display:block;font-size:13px;letter-spacing:.04em;text-transform:uppercase;
+                  color:var(--muted);margin-bottom:7px}
+.form-field input,.form-field select,.form-field textarea{
+  width:100%;background:var(--surface);color:var(--chalk);border:1px solid var(--edge);
+  border-radius:var(--r);padding:13px 14px;font-size:17px}
+.form-field textarea{min-height:92px;resize:vertical;line-height:1.45}
+.form-field .hint{color:var(--dim);font-size:13px;margin-top:6px}
+.choice{display:flex;gap:9px;flex-wrap:wrap;margin-top:4px}
+.choice button{flex:1;min-width:130px;background:var(--surface);color:var(--chalk);
+               border:1px solid var(--edge);border-radius:var(--r);padding:13px 12px;
+               font-size:15px;cursor:pointer;text-align:left}
+.choice button.on{border-color:var(--signal);background:var(--raised)}
+.choice .t{display:block;font-weight:650}
+.choice .s{display:block;color:var(--muted);font-size:13px;margin-top:2px}
+.err{color:#ff9d6e;font-size:14.5px;margin-top:14px}
+.done-card{border:1px solid var(--signal-dim);background:var(--raised);
+           border-radius:var(--r);padding:22px;margin-top:8px}
+.done-card h2{font-size:21px;margin-bottom:8px}
+.done-card p{color:var(--muted);margin:0 0 6px}
+.back{display:inline-block;margin-top:26px;color:var(--muted);font-size:15px}
+</style>
+</head>
+<body>
+<div class="site">
+  <header class="hero">
+    <div class="kicker"><span class="mark" aria-hidden="true"></span><span id="kicker">Upcoming</span></div>
+    <h1 id="name">…</h1>
+    <p class="blurb" id="blurb" hidden></p>
+    <div class="facts" id="facts"></div>
+    <div class="count" id="count" hidden></div>
+  </header>
+
+  <div id="cta-slot"></div>
+
+  <section class="section" id="join" hidden></section>
+
+  <section class="section" id="cups-section" hidden>
+    <h2 id="cups-head">What's being played</h2>
+    <div id="cups"></div>
+    <p class="blank" id="cups-note" hidden></p>
+  </section>
+
+  <footer class="section foot" id="foot">
+    <span id="foot-note"></span>
+    <a href="/">Live scores and tables</a>
+  </footer>
+</div>
+<script src="/static/site.js"></script>
+</body>
+</html>

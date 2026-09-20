@@ -27,11 +27,31 @@ class Scoring:
 
 
 @dataclass
+class Person:
+    """Somebody the club knows, as opposed to somebody playing tonight.
+
+    Venue-level state, like tables and cups: an event clears its roster, this
+    outlives it. What it is really for is the strength — a name is as fast to
+    type as to search for, but the number you tuned by eye last month is a
+    judgement worth keeping, and it is what makes a returning player's first
+    pairing a good one."""
+    id: str
+    name: str
+    strength: float = 5.0
+    note: str = ""
+    last_seen: str = ""            # the event id they last played in
+
+    def to_dict(self):
+        return asdict(self)
+
+
+@dataclass
 class Player:
     id: str
     name: str
     strength: float = 5.0          # 1..10, organiser estimate
     active: bool = True
+    person_id: Optional[str] = None   # who they are in the club directory
 
     def to_dict(self):
         return asdict(self)
@@ -102,8 +122,39 @@ class Table:
 
 @dataclass
 class Cup:
+    """A sub-tournament inside the event, and the unit of entry: a
+    registration names exactly one cup, and confirming it lands the entrant
+    in that cup's nominated format."""
     id: str
     name: str
+    blurb: str = ""                    # one line for the landing page
+    entry: str = "single"              # single | pair — what the form asks for
+    registration: str = "closed"       # open | closed
+    format_id: Optional[str] = None    # where confirmations land
+
+    def to_dict(self):
+        return asdict(self)
+
+
+@dataclass
+class Registration:
+    """Somebody who put their name down before the night.
+
+    An intent, not an entry: it creates no Player and no Entrant, so nothing
+    the dispatcher can see comes from the public side of the wall. It becomes
+    real only when an admin confirms whoever actually turned up."""
+    id: str
+    cup_id: str
+    kind: str = "single"           # single | pair | seeking (a partner)
+    name: str = ""
+    strength: float = 5.0          # claimed, not authoritative
+    partner_name: str = ""
+    partner_strength: float = 5.0
+    team_name: str = ""
+    note: str = ""
+    status: str = "pending"        # pending | confirmed | dropped
+    entrant_id: Optional[str] = None
+    created_ts: float = 0.0
 
     def to_dict(self):
         return asdict(self)
