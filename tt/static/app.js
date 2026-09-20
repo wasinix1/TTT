@@ -16,6 +16,10 @@ const form = {};           // sticky admin form values
 let manualDraft = { a: '', b: '', format_id: '', bo: 3, pts: 11 };
 let manualGames = [['', '']];
 
+// upcoming matches (knockout slots included) expanded for scoring without
+// first seating them at a table
+let openReports = new Set();
+
 // which cup this browser is looking at — per-viewer, not shared with the
 // server, so admin and every spectator can each pick their own
 let selectedCup = localStorage.getItem('tt_cup') || '';
@@ -217,7 +221,7 @@ function scorePad(m) {
         ${decided ? `Save ${wa > wb ? esc(m.a) : esc(m.b)} win` : 'Save result'}</button>
       ${rq ? `<label class="hint"><input type="checkbox" id="rq-${m.id}" ${(drafts['rq-' + m.id] !== false) ? 'checked' : ''} data-rq="${m.id}"> back in queue</label>` : ''}
       <button class="ghost tiny" data-act="clear" data-m="${m.id}">Clear</button>
-      ${isAdmin() ? `<button class="ghost tiny" data-act="unassign" data-m="${m.id}">Send back</button>` : ''}
+      ${isAdmin() && m.table ? `<button class="ghost tiny" data-act="unassign" data-m="${m.id}">Send back</button>` : ''}
     </div>
     <div class="hint">Best of ${s.best_of} to ${s.points_to}</div>
   </div>`;
@@ -262,15 +266,18 @@ function renderUpcoming() {
   if (!u.length) { $('upcoming').innerHTML = ''; return; }
   $('upcoming').innerHTML = `<div class="panel">
     <div class="panel-head"><h2>Still to play</h2><span class="note">${u.length}</span></div>
-    <div class="panel-body flush">${u.slice(0, 14).map(m => `
-      <div class="row ${m.blocked ? 'blocked' : ''}">
+    <div class="panel-body flush">${u.slice(0, 14).map(m => {
+      const open = openReports.has(m.id);
+      return `<div class="row upcoming-row ${m.blocked ? 'blocked' : ''}">
         <span class="nm">${esc(m.a)} <span style="color:var(--dim)">v</span> ${esc(m.b)}</span>
         <span class="chip">${esc(m.label)}</span>
         ${m.next ? `<span class="chip next">Up next</span>` : ''}
         <span class="chip tables">${tableBadge(m)}</span>
         ${m.blocked ? `<span class="chip">a player is still on another table</span>` : ''}
         ${isAdmin() ? `<button class="ghost tiny" data-act="jump" data-m="${m.id}">Seat now</button>` : ''}
-      </div>`).join('')}</div></div>`;
+        ${canScore() ? `<button class="ghost tiny" data-act="toggle-report" data-m="${m.id}">${open ? 'Cancel' : 'Report'}</button>` : ''}
+      </div>${open ? `<div class="upcoming-pad">${scorePad(m)}</div>` : ''}`;
+    }).join('')}</div></div>`;
 }
 
 /* -- manual result entry ------------------------------------------------ */
@@ -702,7 +709,7 @@ document.addEventListener('input', e => {
     drafts[mid] = drafts[mid] || [];
     while (drafts[mid].length <= +i) drafts[mid].push(['', '']);
     drafts[mid][+i][+side] = v;
-    renderTables();
+    renderTables(); renderUpcoming();
     const back = document.getElementById(e.target.id);
     if (back) { back.focus(); try { back.setSelectionRange(99, 99); } catch (x) { } }
     return;
@@ -744,14 +751,25 @@ document.addEventListener('click', async e => {
   const a = b.dataset.act;
   const num = v => { const n = parseFloat(v); return isNaN(n) ? 0 : n; };
 
-  if (a === 'clear') { drafts[b.dataset.m] = [['', '']]; renderTables(); return; }
+  if (a === 'clear') {
+    drafts[b.dataset.m] = [['', '']];
+    renderTables(); renderUpcoming();
+    return;
+  }
+
+  if (a === 'toggle-report') {
+    const mid = b.dataset.m;
+    if (openReports.has(mid)) openReports.delete(mid); else openReports.add(mid);
+    renderUpcoming();
+    return;
+  }
 
   if (a === 'report') {
     const mid = b.dataset.m;
     const games = (drafts[mid] || []).filter(g => g[0] !== '' && g[1] !== '')
       .map(g => [+g[0], +g[1]]);
     const ok = await api('report', { match_id: mid, games, requeue: drafts['rq-' + mid] !== false });
-    if (ok) { delete drafts[mid]; delete drafts['rq-' + mid]; }
+    if (ok) { delete drafts[mid]; delete drafts['rq-' + mid]; openReports.delete(mid); }
     return;
   }
   if (a === 'manual-result') {
