@@ -458,6 +458,26 @@ class Store:
         if m.status == "live":
             m.status = "pending"
 
+    def _ev_match_defer(self, p, seq):
+        """Take a match off its table and send it to the back of the line.
+
+        Unseating alone did nothing visible: the dispatcher runs again in the
+        same request and put the very same fixture straight back on the very
+        same table, because it was still the next one due. The deferral is
+        what actually gives the table to somebody else, and it is counted
+        rather than flagged so pressing it twice pushes the match back twice.
+        """
+        m = self.matches.get(p["match_id"])
+        if not m:
+            return
+        if m.table in self.tables and self.tables[m.table].match_id == m.id:
+            self.tables[m.table].match_id = None
+        m.table = None
+        m.started_ts = None
+        if m.status == "live":
+            m.status = "pending"
+        m.meta["deferred"] = int(m.meta.get("deferred", 0)) + 1
+
     def _ev_match_result(self, p, seq):
         m = self.matches.get(p["match_id"])
         if not m:

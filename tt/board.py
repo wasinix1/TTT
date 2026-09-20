@@ -123,6 +123,7 @@ def cup_board(store, cup_id, app):
                 "kind": "fixture", "id": m.id, "format_name": f.name,
                 "a": app.side_name(m, "a"), "b": app.side_name(m, "b"),
                 "label": m.label, "scoring": m.scoring.to_dict(),
+                "deferred": int(m.meta.get("deferred", 0)),
                 "blocked": not (store.entrant_available(m.entrant_a, busy)
                                 and store.entrant_available(m.entrant_b, busy)),
             })

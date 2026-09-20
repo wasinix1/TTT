@@ -228,15 +228,17 @@ function scorePad(m) {
 
   const rq = m.meta && (m.meta.phase === 'open' || m.meta.queued);
   const done = m.status === 'done';
+  const typed = d.some(g => g[0] !== '' || g[1] !== '');
   return `<div class="pad">
     <div class="games">${games}</div>
     <div class="pad-row">
       <button class="primary" data-act="report" data-m="${m.id}" ${decided ? '' : 'disabled'}>
         ${decided ? `Save ${wa > wb ? esc(m.a) : esc(m.b)} win` : 'Save result'}</button>
       ${rq && !done ? `<label class="hint"><input type="checkbox" id="rq-${m.id}" ${(drafts['rq-' + m.id] !== false) ? 'checked' : ''} data-rq="${m.id}"> back in queue</label>` : ''}
-      <button class="ghost tiny" data-act="clear" data-m="${m.id}">Clear</button>
+      ${typed ? `<button class="ghost tiny" data-act="clear" data-m="${m.id}">Clear</button>` : ''}
       ${done ? `<button class="ghost tiny" data-act="undo" data-m="${m.id}">Undo result</button>` : ''}
-      ${isAdmin() && m.table ? `<button class="ghost tiny" data-act="unassign" data-m="${m.id}">Send back</button>` : ''}
+      ${isAdmin() && m.table ? `<button class="ghost tiny" data-act="put-back" data-m="${m.id}"
+         title="Free this table and send the match to the back of the queue">Put back</button>` : ''}
     </div>
     <div class="hint">Best of ${s.best_of} to ${s.points_to}</div>
   </div>`;
@@ -266,6 +268,7 @@ function renderBoard() {
       <div class="row hoverable ${r.blocked ? 'blocked' : ''} ${r.on_deck ? 'ondeck' : ''}">
         <span class="pos">${r.position}</span>
         <span class="nm">${esc(r.a)}${r.b ? ` <span style="color:var(--dim)">v</span> ${esc(r.b)}` : ''}</span>
+        ${r.deferred ? `<span class="chip">put back</span>` : ''}
         ${whenLabel(r) ? `<span class="chip when">${esc(whenLabel(r))}</span>` : ''}
         ${r.kind === 'fixture' && canScore()
           ? `<button class="ghost tiny on-hover" data-act="score" data-m="${r.id}">Enter result</button>` : ''}
@@ -1498,7 +1501,11 @@ document.addEventListener('click', async e => {
   if (a === 'manual-clear') { manualGames = [['', '']]; renderManual(); return; }
   if (a === 'manual-open') { manualOpen = true; renderManual(); return; }
   if (a === 'manual-close') { manualOpen = false; renderManual(); return; }
-  if (a === 'unassign') return void api('unassign', { match_id: b.dataset.m });
+  if (a === 'put-back') {
+    const ok = await api('put_back', { match_id: b.dataset.m });
+    if (ok) toast('Table freed — that match goes to the back of the queue');
+    return;
+  }
   if (a === 'jump') {
     const row = (S.board || []).flatMap(x => x.up).find(r => r.id === b.dataset.m);
     const allowed = row ? row.tables : S.tables.map(t => t.number);

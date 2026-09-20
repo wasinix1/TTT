@@ -205,8 +205,11 @@ class Format:
     def order_key(self, m):
         """The order this format wants its fixtures seated in. The board
         shows people their place in exactly this order, so it has to be the
-        same function the dispatcher uses, not a second guess at it."""
-        return (m.meta.get("round", 0), m.seq)
+        same function the dispatcher uses, not a second guess at it.
+
+        A match put back goes behind everything else, which is the whole
+        point of putting it back."""
+        return (m.meta.get("deferred", 0), m.meta.get("round", 0), m.seq)
 
     def pending_fixtures(self, store):
         return sorted((m for m in store.matches.values()
@@ -576,7 +579,8 @@ class GroupStage(Format):
         store.append("format_update", {"id": self.id, "phase": "ko"})
 
     def order_key(self, m):
-        return (0 if m.meta.get("phase") == "groups" else 1,
+        return (m.meta.get("deferred", 0),
+                0 if m.meta.get("phase") == "groups" else 1,
                 m.meta.get("round", 0), m.meta.get("group", ""), m.seq)
 
     def propose(self, store, busy, force=False):

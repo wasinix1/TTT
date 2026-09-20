@@ -136,6 +136,12 @@ Every change is an event appended to `data/event.db`; the live state is a
 replay of that log. Nothing is updated in place. A crashed laptop loses
 nothing but the last request.
 
+*Put back* on a table frees it and sends that match to the back of the
+queue, so the table goes to whoever is next rather than to the same two
+people again. Players who came out of a queue go back into it. A match put
+back always comes round again — when nothing else can use the table, that is
+immediately.
+
 Hover any result and *Edit result* reopens the same pad it was entered on.
 Saving a different score puts it right and re-resolves whatever it decided
 in later rounds — a first-round score entered backwards fixes the bracket
