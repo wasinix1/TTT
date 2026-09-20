@@ -153,6 +153,24 @@ button:disabled{opacity:.4;cursor:default}
 .chip.hot{color:var(--signal);border-color:var(--signal-dim)}
 .chip.next{color:#150803;background:var(--signal);border-color:var(--signal);font-weight:650}
 .chip.tables{color:var(--muted)}
+.chip.when{color:var(--chalk)}
+/* whoever should be putting their shoes on */
+.row.ondeck{background:rgba(214,106,42,.09)}
+.row.ondeck .pos{color:var(--signal)}
+.row.ondeck .chip.when{
+  color:#150803;background:var(--signal);border-color:var(--signal);font-weight:650;
+}
+/* an action that would otherwise be a button on every single row */
+.row .on-hover{opacity:0;transition:opacity .12s}
+.row.hoverable:hover .on-hover,
+.row .on-hover:focus-visible{opacity:1}
+@media (hover:none){.row .on-hover{opacity:1}}
+.sheet-inner.narrow{max-width:460px}
+.warn{
+  border:1px solid var(--signal-dim);border-left:3px solid var(--signal);
+  border-radius:var(--r);background:rgba(214,106,42,.07);
+  padding:9px 13px;font-size:13.5px;color:var(--chalk);margin-bottom:12px;
+}
 
 button.danger{color:var(--signal);border-color:var(--signal-dim)}
 button.danger:hover{background:var(--signal-dim);color:var(--chalk)}

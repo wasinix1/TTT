@@ -17,7 +17,7 @@ from urllib.parse import urlparse, parse_qs
 
 from .store import Store
 from .models import Scoring, decide_winner
-from . import dispatch
+from . import dispatch, board
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 STATIC = os.path.join(HERE, "static")
@@ -54,16 +54,26 @@ class App:
 
     # ------------------------------------------------------------ read side
 
+    def side_name(self, m, which):
+        """What to call one side of a match: the pair's name, the entrant's,
+        or the players drawn into it for a scramble."""
+        s = self.store
+        named = m.meta.get("name_" + which)
+        if named:
+            return named
+        eid = m.entrant_a if which == "a" else m.entrant_b
+        if eid:
+            return s.entrant_name(eid)
+        ids = m.side_a if which == "a" else m.side_b
+        return " / ".join(s.players[p].name for p in ids if p in s.players) or "—"
+
     def match_dto(self, m):
         s = self.store
         names = lambda ids: " / ".join(
             s.players[p].name for p in ids if p in s.players) or "—"
         return {
             "id": m.id, "format_id": m.format_id, "label": m.label,
-            "a": m.meta.get("name_a") or (s.entrant_name(m.entrant_a)
-                                          if m.entrant_a else names(m.side_a)),
-            "b": m.meta.get("name_b") or (s.entrant_name(m.entrant_b)
-                                          if m.entrant_b else names(m.side_b)),
+            "a": self.side_name(m, "a"), "b": self.side_name(m, "b"),
             "players_a": names(m.side_a), "players_b": names(m.side_b),
             "entrant_a": m.entrant_a, "entrant_b": m.entrant_b,
             "table": m.table, "status": m.status, "games": m.games,
@@ -94,8 +104,10 @@ class App:
                     "match": self.match_dto(m) if m else None,
                 })
 
+            # the board is what spectators read; this is the raw per-format
+            # queue, for whoever is actually running the thing
             queues = []
-            for fid in s.format_order:
+            for fid in s.format_order if role != "public" else []:
                 f = s.formats.get(fid)
                 if not f or not f.uses_queue():
                     continue
@@ -116,36 +128,11 @@ class App:
                     } for q in qs],
                 })
 
-            # "Still to play" in real dispatch order: available-now matches
-            # first (a match whose players are mid-game elsewhere can't
-            # actually be next no matter where it sorts), then by the
-            # format's own table priority, then round/seq. Each one also
-            # gets the table numbers it could actually land on, which is the
-            # honest version of "which table" — the exact table is only
-            # decided the instant one frees up, so we show the set it's
-            # eligible for rather than guessing a single number.
-            busy_now = s.busy_players()
-            ranked = []
-            for m in s.matches.values():
-                if m.status != "pending" or not m.is_filled():
-                    continue
-                f = s.formats.get(m.format_id)
-                avail = (s.entrant_available(m.entrant_a, busy_now)
-                        and s.entrant_available(m.entrant_b, busy_now))
-                cup = s.cup_of_format(f)
-                dto = self.match_dto(m)
-                dto["blocked"] = not avail
-                dto["cup_id"] = cup
-                dto["eligible_tables"] = s.tables_for_cup(cup)
-                ranked.append((0 if avail else 1, f.priority() if f else 0,
-                              m.meta.get("round", 0), m.seq, dto))
-            ranked.sort(key=lambda x: x[:4])
-            upcoming = [r[4] for r in ranked]
-            flagged_cups = set()
-            for dto in upcoming:
-                if not dto["blocked"] and dto["cup_id"] not in flagged_cups:
-                    dto["next"] = True
-                    flagged_cups.add(dto["cup_id"])
+            # Who plays next, and roughly when — see tt/board.py. This
+            # replaces a flat "still to play" list that was cut off at 24
+            # matches and, for open play, was always empty, because those
+            # matches do not exist until the moment they are dispatched.
+            boards = board.boards(s, self)
 
             recent = sorted([m for m in s.matches.values() if m.status == "done"],
                             key=lambda m: -m.seq)[:15]
@@ -156,7 +143,8 @@ class App:
                 "tables": tables,
                 "cups": [s.cups[c].to_dict() for c in s.cup_order if c in s.cups],
                 "queues": queues,
-                "upcoming": [u for u in upcoming[:24]],
+                "board": boards,
+                "idle_tables": board.idle_reservations(s) if role == "admin" else [],
                 "recent": [self.match_dto(m) for m in recent],
                 "formats": [s.formats[f].to_dict(s) for f in s.format_order
                             if f in s.formats],
@@ -515,6 +503,9 @@ class Handler(BaseHTTPRequestHandler):
 
         if path == "/api/stream":
             return self._stream()
+
+        if path == "/board":
+            return self._static("board.html")
 
         if path == "/print":
             return self._print_page(q)

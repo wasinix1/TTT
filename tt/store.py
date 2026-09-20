@@ -486,8 +486,10 @@ class Store:
     def median_match_seconds(self, cup_id=None, sample=15, default=None):
         """How long a match actually takes, measured rather than guessed.
 
-        Used to turn a queue position into a time. Falls back to a plain
-        guess early on, when nothing has finished yet."""
+        Used to turn a queue position into a time. `cup_id` of None means
+        every match rather than the untagged ones — a median wants samples,
+        and how long a match takes is a property of the room more than of
+        the draw. Falls back to a plain guess before anything has finished."""
         durs = []
         for m in sorted(self.matches.values(), key=lambda m: -m.seq):
             if m.status != "done":

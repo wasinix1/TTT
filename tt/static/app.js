@@ -12,6 +12,10 @@ let sheetTab = 'people';
 let sheetOpen = false;
 const form = {};           // sticky admin form values
 
+// which match's score is open in the editor: a fixture being entered
+// straight off the board, or a finished one being put right
+let editing = null;
+
 // manual result entry — a match that never touched the queue or a table
 let manualDraft = { a: '', b: '', format_id: '', bo: 3, pts: 11 };
 let manualGames = [['', '']];
@@ -113,8 +117,8 @@ function render() {
 
   renderCupTabs();
   renderTables();
-  renderQueues();
-  renderUpcoming();
+  renderBoard();
+  renderEditor();
   renderManual();
   renderStandings();
   renderBrackets();
@@ -150,16 +154,24 @@ function renderTables() {
   const all = S.tables;
   const vis = S._visibleTables = all.filter(t => inView(t.cup_id));
   if (!all.length) {
+    $('warn').innerHTML = '';
     $('tables').innerHTML =
       `<div class="table-card"><div class="empty-table">No tables yet.` +
       (isAdmin() ? ' Add them in Setup.' : '') + `</div></div>`;
     return;
   }
   if (!vis.length) {
+    $('warn').innerHTML = '';
     $('tables').innerHTML =
       `<div class="table-card"><div class="empty-table">No tables reserved for this cup — they're all on the other side.</div></div>`;
     return;
   }
+  const idle = (S.idle_tables || []).filter(w => inView(w.cup_id));
+  $('warn').innerHTML = idle.length ? idle.map(w => `<div class="warn">
+      Table ${w.table} is reserved and standing empty while
+      ${esc(w.waiting_for.join(' and '))} ${w.waiting_for.length > 1 ? 'have' : 'has'}
+      people waiting. Share it out in Setup → Tables, or leave it if the
+      reservation is the point.</div>`).join('') : '';
   $('tables').innerHTML = vis.map(t => {
     const m = t.match;
     const cls = ['table-card', m ? 'live' : '', t.paused ? 'paused' : ''].join(' ');
@@ -189,7 +201,7 @@ function bestOfLine(m) {
   return `<div class="table-state">Best of ${s.best_of} to ${s.points_to}</div>`;
 }
 
-function scorePad(m) {
+function scorePad(m, inEditor) {
   const s = m.scoring;
   const need = Math.floor(s.best_of / 2) + 1;
   const d = drafts[m.id] || (drafts[m.id] = [['', '']]);
@@ -210,67 +222,131 @@ function scorePad(m) {
     </span>`).join('');
 
   const rq = m.meta && (m.meta.phase === 'open' || m.meta.queued);
+  const done = m.status === 'done';
   return `<div class="pad">
     <div class="games">${games}</div>
     <div class="pad-row">
       <button class="primary" data-act="report" data-m="${m.id}" ${decided ? '' : 'disabled'}>
         ${decided ? `Save ${wa > wb ? esc(m.a) : esc(m.b)} win` : 'Save result'}</button>
-      ${rq ? `<label class="hint"><input type="checkbox" id="rq-${m.id}" ${(drafts['rq-' + m.id] !== false) ? 'checked' : ''} data-rq="${m.id}"> back in queue</label>` : ''}
+      ${rq && !done ? `<label class="hint"><input type="checkbox" id="rq-${m.id}" ${(drafts['rq-' + m.id] !== false) ? 'checked' : ''} data-rq="${m.id}"> back in queue</label>` : ''}
       <button class="ghost tiny" data-act="clear" data-m="${m.id}">Clear</button>
-      ${isAdmin() ? `<button class="ghost tiny" data-act="unassign" data-m="${m.id}">Send back</button>` : ''}
+      ${done ? `<button class="ghost tiny" data-act="undo" data-m="${m.id}">Undo result</button>` : ''}
+      ${!inEditor && isAdmin() ? `<button class="ghost tiny" data-act="unassign" data-m="${m.id}">Send back</button>` : ''}
     </div>
     <div class="hint">Best of ${s.best_of} to ${s.points_to}</div>
   </div>`;
 }
 
-/* -- queues ------------------------------------------------------------ */
+/* -- the board: who plays next, and roughly when ---------------------- */
 
-function renderQueues() {
-  const qs = S.queues.filter(q => inView(q.cup_id));
-  if (!qs.length) { $('queues').innerHTML = ''; return; }
-  $('queues').innerHTML = qs.map(q => {
-    const rows = q.entries.length ? q.entries.map((e, i) => `
-      <div class="row ${e.passes >= 2 ? 'waiting-long' : ''} ${e.blocked ? 'blocked' : ''}">
-        <span class="pos">${i + 1}</span>
-        <span class="nm">${esc(e.name)}</span>
-        ${e.waiting_long ? `<span class="chip hot">waiting a while</span>` : ''}
-        <span class="meta">${e.strength}</span>
-        ${canScore() ? `<button class="ghost tiny" data-act="leave" data-e="${e.entrant_id}">Out</button>` : ''}
-      </div>`).join('')
-      : `<div class="blank" style="padding:12px 15px">Nobody waiting.</div>`;
-    const modeLabel = { pairs: 'fixed pairs', singles: 'singles',
-                        scramble: 'partners drawn on the spot' }[q.mode] || '';
+function whenLabel(r) {
+  if (r.blocked) return 'waiting on a player';
+  if (r.on_deck) return 'get ready';
+  if (r.eta_min == null) return '';
+  if (r.eta_min <= 5) return 'in a few minutes';
+  return 'in about ' + r.eta_min + ' min';
+}
+
+/* The exact table is only decided the instant one frees up — promising one
+   in advance is what leaves a table standing empty while its match waits.
+   So show the set it can land on, which a cup with reserved tables already
+   narrows to a real answer. */
+function whereLabel(r) {
+  const all = S.tables.map(t => t.number).sort((a, b) => a - b);
+  const el = (r.tables || []).slice().sort((a, b) => a - b);
+  if (!el.length) return 'no table yet';
+  if (el.length === all.length) return 'any table';
+  return el.length === 1 ? 'table ' + el[0] : 'table ' + el.join(' or ');
+}
+
+function cupName(id) {
+  const c = S.cups.find(x => x.id === id);
+  return c ? c.name : '';
+}
+
+function renderBoard() {
+  const bs = (S.board || []).filter(b => inView(b.cup_id));
+  if (!bs.length) { $('board').innerHTML = ''; return; }
+  $('board').innerHTML = bs.map(b => {
+    const name = cupName(b.cup_id);
+    const rows = b.up.map(r => `
+      <div class="row hoverable ${r.blocked ? 'blocked' : ''} ${r.on_deck ? 'ondeck' : ''}">
+        <span class="pos">${r.position}</span>
+        <span class="nm">${esc(r.a)}${r.b ? ` <span style="color:var(--dim)">v</span> ${esc(r.b)}` : ''}</span>
+        <span class="chip when">${esc(whenLabel(r))}</span>
+        <span class="chip tables">${esc(whereLabel(r))}</span>
+        ${r.kind === 'fixture' && canScore()
+          ? `<button class="ghost tiny on-hover" data-act="score" data-m="${r.id}">Enter result</button>` : ''}
+        ${r.kind === 'fixture' && isAdmin()
+          ? `<button class="ghost tiny on-hover" data-act="jump" data-m="${r.id}">Seat now</button>` : ''}
+        ${r.kind === 'waiting' && canScore()
+          ? `<button class="ghost tiny on-hover" data-act="leave" data-e="${r.id}">Sit out</button>` : ''}
+      </div>`).join('');
+    const more = b.total > b.up.length
+      ? `<div class="blank" style="padding:10px 15px">and ${b.total - b.up.length} more after that</div>` : '';
+    const note = [
+      b.fixtures ? b.fixtures + ' to play' : '',
+      b.waiting ? b.waiting + ' waiting' : '',
+      '~' + b.match_minutes + ' min a match',
+    ].filter(Boolean).join(' · ');
     return `<div class="panel">
-      <div class="panel-head"><h2>${esc(q.format_name)} queue</h2>
-        <span class="note">${modeLabel}</span></div>
-      <div class="panel-body flush">${rows}</div>
+      <div class="panel-head"><h2>Coming up${name ? ' — ' + esc(name) : ''}</h2>
+        <span class="note">${esc(note)}</span></div>
+      <div class="panel-body flush">${rows || '<div class="blank" style="padding:12px 15px">Nothing queued.</div>'}${more}</div>
     </div>`;
   }).join('');
 }
 
-/* -- upcoming ---------------------------------------------------------- */
+/* -- one score editor, for entering, correcting and undoing ------------- */
 
-function tableBadge(m) {
-  const all = S.tables.map(t => t.number).sort((a, b) => a - b).join(',');
-  const el = (m.eligible_tables || []).slice().sort((a, b) => a - b);
-  if (!el.length) return 'No table free for this cup';
-  return el.join(',') === all ? 'Any table' : 'Table ' + el.join(', ');
+/* Correcting a result used to mean undoing it and rebuilding the match from
+   the manual-entry form. Re-saving a finished match already rewrites it and
+   re-resolves whatever it decided downstream, so editing is just the same
+   pad opened again with the old score in it. */
+function findMatch(id) {
+  for (const t of S.tables) if (t.match && t.match.id === id) return t.match;
+  for (const m of S.recent) if (m.id === id) return m;
+  for (const b of (S.board || [])) for (const r of b.up)
+    if (r.id === id) return { id: r.id, a: r.a, b: r.b, label: r.label,
+                              scoring: r.scoring, games: [], status: 'pending' };
+  return null;
 }
 
-function renderUpcoming() {
-  const u = S.upcoming.filter(m => inView(m.cup_id));
-  if (!u.length) { $('upcoming').innerHTML = ''; return; }
-  $('upcoming').innerHTML = `<div class="panel">
-    <div class="panel-head"><h2>Still to play</h2><span class="note">${u.length}</span></div>
-    <div class="panel-body flush">${u.slice(0, 14).map(m => `
-      <div class="row ${m.blocked ? 'blocked' : ''}">
-        <span class="nm">${esc(m.a)} <span style="color:var(--dim)">v</span> ${esc(m.b)}</span>
-        <span class="chip">${esc(m.label)}</span>
-        ${m.next ? `<span class="chip next">Up next</span>` : ''}
-        <span class="chip tables">${tableBadge(m)}</span>
-        ${m.blocked ? `<span class="chip">a player is still on another table</span>` : ''}
-        ${isAdmin() ? `<button class="ghost tiny" data-act="jump" data-m="${m.id}">Seat now</button>` : ''}
-      </div>`).join('')}</div></div>`;
+function openEditor(id) {
+  const m = findMatch(id);
+  if (!m) return toast('That match is no longer on the board');
+  editing = id;
+  drafts[id] = (m.games && m.games.length)
+    ? m.games.map(g => [String(g[0]), String(g[1])]) : [['', '']];
+  render();
+}
+
+function closeEditor() { editing = null; render(); }
+
+function renderEditor() {
+  const el = $('editor');
+  if (!editing || !canScore()) { el.hidden = true; el.innerHTML = ''; return; }
+  const m = findMatch(editing);
+  if (!m) { editing = null; el.hidden = true; el.innerHTML = ''; return; }
+  const done = m.status === 'done';
+  el.hidden = false;
+  el.innerHTML = `<div class="sheet-inner narrow">
+    <div class="sheet-head">
+      <h2 style="margin:0;font-size:15px">${done ? 'Edit result' : 'Enter result'}</h2>
+      <button class="ghost" data-act="close-editor">Close</button>
+    </div>
+    <div class="sheet-body">
+      <div class="versus">
+        <div class="side"><span class="side-name">${esc(m.a)}</span></div>
+        <div class="vs">plays</div>
+        <div class="side"><span class="side-name">${esc(m.b)}</span></div>
+      </div>
+      ${scorePad(m, true)}
+      ${done ? `<p class="sub">Saving a different score puts the match right and
+        re-resolves anything it decided in later rounds. "Undo" takes the result
+        back altogether and leaves the match to be played again.</p>` : ''}
+    </div>
+  </div>`;
 }
 
 /* -- manual result entry ------------------------------------------------ */
@@ -402,10 +478,10 @@ function renderRecent() {
     <div class="panel-body flush">${r.map(m => {
       const sc = m.games.map(g => `${g[0]}-${g[1]}`).join(', ');
       const w = m.winner === 'a' ? m.a : m.b, l = m.winner === 'a' ? m.b : m.a;
-      return `<div class="row">
+      return `<div class="row hoverable">
         <span class="nm">${esc(w)} <span style="color:var(--dim)">beat</span> ${esc(l)}</span>
         <span class="meta">${esc(sc)}</span>
-        ${canScore() ? `<button class="ghost tiny" data-act="void" data-m="${m.id}">Undo</button>` : ''}
+        ${canScore() ? `<button class="ghost tiny on-hover" data-act="edit" data-m="${m.id}">Edit result</button>` : ''}
       </div>`;
     }).join('')}</div></div>`;
 }
@@ -474,18 +550,38 @@ function tabPeople() {
   </div>`;
 }
 
+/* Shared and split are not a setting — they are read off the tables. No
+   table tagged means shared; any table tagged means split. Keeping it
+   derived is what stops a stored mode from disagreeing with the tables it
+   is supposed to describe. */
+const tablesAreSplit = () => S.tables.some(t => t.cup_id);
+
 function tabTables() {
+  const split = tablesAreSplit();
+  const modeBar = S.cups.length > 1 ? `
+    <fieldset><legend>Sharing</legend>
+      <div class="inline" style="align-items:center">
+        <span class="chip ${split ? '' : 'next'}">${split ? 'Split between cups' : 'All tables shared'}</span>
+        ${split
+          ? `<button class="ghost tiny" data-act="share-tables">Share every table instead</button>`
+          : `<button class="tiny" data-act="split-tables">Split them between cups</button>`}
+      </div>
+      <p class="sub">${split
+        ? 'Each cup only ever plays on its own tables, so "which table" is a real answer for a spectator. A cup with nothing ready leaves its tables standing empty — you will be told when that happens.'
+        : 'Every cup draws from one pool, and the table goes to whichever cup is furthest from finishing. Nothing ever stands idle, but you cannot tell anyone which table they are on until they are called.'}</p>
+    </fieldset>` : '';
   return `<div class="form">
-    <p class="sub">A table with no cup is shared by every running format. Give it a cup and it's reserved for that cup's formats only — that's how you split tables between two tournaments running at once. Pause a table and the dispatcher stops sending matches to it.</p>
+    ${modeBar}
+    <p class="sub">Pause a table and the dispatcher stops sending matches to it. Changing a table's cup takes effect straight away.</p>
     ${S.tables.map(t => `<div class="inline">
       <div class="field" style="max-width:70px"><label>Number</label><input value="${t.number}" disabled></div>
       <div class="field"><label>Name</label><input id="tn-${t.number}" value="${esc(t.name)}" data-f="tn-${t.number}"></div>
       ${S.cups.length ? `<div class="field" style="max-width:150px"><label>Cup</label>
-        <select id="tc-${t.number}" data-f="tc-${t.number}">
+        <select data-tcup="${t.number}">
           <option value="">Shared</option>
           ${S.cups.map(c => `<option value="${c.id}" ${t.cup_id === c.id ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}
         </select></div>` : ''}
-      <button class="tiny" data-act="save-table" data-t="${t.number}">Save</button>
+      <button class="tiny" data-act="save-table" data-t="${t.number}">Rename</button>
       <button class="ghost tiny" data-act="pause" data-t="${t.number}">${t.paused ? 'Resume' : 'Pause'}</button>
       <button class="ghost tiny" data-act="rm-table" data-t="${t.number}">Remove</button>
     </div>`).join('')}
@@ -546,16 +642,28 @@ const KIND_FIELDS = {
     <div class="inline">
       <div class="field" style="max-width:110px"><label for="c-rounds">Rounds</label>
         <input id="c-rounds" value="${esc(form.c_rounds ?? 5)}" data-f="c_rounds" inputmode="numeric"></div>
-      <label class="pick"><input type="checkbox" id="c-cont" data-f="c_cont" ${form.c_cont ? 'checked' : ''}> continuous (no round barrier)</label>
+      <div class="field"><label for="c-pace">Pairing</label>
+        <select id="c-pace" data-f="c_pace">
+          <option value="paced" ${(form.c_pace ?? 'paced') === 'paced' ? 'selected' : ''}>Paced — on demand, nobody gets ahead</option>
+          <option value="strict" ${form.c_pace === 'strict' ? 'selected' : ''}>Strict rounds — everyone waits for the round</option>
+          <option value="free" ${form.c_pace === 'free' ? 'selected' : ''}>Free-running — on demand, no round limit</option>
+        </select></div>
     </div>
-    <p class="sub">Continuous Swiss pairs on demand instead of in lockstep rounds, so tables never idle waiting on the one match that went to deuce in the fifth.</p>
+    <p class="sub"><b>Paced</b> pairs people the moment a table frees up, but only against
+      someone who has played the same number of games, and stops them at the round count.
+      No table ever waits on the one match that went to deuce in the fifth, and the field
+      stays level — which also matters when you are sharing tables, because a draw that
+      races ahead takes tables from the one that hasn't.</p>
+    <p class="sub"><b>Strict rounds</b> is classic Swiss and will idle tables at the end of
+      every round. <b>Free-running</b> never ends on its own — cut it to a knockout when
+      you are ready.</p>
     <div class="inline">
       <label class="pick"><input type="checkbox" id="c-swko" data-f="c_swko" ${form.c_swko ? 'checked' : ''}> then a knockout</label>
       <div class="field" style="max-width:150px"><label for="c-swadv">Advance to KO</label>
         <input id="c-swadv" value="${esc(form.c_swadv ?? 4)}" data-f="c_swadv" inputmode="numeric"></div>
       <label class="pick"><input type="checkbox" id="c-third" data-f="c_third" ${form.c_third ? 'checked' : ''}> third place match</label>
     </div>
-    <p class="sub">With rounds set, the top finishers cross into a bracket the instant the last round is done. With "continuous", there's no round count to finish on — use "Cut to knockout now" on the running format when you're ready, or if you're short on time part-way through the rounds.</p>`,
+    <p class="sub">The top finishers cross into a bracket the moment the Swiss is done. A free-running Swiss has no finish of its own — use "Cut to knockout now" on the running format when you are ready, which also works part-way through if you are short on time.</p>`,
 };
 
 function tabFormats() {
@@ -630,7 +738,7 @@ function tabFormats() {
 
 function tabQueue() {
   const qf = S.formats.filter(f => f.uses_queue && f.status === 'running');
-  if (!qf.length) return `<p class="blank">Start an open play or continuous Swiss format first.</p>`;
+  if (!qf.length) return `<p class="blank">Start an open play or a paced Swiss first.</p>`;
   return `<div class="form">
     ${qf.map(f => `<fieldset><legend>${esc(f.name)}</legend>
       <div class="pickers">${S.entrants.map(e => `
@@ -638,8 +746,9 @@ function tabQueue() {
           <span style="flex:1"></span>
           ${e.queued ? `<button class="ghost tiny" data-act="leave" data-e="${e.id}">Out</button>`
                      : `<button class="tiny" data-act="join" data-e="${e.id}" data-i="${f.id}">In</button>`}
-        </label>`).join('')}</div></fieldset>`).join('')}
-    <button class="ghost tiny" data-act="join-all" data-i="${qf[0].id}">Put everyone in ${esc(qf[0].name)}</button>
+        </label>`).join('')}</div>
+      <button class="ghost tiny" data-act="join-all" data-i="${f.id}">Put everyone in ${esc(f.name)}</button>
+      </fieldset>`).join('')}
   </div>`;
 }
 
@@ -668,8 +777,12 @@ function tabAccess() {
     <div class="field"><label>Admin — that is this page</label>
       <div class="key">${base}/a/${esc(S.keys.admin || '')}</div></div>
     <p class="sub">No accounts, no logins. Keep the referee link to the people running tables — anyone who has it can enter results.</p>
-    <div><a href="/print?base=${encodeURIComponent(base + '/')}" target="_blank"><button class="primary">Open printable poster</button></a></div>
-    <p class="sub">A QR code for the spectator link, sized to print and tape to the wall. Your URL never changes, so print it once.</p>
+    <div class="inline">
+      <a href="/print?base=${encodeURIComponent(base + '/')}" target="_blank"><button class="primary">Open printable poster</button></a>
+      <a href="/board" target="_blank"><button class="primary">Open the wall display</button></a>
+    </div>
+    <p class="sub">The poster is a QR code for the spectator link, sized to print and tape to the wall. Your URL never changes, so print it once.</p>
+    <p class="sub">The wall display is <span class="key">${base}/board</span> — put it on the big screen and it answers "when am I playing" by itself: who is on which table now, then the running order with a rough time against each one. It needs no key and has no controls, so it is safe on a screen anyone can reach.</p>
     <div class="hr"></div>
     <div class="inline">
       <div class="field"><label for="ev-title">Event name</label>
@@ -702,7 +815,7 @@ document.addEventListener('input', e => {
     drafts[mid] = drafts[mid] || [];
     while (drafts[mid].length <= +i) drafts[mid].push(['', '']);
     drafts[mid][+i][+side] = v;
-    renderTables();
+    if (editing === mid) renderEditor(); else renderTables();
     const back = document.getElementById(e.target.id);
     if (back) { back.focus(); try { back.setSelectionRange(99, 99); } catch (x) { } }
     return;
@@ -728,6 +841,8 @@ document.addEventListener('change', e => {
   }
   const ent = e.target.dataset.ent;
   if (ent) { form.ents = form.ents || {}; form.ents[ent] = e.target.checked; }
+  const tcup = e.target.dataset.tcup;
+  if (tcup) api('set_table', { number: +tcup, cup_id: e.target.value });
   const fcup = e.target.dataset.fcup;
   if (fcup) api('update_format', { id: fcup, config: { cup_id: e.target.value } });
   const fadd = e.target.dataset.fadd;
@@ -744,14 +859,22 @@ document.addEventListener('click', async e => {
   const a = b.dataset.act;
   const num = v => { const n = parseFloat(v); return isNaN(n) ? 0 : n; };
 
-  if (a === 'clear') { drafts[b.dataset.m] = [['', '']]; renderTables(); return; }
+  if (a === 'clear') { drafts[b.dataset.m] = [['', '']]; render(); return; }
+  if (a === 'edit' || a === 'score') return openEditor(b.dataset.m);
+  if (a === 'close-editor') return closeEditor();
+  if (a === 'undo') {
+    if (!confirm('Take this result back? The match can be played again, and anything it decided in a later round is undone with it.')) return;
+    const ok = await api('reopen_match', { match_id: b.dataset.m });
+    if (ok) closeEditor();
+    return;
+  }
 
   if (a === 'report') {
     const mid = b.dataset.m;
     const games = (drafts[mid] || []).filter(g => g[0] !== '' && g[1] !== '')
       .map(g => [+g[0], +g[1]]);
     const ok = await api('report', { match_id: mid, games, requeue: drafts['rq-' + mid] !== false });
-    if (ok) { delete drafts[mid]; delete drafts['rq-' + mid]; }
+    if (ok) { delete drafts[mid]; delete drafts['rq-' + mid]; if (editing === mid) closeEditor(); }
     return;
   }
   if (a === 'manual-result') {
@@ -766,11 +889,12 @@ document.addEventListener('click', async e => {
     return;
   }
   if (a === 'manual-clear') { manualGames = [['', '']]; renderManual(); return; }
-  if (a === 'void') return void api('void_match', { match_id: b.dataset.m });
   if (a === 'unassign') return void api('unassign', { match_id: b.dataset.m });
   if (a === 'jump') {
-    const free = S.tables.find(t => !t.paused && !t.match);
-    if (!free) return toast('No free table right now');
+    const row = (S.board || []).flatMap(x => x.up).find(r => r.id === b.dataset.m);
+    const allowed = row ? row.tables : S.tables.map(t => t.number);
+    const free = S.tables.find(t => !t.paused && !t.match && allowed.includes(t.number));
+    if (!free) return toast('No table free that this match can use');
     return void api('assign', { match_id: b.dataset.m, table: free.number });
   }
   if (a === 'join') return void api('join_queue', { entrant_id: b.dataset.e, format_id: b.dataset.i });
@@ -792,9 +916,20 @@ document.addEventListener('click', async e => {
   if (a === 'save-table') {
     const t = S.tables.find(x => x.number == b.dataset.t);
     return void api('set_table', {
-      number: +b.dataset.t,
-      name: form['tn-' + b.dataset.t] ?? t.name,
-      cup_id: form['tc-' + b.dataset.t] ?? (t.cup_id || '') });
+      number: +b.dataset.t, name: form['tn-' + b.dataset.t] ?? t.name });
+  }
+  if (a === 'share-tables') {
+    if (!confirm('Put every table back into the shared pool?')) return;
+    return void api('share_tables', {});
+  }
+  if (a === 'split-tables') {
+    // deal the tables round-robin as a starting point; the selects below
+    // are the assignment dialog, and they apply as you change them
+    const assignments = {};
+    S.tables.forEach((t, i) => { assignments[t.number] = S.cups[i % S.cups.length].id; });
+    await api('split_tables', { assignments });
+    renderSheet();
+    return;
   }
 
   if (a === 'add-cup') {
@@ -858,11 +993,15 @@ document.addEventListener('click', async e => {
       advance_per_group: num(form.c_adv ?? 2) || 1, third_place: !!form.c_third,
     });
     if (kind === 'single_elim') cfg.third_place = !!form.c_third;
-    if (kind === 'swiss') Object.assign(cfg, {
-      rounds: num(form.c_rounds ?? 5) || 5, continuous: !!form.c_cont,
-      then_ko: !!form.c_swko, advance: num(form.c_swadv ?? 4) || 4,
-      third_place: !!form.c_third,
-    });
+    if (kind === 'swiss') {
+      const pace = form.c_pace ?? 'paced';
+      Object.assign(cfg, {
+        rounds: num(form.c_rounds ?? 5) || 5,
+        continuous: pace !== 'strict', paced: pace === 'paced',
+        then_ko: !!form.c_swko, advance: num(form.c_swadv ?? 4) || 4,
+        third_place: !!form.c_third,
+      });
+    }
     if (form.f_cup) cfg.cup_id = form.f_cup;
     const ents = Object.entries(form.ents || {}).filter(([, v]) => v).map(([k]) => k);
     if (kind !== 'open_play' && ents.length < 2) return toast('Pick at least two entrants');
@@ -900,7 +1039,12 @@ $('sheet').addEventListener('click', e => {
   if (e.target.id === 'sheet') { sheetOpen = false; $('sheet').hidden = true; }
 });
 document.addEventListener('keydown', e => {
-  if (e.key === 'Escape' && sheetOpen) { sheetOpen = false; $('sheet').hidden = true; }
+  if (e.key !== 'Escape') return;
+  if (editing) return closeEditor();
+  if (sheetOpen) { sheetOpen = false; $('sheet').hidden = true; }
+});
+$('editor').addEventListener('click', e => {
+  if (e.target.id === 'editor') closeEditor();
 });
 
 poll(true);

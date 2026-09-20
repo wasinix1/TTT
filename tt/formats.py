@@ -202,6 +202,17 @@ class Format:
             "complete": self.is_complete(store),
         }
 
+    def order_key(self, m):
+        """The order this format wants its fixtures seated in. The board
+        shows people their place in exactly this order, so it has to be the
+        same function the dispatcher uses, not a second guess at it."""
+        return (m.meta.get("round", 0), m.seq)
+
+    def pending_fixtures(self, store):
+        return sorted((m for m in store.matches.values()
+                       if m.format_id == self.id and m.status == "pending"
+                       and m.is_filled()), key=self.order_key)
+
     # -- shared: pull ready pre-generated matches
     def _pending(self, store, busy, order_key=None):
         cands = [
@@ -212,7 +223,7 @@ class Format:
         ]
         if not cands:
             return None
-        cands.sort(key=order_key or (lambda m: (m.meta.get("round", 0), m.seq)))
+        cands.sort(key=order_key or self.order_key)
         m = cands[0]
         return Proposal(self.id, match_id=m.id,
                         entrants=[e for e in (m.entrant_a, m.entrant_b) if e])
@@ -564,10 +575,12 @@ class GroupStage(Format):
         self.phase = "ko"
         store.append("format_update", {"id": self.id, "phase": "ko"})
 
+    def order_key(self, m):
+        return (0 if m.meta.get("phase") == "groups" else 1,
+                m.meta.get("round", 0), m.meta.get("group", ""), m.seq)
+
     def propose(self, store, busy, force=False):
-        return self._pending(store, busy, order_key=lambda m: (
-            0 if m.meta.get("phase") == "groups" else 1,
-            m.meta.get("round", 0), m.meta.get("group", ""), m.seq))
+        return self._pending(store, busy)
 
     def remaining_work(self, store):
         left = self._scheduled_remaining(store)
