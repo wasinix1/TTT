@@ -6,6 +6,10 @@ const TOKEN = (() => {
   return m ? m[1] : '';
 })();
 
+// Strength is parked: hidden everywhere, still stored and still used by the
+// matchmaker at its default. Flip to bring the inputs back.
+const SHOW_STRENGTH = false;
+
 let S = null;              // last state
 let drafts = {};           // matchId -> [[a,b], ...]
 let sheetTab = 'people';
@@ -1103,8 +1107,8 @@ const fieldsFor = pfx => {
           <option value="singles" ${v('c_mode') === 'singles' ? 'selected' : ''}>Singles</option>
           <option value="scramble" ${v('c_mode') === 'scramble' ? 'selected' : ''}>Scramble doubles</option>
         </select></div>
-      <div class="field" style="max-width:120px"><label for="${id('c-gap')}">Strength gap</label>
-        <input id="${id('c-gap')}" value="${esc(v('c_gap', 1.5))}" data-f="${k('c_gap')}" inputmode="decimal"></div>
+      ${SHOW_STRENGTH ? `<div class="field" style="max-width:120px"><label for="${id('c-gap')}">Strength gap</label>
+        <input id="${id('c-gap')}" value="${esc(v('c_gap', 1.5))}" data-f="${k('c_gap')}" inputmode="decimal"></div>` : ''}
       <div class="field" style="max-width:130px"><label for="${id('c-widen')}">Widen after</label>
         <input id="${id('c-widen')}" value="${esc(v('c_widen', 3))}" data-f="${k('c_widen')}" inputmode="numeric"></div>
       <div class="field" style="max-width:150px"><label for="${id('c-rw')}">Avoid rematches</label>
@@ -1114,10 +1118,10 @@ const fieldsFor = pfx => {
           <option value="1.2" ${v('c_rw') === '1.2' ? 'selected' : ''}>Strong</option>
         </select></div>
     </div>
-    ${why('The gap widens by one every few times a waiting entrant is passed over, so ' +
+    ${SHOW_STRENGTH ? why('The gap widens by one every few times a waiting entrant is passed over, so ' +
           'nobody sits all night waiting for a perfect match.',
           'Avoiding rematches is priced in strength points: on a lopsided field, ' +
-          '<b>strong</b> buys variety by pairing people further apart.')}`,
+          '<b>strong</b> buys variety by pairing people further apart.') : ''}`,
     groups: () => `
     <div class="inline">
       <div class="field" style="max-width:110px"><label for="${id('c-groups')}">Groups</label>
@@ -1269,24 +1273,24 @@ function regRow(r) {
   const seeking = r.kind === 'seeking';
   const d = admitDefaults(r);
   const note = n => n ? `<span class="sub" style="margin:0;white-space:nowrap">${esc(n)}</span>` : '';
-  const seen = (k, claimed) => note(
+  const seen = (k, claimed) => !SHOW_STRENGTH ? '' : note(
     k ? `last time ${k.strength}${+k.strength !== +claimed ? ` · said ${claimed}` : ''}`
       : `said ${claimed}`);
   return `<div class="entry">
-    <div class="drow" style="--cols:1fr 76px 150px auto">
+    <div class="drow" style="--cols:${SHOW_STRENGTH ? '1fr 76px 150px auto' : '1fr auto'}">
       <input id="rn-${r.id}" value="${esc(d.name)}" data-f="rn-${r.id}">
-      <input id="rs-${r.id}" value="${esc(d.strength)}" data-f="rs-${r.id}" inputmode="decimal">
-      ${seen(known, r.strength)}
+      ${SHOW_STRENGTH ? `<input id="rs-${r.id}" value="${esc(d.strength)}" data-f="rs-${r.id}" inputmode="decimal">
+      ${seen(known, r.strength)}` : ''}
       <span class="acts">
         <button class="primary tiny" data-act="admit" data-r="${r.id}">Confirm</button>
         <button class="ghost tiny" data-act="drop-reg" data-r="${r.id}">No show</button>
       </span>
     </div>
-    ${r.kind === 'pair' || seeking ? `<div class="drow" style="--cols:1fr 76px 150px auto">
+    ${r.kind === 'pair' || seeking ? `<div class="drow" style="--cols:${SHOW_STRENGTH ? '1fr 76px 150px auto' : '1fr auto'}">
       <input id="rp-${r.id}" value="${esc(d.partner_name)}" data-f="rp-${r.id}"
              placeholder="${seeking ? 'partner — blank enters them alone' : 'partner'}">
-      <input id="rps-${r.id}" value="${esc(d.partner_strength)}" data-f="rps-${r.id}" inputmode="decimal">
-      ${seen(pKnown, r.partner_strength)}
+      ${SHOW_STRENGTH ? `<input id="rps-${r.id}" value="${esc(d.partner_strength)}" data-f="rps-${r.id}" inputmode="decimal">
+      ${seen(pKnown, r.partner_strength)}` : ''}
       <span></span>
     </div>` : ''}
     ${r.note ? `<div class="drow" style="--cols:1fr"><span class="sub"
@@ -1348,11 +1352,11 @@ function personRow(e) {
     ? S.players.find(p => p.id === e.player_ids[0]) : null;
   const [label, cls, tip] = STATUS[e.status] || [e.status, '', ''];
   const many = S.cups.length > 1;
-  const cols = many ? '1fr 60px 92px 130px auto' : '1fr 60px 92px auto';
+  const cols = (SHOW_STRENGTH ? '1fr 60px ' : '1fr ') + (many ? '92px 130px auto' : '92px auto');
   return `<div class="drow" style="--cols:${cols}"${e.resting ? ' data-dim="1"' : ''}>
     ${solo ? auto('pn-' + solo.id, 'update_player:' + solo.id, 'name', solo.name)
            : `<span>${esc(e.name)}</span>`}
-    ${solo ? auto('ps-' + solo.id, 'update_player:' + solo.id, 'strength', solo.strength,
+    ${!SHOW_STRENGTH ? '' : solo ? auto('ps-' + solo.id, 'update_player:' + solo.id, 'strength', solo.strength,
                   'inputmode="decimal"')
            : `<span class="num">${e.strength}</span>`}
     <span class="chip ${cls}" title="${esc(tip)}">${esc(label)}</span>
@@ -1374,18 +1378,18 @@ function walkInForm() {
       <div class="field"><label for="w-name">Name</label>
         <input id="w-name" value="${esc(form.w_name || '')}" data-f="w_name"
                list="known-people" placeholder="Jana Berger"></div>
-      <div class="field" style="max-width:76px"><label for="w-str">Strength</label>
+      ${SHOW_STRENGTH ? `<div class="field" style="max-width:76px"><label for="w-str">Strength</label>
         <input id="w-str" value="${esc(form.w_str ?? (knownFor(form.w_name) || {}).strength ?? 5)}"
-               data-f="w_str" inputmode="decimal"></div>
+               data-f="w_str" inputmode="decimal"></div>` : ''}
       ${wpair ? `<div class="field"><label for="w-pname">Partner</label>
         <input id="w-pname" value="${esc(form.w_pname || '')}" data-f="w_pname" list="known-people"></div>
-      <div class="field" style="max-width:76px"><label for="w-pstr">Strength</label>
-        <input id="w-pstr" value="${esc(form.w_pstr ?? 5)}" data-f="w_pstr" inputmode="decimal"></div>` : ''}
+      ${SHOW_STRENGTH ? `<div class="field" style="max-width:76px"><label for="w-pstr">Strength</label>
+        <input id="w-pstr" value="${esc(form.w_pstr ?? 5)}" data-f="w_pstr" inputmode="decimal"></div>` : ''}` : ''}
       <button class="primary" data-act="walk-in">Add</button>
     </div>
     <datalist id="known-people">${(S.people || []).map(p =>
       `<option value="${esc(p.name)}">`).join('')}</datalist>
-    ${knownFor(form.w_name) ? `<p class="sub">${esc(form.w_name)} is in the directory — last
+    ${SHOW_STRENGTH && knownFor(form.w_name) ? `<p class="sub">${esc(form.w_name)} is in the directory — last
       played at ${knownFor(form.w_name).strength}.</p>` : ''}`;
 }
 
@@ -1443,9 +1447,12 @@ function tabMore() {
                placeholder="Name"></div>
     </div>
     ${directoryRows()}
-    ${why('Everyone the club has seen, and the strength you last settled on for them. This ' +
-          'outlives the event — a new event clears tonight’s roster, never this. Adding ' +
-          'a regular from here starts them at the number you tuned last time instead of a guess.')}
+    ${why(SHOW_STRENGTH
+      ? 'Everyone the club has seen, and the strength you last settled on for them. This ' +
+        'outlives the event — a new event clears tonight’s roster, never this. Adding ' +
+        'a regular from here starts them at the number you tuned last time instead of a guess.'
+      : 'Everyone the club has seen. This outlives the event — a new event clears ' +
+        'tonight’s roster, never this.')}
 
     ${sec('Log')}
     <p class="sub">Every change is an event. Rewinding drops everything after that point and
@@ -1477,11 +1484,11 @@ function directoryRows() {
   const list = all.filter(p => p.name.toLowerCase().includes(q));
   if (!list.length) return '<p class="blank">Nobody by that name.</p>';
   return `<div class="rows">
-    <div class="hrow" style="--cols:1fr 76px auto"><span>Name</span><span>Strength</span><span></span></div>
-    ${list.slice(0, 40).map(p => `<div class="drow" style="--cols:1fr 76px auto">
+    ${SHOW_STRENGTH ? '<div class="hrow" style="--cols:1fr 76px auto"><span>Name</span><span>Strength</span><span></span></div>' : ''}
+    ${list.slice(0, 40).map(p => `<div class="drow" style="--cols:${SHOW_STRENGTH ? '1fr 76px auto' : '1fr auto'}">
       <span>${esc(p.name)}${p.playing
         ? ' <span style="color:var(--signal);font-size:12px">playing tonight</span>' : ''}</span>
-      ${auto('nn-' + p.id, 'update_person:' + p.id, 'strength', p.strength, 'inputmode="decimal"')}
+      ${SHOW_STRENGTH ? auto('nn-' + p.id, 'update_person:' + p.id, 'strength', p.strength, 'inputmode="decimal"') : ''}
       <span class="acts">
         ${p.playing ? '' : `<button class="tiny" data-act="from-directory" data-n="${p.id}">Add to tonight</button>`}
         <button class="ghost tiny" data-act="rm-person" data-n="${p.id}">Forget</button>
