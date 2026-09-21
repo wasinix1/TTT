@@ -630,14 +630,32 @@ class App:
         Everything here is a claim, including the strength: it creates a
         Registration and nothing else, so no amount of nonsense arriving on
         this path can reach the dispatcher. It becomes a player when somebody
-        confirms it at the door."""
-        s = self.store
-        cup = s.cups.get(p.get("cup_id") or "")
+        confirms it at the door.
+
+        Duplicates are deliberately allowed here. Two phones, or one phone
+        twice, is normal, and the notes box is the correction channel; the
+        person who can tell two Jana Bergers apart is at the door, so that is
+        where the check lives (op_admit)."""
+        cup = self.store.cups.get(p.get("cup_id") or "")
         if not cup:
             raise ValueError("pick which cup you are entering")
-        if cup.registration != "open" or s.shows_console():
+        if cup.registration != "open" or self.store.shows_console():
             raise ValueError("that cup is not taking entries")
+        return self._take_registration(cup, p)
 
+    def op_add_registration(self, p):
+        """The door putting somebody down as looking for a partner: the same
+        thing the landing page does, without needing the cup to be open."""
+        cup = self.store.cups.get(p.get("cup_id") or "")
+        if not cup:
+            raise ValueError("pick which cup")
+        if cup.entry != "pair":
+            raise ValueError("only a doubles cup has partners to look for")
+        p = dict(p, kind="seeking")
+        return self._take_registration(cup, p)
+
+    def _take_registration(self, cup, p):
+        s = self.store
         text = lambda v, n: " ".join(str(v or "").split())[:n]
         name = text(p.get("name"), 60)
         if not name:
@@ -674,7 +692,26 @@ class App:
             "note": text(p.get("note"), 500),
             "ts": time.time(),
         })
-        return {"registration_id": rid, "cup": cup.name}
+        self._match_seekers(cup.id)
+        mate = s.registrations.get(s.registrations[rid].matched_with or "")
+        return {"registration_id": rid, "cup": cup.name,
+                "matched_with": mate.name if mate else ""}
+
+    def _match_seekers(self, cup_id):
+        """Pair up people who registered alone for a doubles cup.
+
+        First come, first matched: the two longest-waiting are a team, and a
+        lone third stays looking until a fourth arrives. The match is written
+        down (matched_with) rather than worked out on the fly, because
+        somebody gets told at the door who they are playing with, and that
+        has to still be true when the next entry comes in."""
+        s = self.store
+        free = [r for r in s.regs_for_cup(cup_id)
+                if r.kind == "seeking" and not r.matched_with]
+        while len(free) >= 2:
+            a, b = free.pop(0), free.pop(0)
+            s.append("registration_update", {"id": a.id, "matched_with": b.id})
+            s.append("registration_update", {"id": b.id, "matched_with": a.id})
 
     # -------------------------------------------------------------- the door
 
@@ -735,20 +772,32 @@ class App:
         name = " ".join(str(p.get("name") or (reg.name if reg else "")).split())[:60]
         if not name:
             raise ValueError("we need a name")
+        # a matched team comes in together, whichever of the two was clicked
+        mate = s.registrations.get(reg.matched_with) if reg and reg.matched_with else None
+        if mate and (mate.status != "pending" or p.get("kind") == "single"):
+            mate = None
+        if mate:
+            kind = "pair"
         partner = " ".join(str(p.get("partner_name")
-                                or (reg.partner_name if reg else "")).split())[:60]
+                                or (reg.partner_name if reg else "")
+                                or (mate.name if mate else "")).split())[:60]
         if kind == "pair" and not partner:
             raise ValueError("a pair needs both names")
 
         num = lambda v, dflt: max(1.0, min(10.0, float(v if v not in (None, "") else dflt)))
         strength = num(p.get("strength"), reg.strength if reg else 5.0)
 
+        if not (cup and cup.entry == "pair" and kind != "pair"):   # doubles: no name check
+            self._refuse_duplicate(kind, name, partner)
+
         ids = [self._make_player(name, strength, p.get("person_id"))]
         if kind == "pair":
-            ps = num(p.get("partner_strength"), reg.partner_strength if reg else 5.0)
+            ps = num(p.get("partner_strength"),
+                     mate.strength if mate else reg.partner_strength if reg else 5.0)
             ids.append(self._make_player(partner, ps, p.get("partner_person_id")))
 
         label = (p.get("team_name") or (reg.team_name if reg else "")
+                 or (mate.team_name if mate else "")
                  or " / ".join(s.players[i].name for i in ids))
         eid = s.new_id("E", s.entrants)
         s.append("entrant_add", {"id": eid, "name": label, "player_ids": ids,
@@ -758,8 +807,50 @@ class App:
         if reg:
             s.append("registration_update", {"id": reg.id, "status": "confirmed",
                                              "entrant_id": eid})
+        if mate:
+            s.append("registration_update", {"id": mate.id, "status": "confirmed",
+                                             "entrant_id": eid})
         return {"entrant_id": eid, "where": where, "why": why,
                 "cup": cup.name if cup else ""}
+
+    def _refuse_duplicate(self, kind, name, partner=""):
+        """Two people with the same name is how the wrong strength ends up
+        on the wrong person, so the second one has to be told apart before
+        they are saved. Singles: the name must be new tonight. Doubles: only
+        the same two people together count — a person is allowed to be in a
+        singles cup and a doubles cup, and to change partners."""
+        s = self.store
+        if kind == "pair":
+            if s.pair_named(name, partner):
+                raise ValueError(f"{name} & {partner} are already a team tonight")
+        elif s.solo_named(name):
+            raise ValueError(
+                f"There is already a {name} tonight — add something to tell "
+                f"them apart, like \u201c{name} (blue shirt)\u201d")
+
+    def op_remove_entrant(self, p):
+        """Take somebody out of the pool — a mistaken confirm, a duplicate, a
+        person who went home before their first game.
+
+        Only while nothing depends on them. Once they have played, their
+        results are in somebody else's standings and a bracket has been drawn
+        around them; deleting them would rewrite that, so it is Sit out
+        instead."""
+        s = self.store
+        e = s.entrants.get(p.get("id") or "")
+        if not e:
+            raise ValueError("no such player")
+        mine = set(e.player_ids)
+        for m in s.matches.values():
+            if e.id in (m.entrant_a, m.entrant_b, *(m.meta.get("queued") or [])) \
+                    or mine & set(m.players()):
+                raise ValueError(f"{e.name} has already been drawn into a match — "
+                                 "use Sit out instead")
+        for f in s.formats.values():
+            if e.id in f.entrant_ids and not f.takes_new_entrants():
+                raise ValueError(f"{e.name} is in a draw that has started — "
+                                 "use Sit out instead")
+        s.append("entrant_remove", {"id": e.id})
 
     def op_update_person(self, p):
         self.store.append("person_update", p)
@@ -784,7 +875,11 @@ class App:
         return {"entrant_id": eid, "where": where, "why": why}
 
     def op_update_registration(self, p):
-        self.store.append("registration_update", p)
+        s = self.store
+        reg = s.registrations.get(p.get("id") or "")
+        s.append("registration_update", p)
+        if reg:
+            self._match_seekers(reg.cup_id)     # whoever was left alone may have a new match
 
     def op_set_phase(self, p):
         """Pin the phase, or clear the pin and go back to the clock."""
@@ -809,7 +904,7 @@ OP_LEVEL = {
     "manual_match": 2, "manual_result": 1, "event_meta": 2, "rewind": 2,
     "new_event": 2, "create_event": 2, "set_phase": 2,
     "register": 0, "update_registration": 2,
-    "admit": 2, "update_person": 2, "remove_person": 2, "add_from_directory": 2,
+    "admit": 2, "add_registration": 2, "remove_entrant": 2, "update_person": 2, "remove_person": 2, "add_from_directory": 2,
 }
 
 

@@ -1225,13 +1225,45 @@ function seedFormat(pfx, kind, cfg) {
 /* -------------------------------------------------------------- Door tab
 
    The night. An entry is an intention; this is where whoever actually
-   walked in becomes a player. The claimed strength sits next to what we
-   remember about them, and what you type wins over both. */
+   walked in becomes a player. Per cup, in the order it happens:
+   Pre-registered (each with its own Confirm), then the pool they join.
+   The claimed strength sits next to what we remember about them, and what
+   you type wins over both. */
+
+const nameKey = n => (n || '').trim().toLowerCase().replace(/\s+/g, ' ');
 
 function knownFor(name) {
-  const k = (name || '').trim().toLowerCase().replace(/\s+/g, ' ');
-  return (S.people || []).find(p =>
-    p.name.trim().toLowerCase().replace(/\s+/g, ' ') === k);
+  const k = nameKey(name);
+  return (S.people || []).find(p => nameKey(p.name) === k);
+}
+
+const playerName = id => (S.players.find(p => p.id === id) || {}).name || '';
+const cupById = id => S.cups.find(c => c.id === id);
+const regById = id => (S.registrations || []).find(r => r.id === id);
+
+/* The mirror of the server's check (App._refuse_duplicate), so the door can
+   say so while you type instead of after you press the button. The server
+   is still the one that refuses.
+
+   Singles: the name must be new tonight. Doubles: only the same two people
+   together are a duplicate — somebody can be in a singles cup and a doubles
+   cup, and can change partners. Pre-registrations are not checked; they
+   are allowed to overlap, and this is where the overlap is sorted out. */
+function dupMsg(cupId, kind, name, partner) {
+  const cup = cupById(cupId);
+  if (!nameKey(name)) return '';
+  if (kind === 'pair') {
+    if (!nameKey(partner)) return '';
+    const want = [nameKey(name), nameKey(partner)].sort().join('|');
+    const hit = S.entrants.some(e => e.player_ids.length === 2 &&
+      e.player_ids.map(i => nameKey(playerName(i))).sort().join('|') === want);
+    return hit ? `${name.trim()} & ${partner.trim()} are already a team tonight.` : '';
+  }
+  if (cup && cup.entry === 'pair') return '';
+  const hit = S.entrants.some(e => e.player_ids.length === 1 &&
+    nameKey(playerName(e.player_ids[0])) === nameKey(name));
+  return hit ? `There is already a “${name.trim()}” tonight — add something to tell them ` +
+    `apart, like “${name.trim()} (blue shirt)”.` : '';
 }
 
 /* What the door will actually use, before anyone touches the box. Rendering
@@ -1239,14 +1271,24 @@ function knownFor(name) {
    out separately, so the box showed what we remembered and then sent what
    they claimed. */
 function admitDefaults(r) {
+  const mate = r.matched_with ? regById(r.matched_with) : null;
+  const pName = r.partner_name || (mate && mate.status === 'pending' ? mate.name : '');
+  const pStr = r.partner_name ? r.partner_strength : (mate ? mate.strength : r.partner_strength);
   const k = knownFor(r.name);
-  const pk = r.partner_name ? knownFor(r.partner_name) : null;
+  const pk = pName ? knownFor(pName) : null;
   return {
     strength: form['rs-' + r.id] ?? (k ? k.strength : r.strength),
-    partner_strength: form['rps-' + r.id] ?? (pk ? pk.strength : r.partner_strength),
+    partner_strength: form['rps-' + r.id] ?? (pk ? pk.strength : pStr),
     name: form['rn-' + r.id] ?? r.name,
-    partner_name: form['rp-' + r.id] ?? r.partner_name,
+    partner_name: form['rp-' + r.id] ?? pName,
   };
+}
+
+/* The registration that comes in together with this one: the other half of
+   a matched team, if it is still waiting. */
+function mateOf(r) {
+  const m = r.matched_with ? regById(r.matched_with) : null;
+  return m && m.status === 'pending' ? m : null;
 }
 
 function admitPayload(r) {
@@ -1261,24 +1303,46 @@ function admitPayload(r) {
   };
 }
 
+const regDup = r => {
+  const d = admitDefaults(r);
+  return dupMsg(r.cup_id, d.partner_name ? 'pair' : 'single', d.name, d.partner_name);
+};
+
 /* One pending entry. Two lines at most, and the strength box carries what
    we know beside it rather than in a paragraph underneath. */
 function regRow(r) {
-  const known = knownFor(r.name);
-  const pKnown = r.partner_name ? knownFor(r.partner_name) : null;
+  const mate = mateOf(r);
   const seeking = r.kind === 'seeking';
   const d = admitDefaults(r);
+  const known = knownFor(d.name);
+  const pKnown = d.partner_name ? knownFor(d.partner_name) : null;
   const note = n => n ? `<span class="sub" style="margin:0;white-space:nowrap">${esc(n)}</span>` : '';
   const seen = (k, claimed) => note(
     k ? `last time ${k.strength}${+k.strength !== +claimed ? ` · said ${claimed}` : ''}`
       : `said ${claimed}`);
-  return `<div class="entry">
+  // registered twice: not blocked, just said, because one of them is a no-show
+  const twice = (S.registrations || []).some(o => o.id !== r.id && o.status === 'pending'
+    && nameKey(o.name) === nameKey(r.name) && (!mate || o.id !== mate.id));
+  const dup = regDup(r);
+  const tag = mate
+    ? `<span class="chip hot">MATCHED TEAM</span>
+       <span class="sub">${esc(r.name)} plays with <b>${esc(mate.name)}</b></span>`
+    : seeking && !d.partner_name
+      ? `<span class="chip warn">LOOKING FOR PARTNER</span>
+         <span class="sub">nobody to match with yet</span>`
+      : r.kind === 'pair'
+        ? `<span class="chip state">TEAM</span>${r.team_name
+          ? ` <span class="sub"><b>${esc(r.team_name)}</b></span>` : ''}` : '';
+  return `<div class="entry" id="reg-${r.id}">
+    ${tag || twice ? `<div class="tag">${tag}${twice
+      ? ' <span class="chip dim">registered twice</span>' : ''}</div>` : ''}
     <div class="drow" style="--cols:1fr 76px 150px auto">
       <input id="rn-${r.id}" value="${esc(d.name)}" data-f="rn-${r.id}">
       <input id="rs-${r.id}" value="${esc(d.strength)}" data-f="rs-${r.id}" inputmode="decimal">
       ${seen(known, r.strength)}
       <span class="acts">
-        <button class="primary tiny" data-act="admit" data-r="${r.id}">Confirm</button>
+        <button class="primary tiny" id="ok-${r.id}" data-act="admit" data-r="${r.id}"
+          ${dup ? 'disabled' : ''}>${mate ? 'Confirm team' : 'Confirm'}</button>
         <button class="ghost tiny" data-act="drop-reg" data-r="${r.id}">No show</button>
       </span>
     </div>
@@ -1286,31 +1350,74 @@ function regRow(r) {
       <input id="rp-${r.id}" value="${esc(d.partner_name)}" data-f="rp-${r.id}"
              placeholder="${seeking ? 'partner — blank enters them alone' : 'partner'}">
       <input id="rps-${r.id}" value="${esc(d.partner_strength)}" data-f="rps-${r.id}" inputmode="decimal">
-      ${seen(pKnown, r.partner_strength)}
-      <span></span>
+      ${mate ? seen(pKnown, mate.strength) : seen(pKnown, r.partner_strength)}
+      <span class="acts">${mate
+        ? `<button class="ghost tiny" data-act="drop-reg" data-r="${mate.id}"
+             title="${esc(mate.name)} did not turn up — ${esc(r.name)} goes back to looking">No show</button>`
+        : ''}</span>
     </div>` : ''}
+    <div class="dupnote" id="dup-${r.id}" ${dup ? '' : 'hidden'}>${esc(dup)}</div>
     ${r.note ? `<div class="drow" style="--cols:1fr"><span class="sub"
       >“${esc(r.note)}”</span></div>` : ''}
   </div>`;
+}
+
+/* Typing into a row's name boxes re-checks that row in place. Re-rendering
+   the sheet under a half-typed name would take the cursor with it. */
+function refreshDup(f) {
+  const m = /^r[np]-(.+)$/.exec(f);
+  if (m) {
+    const r = regById(m[1]);
+    if (!r) return;
+    const dup = regDup(r);
+    const box = document.getElementById('dup-' + r.id);
+    const ok = document.getElementById('ok-' + r.id);
+    if (box) { box.textContent = dup; box.hidden = !dup; }
+    if (ok) ok.disabled = !!dup;
+    return;
+  }
+  if (/^(w_|t_)/.test(f)) {
+    const dup = walkDup();
+    document.querySelectorAll('[data-dupfor="walk"]').forEach(b => { b.textContent = dup; b.hidden = !dup; });
+    document.querySelectorAll('[data-okfor="walk"]').forEach(b => { b.disabled = !!dup; });
+  }
+}
+
+function doorMatch(q, ...names) {
+  return !q || names.some(n => nameKey(n).includes(q));
 }
 
 function tabDoor() {
   const regs = S.registrations || [];
   const pending = regs.filter(r => r.status === 'pending');
   const walkOpen = !!form.walk_open || !S.entrants.length && !pending.length;
-  const cups = S.cups.length ? S.cups : [{ id: '', name: 'This event' }];
-  const known = new Set(cups.map(c => c.id));
-  // somebody whose cup was removed under them still has to be findable
-  const stray = S.entrants.filter(e => !known.has(e.cup_id || ''));
+  const q = nameKey(form.door_q);
   return `<div class="form">
     ${sec('At the door', `<button class="${walkOpen ? 'ghost' : ''} tiny" data-act="walk-toggle">${
       walkOpen ? 'Hide' : 'Add somebody'}</button>`)}
     ${walkOpen ? walkInForm() : ''}
-    ${!S.entrants.length && !pending.length
-      ? `<p class="blank">Nobody yet${regs.length ? '' : ` — entries arrive from ${location.origin}/join`}.</p>` : ''}
-    ${cups.map(c => cupPeople(c, pending, S.entrants.filter(e => (e.cup_id || '') === c.id))).join('')}
-    ${stray.length ? cupPeople({ id: '__none', name: 'Not in a cup' }, [], stray) : ''}
+    ${S.entrants.length || pending.length ? `<div class="field door-search">
+      <label for="door-q">Search</label>
+      <input id="door-q" type="search" value="${esc(form.door_q || '')}" data-f="door_q" data-was=""
+             placeholder="Name, partner or team" autocomplete="off"></div>` : ''}
+    <div id="door-lists">${doorLists()}</div>
   </div>`;
+}
+
+function doorLists() {
+  const regs = S.registrations || [];
+  const pending = regs.filter(r => r.status === 'pending');
+  const q = nameKey(form.door_q);
+  const cups = S.cups.length ? S.cups : [{ id: '', name: 'This event' }];
+  const known = new Set(cups.map(c => c.id));
+  // somebody whose cup was removed under them still has to be findable
+  const stray = S.entrants.filter(e => !known.has(e.cup_id || ''));
+  if (!S.entrants.length && !pending.length)
+    return `<p class="blank">Nobody yet${regs.length ? '' : ` — entries arrive from ${location.origin}/join`}.</p>`;
+  const out = cups.map(c => cupPeople(c, pending, S.entrants.filter(e => (e.cup_id || '') === c.id), q))
+    .concat(stray.length ? [cupPeople({ id: '__none', name: 'Not in a cup' }, [], stray, q)] : [])
+    .filter(Boolean);
+  return out.join('') || `<p class="blank">Nobody matches “${esc(form.door_q)}”.</p>`;
 }
 
 /* Everything about who is in one cup, in one place, in the order it happens:
@@ -1326,21 +1433,31 @@ const STATUS = {
   outside: ['no draw', 'warn', 'In this cup, but there is no draw taking them: none set up yet, or it started without them'],
 };
 
-function cupPeople(c, pending, ents) {
-  const rows = pending.filter(r => r.cup_id === c.id);
-  const count = k => ents.filter(e => e.status === k).length;
+function cupPeople(c, pending, allEnts, q) {
+  const allRows = pending.filter(r => r.cup_id === c.id);
+  const rows = allRows.filter(r => doorMatch(q, r.name, r.partner_name, r.team_name,
+    (mateOf(r) || {}).name));
+  const ents = allEnts.filter(e => doorMatch(q, e.name, ...e.player_ids.map(playerName)));
+  if (q && !rows.length && !ents.length) return '';
+  const count = k => allEnts.filter(e => e.status === k).length;
   const bits = [
-    ents.length ? ents.length + (ents.length === 1 ? ' person' : ' people') : '',
+    allEnts.length ? allEnts.length + (allEnts.length === 1 ? ' person' : ' people') : '',
     count('playing') ? count('playing') + ' playing' : '',
     count('waiting') ? count('waiting') + ' waiting' : '',
     count('resting') ? count('resting') + ' resting' : '',
-    rows.length ? rows.length + ' to confirm' : '',
   ].filter(Boolean).join(' · ');
-  return `${sec(c.name + (bits ? ' · ' + bits : ''), rows.length > 1
-      ? `<button class="ghost tiny" data-act="admit-all" data-c="${c.id}">Confirm all ${rows.length}</button>` : '')}
-    ${rows.length ? `<div class="rows">${rows.map(regRow).join('')}</div>` : ''}
+  // a matched team is one row and one confirm, so it counts once
+  const teams = rows.filter(r => { const m = mateOf(r); return !(m && rows.includes(m) && m.id < r.id); });
+  return `${sec(c.name + (bits ? ' · ' + bits : ''))}
+    ${c.id === '__none' ? '' : `<div class="subsec"><h3>Pre-registered${allRows.length
+        ? ` <span class="count">${allRows.length}</span>` : ''}</h3>${teams.length > 1
+        ? `<button class="ghost tiny" data-act="admit-all" data-c="${c.id}">Confirm all ${teams.length}</button>` : ''}</div>
+      ${teams.length ? `<div class="rows">${teams.map(regRow).join('')}</div>`
+        : `<p class="blank">${allRows.length ? 'None match.' : 'Nobody pre-registered for this cup.'}</p>`}
+      <div class="subsec"><h3>In the pool${allEnts.length
+        ? ` <span class="count">${allEnts.length}</span>` : ''}</h3></div>`}
     ${ents.length ? `<div class="rows">${ents.map(e => personRow(e)).join('')}</div>`
-      : (rows.length ? '' : '<p class="blank">Nobody in this cup yet.</p>')}`;
+      : `<p class="blank">${allEnts.length ? 'None match.' : 'Nobody in this cup yet.'}</p>`}`;
 }
 
 function personRow(e) {
@@ -1360,33 +1477,99 @@ function personRow(e) {
         S.cups.map(c => [c.id, c.name]), 'title="Move to another cup"') : ''}
     <span class="acts">${e.resting
       ? `<button class="tiny" data-act="unrest" data-e="${e.id}">Back in</button>`
-      : `<button class="ghost tiny" data-act="rest" data-e="${e.id}">Sit out</button>`}</span>
+      : `<button class="ghost tiny" data-act="rest" data-e="${e.id}">Sit out</button>`}
+      <button class="ghost tiny" data-act="rm-entrant" data-e="${e.id}"
+        title="Take them out of the pool">Remove</button></span>
   </div>`;
 }
 
+/* ---- walk-ins */
+
+const walkCup = () => form.w_cup ?? (S.cups[0] ? S.cups[0].id : '');
+const walkIsPair = () => (cupById(walkCup()) || {}).entry === 'pair';
+
+/* The one check both walk-in forms share. Looking for a partner is a
+   registration, not an entry, so it has nothing to collide with. */
+function walkDup() {
+  if (walkIsPair()) {
+    return form.t_seek ? '' : dupMsg(walkCup(), 'pair', form.w_name, form.w_pname);
+  }
+  return dupMsg(walkCup(), 'single', form.w_name);
+}
+
 function walkInForm() {
-  const wcup = form.w_cup ?? (S.cups[0] ? S.cups[0].id : '');
-  const wpair = (S.cups.find(c => c.id === wcup) || {}).entry === 'pair';
+  const wcup = walkCup();
+  const dup = walkDup();
+  const pair = walkIsPair();
   return `<div class="inline" style="align-items:flex-end">
       ${S.cups.length > 1 ? `<div class="field" style="max-width:160px"><label for="w-cup">Cup</label>
         <select id="w-cup" data-f="w_cup">${S.cups.map(c =>
           `<option value="${c.id}" ${wcup === c.id ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}</select></div>` : ''}
+      ${pair ? `<button class="primary" data-act="team-open">Enter a team…</button>` : `
       <div class="field"><label for="w-name">Name</label>
         <input id="w-name" value="${esc(form.w_name || '')}" data-f="w_name"
                list="known-people" placeholder="Jana Berger"></div>
       <div class="field" style="max-width:76px"><label for="w-str">Strength</label>
         <input id="w-str" value="${esc(form.w_str ?? (knownFor(form.w_name) || {}).strength ?? 5)}"
                data-f="w_str" inputmode="decimal"></div>
-      ${wpair ? `<div class="field"><label for="w-pname">Partner</label>
-        <input id="w-pname" value="${esc(form.w_pname || '')}" data-f="w_pname" list="known-people"></div>
-      <div class="field" style="max-width:76px"><label for="w-pstr">Strength</label>
-        <input id="w-pstr" value="${esc(form.w_pstr ?? 5)}" data-f="w_pstr" inputmode="decimal"></div>` : ''}
-      <button class="primary" data-act="walk-in">Add</button>
+      <button class="primary" data-act="walk-in" data-okfor="walk" ${dup ? 'disabled' : ''}>Add</button>`}
     </div>
     <datalist id="known-people">${(S.people || []).map(p =>
       `<option value="${esc(p.name)}">`).join('')}</datalist>
+    ${pair ? '' : `<div class="dupnote" data-dupfor="walk" ${dup ? '' : 'hidden'}>${esc(dup)}</div>
     ${knownFor(form.w_name) ? `<p class="sub">${esc(form.w_name)} is in the directory — last
-      played at ${knownFor(form.w_name).strength}.</p>` : ''}`;
+      played at ${knownFor(form.w_name).strength}.</p>` : ''}`}`;
+}
+
+/* Choosing a doubles cup opens this. It is a layer of its own rather than
+   part of the sheet: the sheet re-renders whenever anything changes on
+   another table, and that must not eat a half-typed team. */
+function renderTeamModal() {
+  const el = $('team-modal');
+  if (!form.team_open) { el.hidden = true; el.innerHTML = ''; return; }
+  const cup = cupById(walkCup()) || {};
+  const seek = !!form.t_seek;
+  const dup = walkDup();
+  const strOf = (key, nameKey_) => form[key] ?? (knownFor(form[nameKey_]) || {}).strength ?? 5;
+  el.hidden = false;
+  el.innerHTML = `<div class="sheet-inner narrow">
+    <div class="sheet-head">
+      <h2 style="margin:0;font-size:15px">Doubles · ${esc(cup.name || '')}</h2>
+      <button class="ghost" data-act="team-close">Close</button>
+    </div>
+    <div class="sheet-body"><div class="form">
+      <div class="inline">
+        <button class="${seek ? 'ghost' : 'primary'} tiny" data-act="team-seek" data-v="">Team of two</button>
+        <button class="${seek ? 'primary' : 'ghost'} tiny" data-act="team-seek" data-v="1">Looking for a partner</button>
+      </div>
+      ${seek ? '' : `<div class="field"><label for="tm-team">Team name</label>
+        <input id="tm-team" value="${esc(form.t_team || '')}" data-f="t_team"
+               placeholder="optional — otherwise both names"></div>`}
+      <div class="inline">
+        <div class="field"><label for="tm-name">${seek ? 'Name' : 'Player 1'}</label>
+          <input id="tm-name" value="${esc(form.w_name || '')}" data-f="w_name" list="known-people"></div>
+        <div class="field" style="max-width:76px"><label for="tm-str">Strength</label>
+          <input id="tm-str" value="${esc(strOf('w_str', 'w_name'))}" data-f="w_str" inputmode="decimal"></div>
+      </div>
+      ${seek ? `<p class="sub">They go on the pre-registered list as looking for a partner. The
+        next person who comes in alone is matched with them, and the door can tell each of
+        them who they are playing with.</p>` : `<div class="inline">
+        <div class="field"><label for="tm-pname">Partner:in</label>
+          <input id="tm-pname" value="${esc(form.w_pname || '')}" data-f="w_pname" list="known-people"></div>
+        <div class="field" style="max-width:76px"><label for="tm-pstr">Strength</label>
+          <input id="tm-pstr" value="${esc(strOf('w_pstr', 'w_pname'))}" data-f="w_pstr" inputmode="decimal"></div>
+      </div>`}
+      <div class="dupnote" data-dupfor="walk" ${dup ? '' : 'hidden'}>${esc(dup)}</div>
+      <div class="inline" style="justify-content:flex-end">
+        <button class="ghost" data-act="team-close">Cancel</button>
+        <button class="primary" data-act="team-add" data-okfor="walk" ${dup ? 'disabled' : ''}>${
+          seek ? 'Put down as looking' : 'Add team'}</button>
+      </div>
+    </div></div>
+  </div>`;
+  const first = $(seek || !form.w_name ? 'tm-name' : 'tm-pname');
+  if (first && !el.dataset.shown) first.focus();
+  el.dataset.shown = '1';
 }
 
 /* ------------------------------------------------------------- Links tab */
@@ -1521,11 +1704,18 @@ document.addEventListener('input', e => {
   const f = e.target.dataset.f;
   if (f) {
     form[f] = e.target.type === 'checkbox' ? e.target.checked : e.target.value;
-    // typing a name the club already knows should bring their number with it
-    if ((f === 'w_name' || f === 'w_pname') && sheetTab === 'entries') {
+    // typing a name the club already knows should bring their number with it —
+    // written into the box directly, since re-rendering would drop the cursor
+    if (f === 'w_name' || f === 'w_pname') {
       const k = knownFor(form[f]);
-      if (k) { form[f === 'w_name' ? 'w_str' : 'w_pstr'] = k.strength; renderSheet(); }
+      const key = f === 'w_name' ? 'w_str' : 'w_pstr';
+      if (k) {
+        form[key] = k.strength;
+        document.querySelectorAll(`[data-f="${key}"]`).forEach(i => { i.value = k.strength; });
+      }
     }
+    if (f === 'door_q') { const l = $('door-lists'); if (l) l.innerHTML = doorLists(); }
+    else refreshDup(f);
   }
   const rq = e.target.dataset.rq;
   if (rq) drafts['rq-' + rq] = e.target.checked;
@@ -1638,6 +1828,11 @@ document.addEventListener('change', e => {
   if (f) {
     form[f] = e.target.type === 'checkbox' ? e.target.checked : e.target.value;
     if (f === 'f_kind' || /c_mode$/.test(f) || /c_pace$/.test(f)) renderSheet();
+    if (f === 'w_cup') {
+      renderSheet();
+      // a doubles cup needs a team, not a name: ask for it straight away
+      if (walkIsPair()) { form.team_open = true; renderTeamModal(); }
+    }
   }
   // which format a cup's new draw will be, and what settings to show for it
   const nk = e.target.dataset.nk;
@@ -1668,10 +1863,16 @@ document.addEventListener('click', async e => {
     return;
   }
   if (a === 'admit-all') {
-    const rows = (S.registrations || []).filter(
+    const all = (S.registrations || []).filter(
       r => r.status === 'pending' && r.cup_id === b.dataset.c);
-    if (!confirm(`Confirm all ${rows.length}? You can still sit anyone out afterwards.`)) return;
-    const payloads = rows.map(admitPayload);   // before the list re-renders under us
+    // a matched team is confirmed through one of its two entries
+    const rows = all.filter(r => { const m = mateOf(r); return !(m && all.includes(m) && m.id < r.id); });
+    const clash = rows.filter(regDup);
+    const go = rows.filter(r => !regDup(r));
+    if (!go.length) return toast('Every one of them needs telling apart first');
+    if (!confirm(`Confirm ${go.length}${clash.length ? ` (${clash.length} skipped: same name as somebody already in)` : ''}? ` +
+      'You can still sit anyone out afterwards.')) return;
+    const payloads = go.map(admitPayload);   // before the list re-renders under us
     let stranded = 0, why = '';
     for (const data of payloads) {
       const out = await api('admit', data);
@@ -1686,19 +1887,57 @@ document.addEventListener('click', async e => {
     if (!form.w_name) return toast('Give them a name');
     const known = knownFor(form.w_name);
     const out = await api('admit', {
-      cup_id: form.w_cup ?? (S.cups[0] ? S.cups[0].id : ''),
+      cup_id: walkCup(),
       name: form.w_name, strength: num(form.w_str ?? (known ? known.strength : 5)),
-      partner_name: form.w_pname || '',
-      partner_strength: num(form.w_pstr ?? 5),
-      kind: form.w_pname ? 'pair' : 'single',
+      kind: 'single',
       person_id: known ? known.id : undefined,
     });
     if (out) {
-      form.w_name = form.w_pname = ''; form.w_str = form.w_pstr = undefined;
+      form.w_name = ''; form.w_str = undefined;
       renderSheet();
       if (out.where === 'roster') toast(`Added to the roster — ${out.why}`);
     }
     return;
+  }
+  if (a === 'team-open') { form.team_open = true; return renderTeamModal(); }
+  if (a === 'team-close') { closeTeamModal(); return; }
+  if (a === 'team-seek') { form.t_seek = !!b.dataset.v; return renderTeamModal(); }
+  if (a === 'team-add') {
+    if (!form.w_name) return toast('Give them a name');
+    const known = knownFor(form.w_name);
+    const strength = num(form.w_str ?? (known ? known.strength : 5));
+    if (form.t_seek) {
+      const out = await api('add_registration', {
+        cup_id: walkCup(), name: form.w_name, strength });
+      if (out) {
+        closeTeamModal();
+        toast(out.matched_with ? `Matched with ${out.matched_with}` : 'Down as looking for a partner');
+      }
+      return;
+    }
+    if (!form.w_pname) return toast('Who is the partner?');
+    const pKnown = knownFor(form.w_pname);
+    const out = await api('admit', {
+      cup_id: walkCup(), kind: 'pair', team_name: form.t_team || '',
+      name: form.w_name, strength,
+      partner_name: form.w_pname,
+      partner_strength: num(form.w_pstr ?? (pKnown ? pKnown.strength : 5)),
+      person_id: known ? known.id : undefined,
+      partner_person_id: pKnown ? pKnown.id : undefined,
+    });
+    if (out) {
+      closeTeamModal();
+      if (out.where === 'roster') toast(`Added to the roster — ${out.why}`);
+    }
+    return;
+  }
+  if (a === 'rm-entrant') {
+    const e = S.entrants.find(x => x.id === b.dataset.e);
+    if (!e) return;
+    const back = (S.registrations || []).some(r => r.entrant_id === e.id && r.status === 'confirmed');
+    if (!confirm(`Remove ${e.name} from the pool?` +
+      (back ? ' Their pre-registration goes back on the list.' : ''))) return;
+    return void api('remove_entrant', { id: e.id });
   }
   if (a === 'from-directory') {
     const out = await api('add_from_directory', {
@@ -1856,7 +2095,12 @@ document.addEventListener('click', async e => {
     }
     return renderSheet();
   }
-  if (a === 'walk-toggle') { form.walk_open = !form.walk_open; return renderSheet(); }
+  if (a === 'walk-toggle') {
+    form.walk_open = !form.walk_open;
+    renderSheet();
+    if (form.walk_open && walkIsPair()) { form.team_open = true; renderTeamModal(); }
+    return;
+  }
   if (a === 'rm-cup') {
     if (!confirm('Remove this cup? Its tables and formats stay, just ungrouped.')) return;
     return void api('remove_cup', { id: b.dataset.c });
@@ -1919,8 +2163,22 @@ $('sheet-close').onclick = () => { sheetOpen = false; $('sheet').hidden = true; 
 $('sheet').addEventListener('click', e => {
   if (e.target.id === 'sheet') { sheetOpen = false; $('sheet').hidden = true; }
 });
+function closeTeamModal() {
+  form.team_open = false;
+  form.w_name = form.w_pname = form.t_team = '';
+  form.w_str = form.w_pstr = undefined;
+  form.t_seek = false;
+  delete $('team-modal').dataset.shown;
+  renderTeamModal();
+  renderSheet();
+}
+$('team-modal').addEventListener('click', e => {
+  if (e.target.id === 'team-modal') closeTeamModal();
+});
+
 document.addEventListener('keydown', e => {
   if (e.key !== 'Escape') return;
+  if (form.team_open) return closeTeamModal();
   if (editing) return closeEditor();
   if (sheetOpen) { sheetOpen = false; $('sheet').hidden = true; }
 });

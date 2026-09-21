@@ -371,7 +371,8 @@ class Store:
                 self.event[k] = p[k]
 
     REG_FIELDS = ("cup_id", "kind", "name", "strength", "partner_name",
-                  "partner_strength", "team_name", "note", "status", "entrant_id")
+                  "partner_strength", "team_name", "note", "status", "entrant_id",
+                  "matched_with")
 
     def _ev_registration_add(self, p, seq):
         r = Registration(id=p["id"], cup_id=p.get("cup_id", ""),
@@ -390,6 +391,31 @@ class Store:
         for k in self.REG_FIELDS:
             if k in p:
                 setattr(r, k, p[k])
+        if r.status == "dropped" and r.matched_with:
+            # the one who was matched with them is looking again
+            mate = self.registrations.get(r.matched_with)
+            if mate and mate.matched_with == r.id:
+                mate.matched_with = None
+            r.matched_with = None
+
+    def _ev_entrant_remove(self, p, seq):
+        """Take somebody out of the pool altogether: the entrant, the players
+        it was made of, and every place the roster remembered them. Only
+        ever written for somebody who has not played (see op_remove_entrant)
+        — the log stays replayable because nothing else refers to them."""
+        e = self.entrants.pop(p["id"], None)
+        if not e:
+            return
+        for pid in e.player_ids:
+            self.players.pop(pid, None)
+        self.queue = [q for q in self.queue if q.entrant_id != e.id]
+        self.opted_out.discard(e.id)
+        for f in self.formats.values():
+            if e.id in f.entrant_ids:
+                f.entrant_ids = [i for i in f.entrant_ids if i != e.id]
+        for r in self.registrations.values():
+            if r.entrant_id == e.id and r.status == "confirmed":
+                r.status, r.entrant_id = "pending", None
 
     def _ev_players_reset(self, p, seq):
         """No longer emitted — the new-event wizard replaced it. Kept so that
@@ -678,6 +704,29 @@ class Store:
             who = self.people.get(i)
             if who and self.name_key(who.name) == k:
                 return who
+        return None
+
+    def solo_named(self, name):
+        """The single-player entrant in tonight's pool who goes by this name,
+        if there is one. Pairs are not looked at: a team is identified by its
+        two names together, and one person can sit in a singles cup and a
+        doubles cup at once."""
+        k = self.name_key(name)
+        for e in self.entrants.values():
+            if len(e.player_ids) == 1 and k and self.name_key(
+                    self.players[e.player_ids[0]].name if e.player_ids[0] in self.players
+                    else e.name) == k:
+                return e
+        return None
+
+    def pair_named(self, name_a, name_b):
+        """A team in the pool made of exactly these two people."""
+        want = sorted((self.name_key(name_a), self.name_key(name_b)))
+        for e in self.entrants.values():
+            if len(e.player_ids) == 2 and sorted(
+                    self.name_key(self.players[i].name) for i in e.player_ids
+                    if i in self.players) == want:
+                return e
         return None
 
     def person_playing(self, person_id):

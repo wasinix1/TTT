@@ -226,3 +226,14 @@ Later, deliberately not now: waitlists and caps, entry codes, pairing up the
   checkbox. The directory is the answer to "the same forty faces".
 - The wizard is authoritative over cups: it clears them and writes the ones
   it was given, rather than merging into what was there.
+- Duplicates are allowed at public registration and checked at the door, where
+  somebody can tell two people apart. Singles: a name already in tonight's pool
+  blocks the save until it is made distinct ("Jana Berger (blue shirt)"). Doubles:
+  only the same two people together are a duplicate.
+- "Looking for a partner" entries are matched first-come, first-matched, and the
+  match is written to the log (`matched_with`), so what the door told somebody
+  stays true. A matched team is one row, one confirm; dropping one of the two
+  sets the other looking again.
+- Removing somebody from the pool is only possible before they have been drawn
+  into a match or a started draw; after that it is Sit out. A confirmed
+  registration goes back on the pre-registered list.

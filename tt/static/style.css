@@ -522,3 +522,12 @@ details.why p{line-height:1.5}
   .hero{min-height:0}
   .hero-panel{gap:28px}
 }
+
+/* ------------------------------------------- door: pre-registered / pool */
+.subsec{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:14px 0 4px}
+.subsec h3{margin:0;font-size:12px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
+.subsec .count{color:var(--signal);margin-left:4px}
+.entry .tag{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:10px 0 0}
+.dupnote{font-size:13px;font-weight:600;color:var(--signal);background:var(--signal-wash);border-radius:var(--r-xs);padding:8px 10px;margin:2px 0 8px}
+.dupnote[hidden]{display:none}
+.door-search{max-width:420px}
