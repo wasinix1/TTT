@@ -93,6 +93,10 @@ function render() {
 
 /* -------------------------------------------------------------- the form */
 
+/* Strength is parked: the form does not ask, and the server takes its
+   default. Flip this to bring the questions back. */
+const ASK_STRENGTH = false;
+
 const STRENGTHS = [
   [1, '1 — never really played'], [2, '2'], [3, '3 — I can rally'],
   [4, '4'], [5, '5 — a decent social game'], [6, '6'], [7, '7 — club standard'],
@@ -151,17 +155,17 @@ function renderJoin() {
       <input id="j-name" value="${esc(draft.name)}" data-j="name" placeholder="Jana Berger"
              autocomplete="name" enterkeyhint="next"></div>
 
-    <div class="form-field"><label>How strong are you, roughly</label>
+    ${ASK_STRENGTH ? `<div class="form-field"><label>How strong are you, roughly</label>
       <select id="j-str" data-j="strength">${STRENGTHS.map(([n, l]) =>
         `<option value="${n}" ${String(n) === String(draft.strength) ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select>
-      <div class="hint">Your own guess. It only sets who you play first — whoever is running it adjusts once you have played a couple.</div></div>
+      <div class="hint">Your own guess. It only sets who you play first — whoever is running it adjusts once you have played a couple.</div></div>` : ''}
 
     ${pair && draft.kind === 'pair' ? `
       <div class="form-field"><label>Your partner's name</label>
         <input id="j-pname" value="${esc(draft.partner_name)}" data-j="partner_name" placeholder="Milo Farkas"></div>
-      <div class="form-field"><label>How strong are they</label>
+      ${ASK_STRENGTH ? `<div class="form-field"><label>How strong are they</label>
         <select id="j-pstr" data-j="partner_strength">${STRENGTHS.map(([n, l]) =>
-          `<option value="${n}" ${String(n) === String(draft.partner_strength) ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select></div>
+          `<option value="${n}" ${String(n) === String(draft.partner_strength) ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select></div>` : ''}
       <div class="form-field"><label>Team name (optional)</label>
         <input id="j-team" value="${esc(draft.team_name)}" data-j="team_name" placeholder="Two Left Hands"></div>` : ''}
 
