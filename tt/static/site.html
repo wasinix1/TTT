@@ -258,7 +258,8 @@ body.pre .kicker,body.pre .hero h1,body.pre .blurb,body.pre .count,body.pre #foo
   /* one edge-to-edge column: no corners, so no white wedges between the blocks */
   .hero-panel,.poster,.join-note,.join-form,.count,.cup{border-radius:0}
   .hero-foot > *,#cta-slot{width:100%}
-  .poster{--poster-pos:var(--poster-pos-m,50% 50%)}
+  /* the photo is portrait: on a phone show a 3:2 window near its bottom, where the table is */
+  .poster{--poster-pos:var(--poster-pos-m,50% 78%);min-height:0;aspect-ratio:3/2}
 }
 </style>
 </head>
