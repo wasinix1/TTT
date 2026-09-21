@@ -1299,6 +1299,59 @@ def test_routing():
     shutil.rmtree(d)
 
 
+def test_a_bad_event_never_reaches_the_log():
+    """The log is the truth, so nothing that cannot be replayed may enter it.
+
+    Committing before applying meant a payload the handler could not read
+    was already written by the time it raised: the caller saw an error and
+    assumed nothing had happened, and the store then refused to load on the
+    next restart. Days later, in the hall."""
+    print("\n[a bad event never reaches the log]")
+    app, d = fresh()
+    app.act("admin", "add_cup", {"name": "Singles"})
+    good = app.store.seq
+
+    # "cup_id" is not the key the handler reads; it wants "id"
+    try:
+        app.act("admin", "update_cup", {"cup_id": "C1", "registration": "open"})
+        check(False, "a payload the handler cannot read is refused")
+    except Exception:
+        check(True, "a payload the handler cannot read is refused")
+
+    check(app.store.seq == good, "and the log did not grow")
+    rows = app.store.conn.execute(
+        "SELECT COUNT(*) FROM events WHERE type='cup_update'").fetchone()[0]
+    check(rows == 0, "nothing was written to take back")
+
+    # the state it half-touched is still sound, and still writable
+    app.act("admin", "update_cup", {"id": "C1", "registration": "open"})
+    check(app.store.cups["C1"].registration == "open", "the correct call still works")
+
+    # and the whole point: it still opens next time
+    app.store.conn.close()
+    reopened = App(d)
+    check(reopened.store.cups["C1"].registration == "open",
+          "and the store still replays from cold")
+    shutil.rmtree(d)
+
+
+def test_a_failed_cascade_is_all_or_nothing():
+    """Applying can append — a result that ends a Swiss builds the knockout.
+    Those inner writes belong to the outer one."""
+    print("\n[a failed cascade leaves nothing behind]")
+    app, d = fresh()
+    app.act("admin", "add_cup", {"name": "Cup"})
+    before = app.store.seq
+    try:
+        app.act("admin", "update_cup", {})          # no id at all
+    except Exception:
+        pass
+    check(app.store.seq == before, "a throwing apply advances nothing")
+    n = app.store.conn.execute("SELECT COUNT(*) FROM events").fetchone()[0]
+    check(n == before, "and the log holds exactly what succeeded")
+    shutil.rmtree(d)
+
+
 if __name__ == "__main__":
     test_open_play()
     test_scramble()
@@ -1339,4 +1392,6 @@ if __name__ == "__main__":
     test_the_door_after_the_draw_starts()
     test_directory()
     test_routing()
+    test_a_bad_event_never_reaches_the_log()
+    test_a_failed_cascade_is_all_or_nothing()
     print("\nall good\n")

@@ -251,3 +251,94 @@ legend{font-size:12.5px;color:var(--muted);padding:0 6px}
   .sheet-inner{max-height:100vh;height:100vh;border-radius:0;border:none}
 }
 @media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
+
+/* --------------------------------------------------- setup: the event tab
+   A cup is a card, not three rows on three tabs. Sections are a heading and
+   a hairline rather than a fieldset, because the legend already said what
+   the border was repeating, and repeating rows carry one header instead of
+   a label per cell. */
+.sec{display:flex;align-items:baseline;gap:10px;margin:20px 0 9px}
+.sec:first-child{margin-top:0}
+.sec h2{
+  font-size:11.5px;font-weight:620;letter-spacing:.08em;
+  text-transform:uppercase;color:var(--muted);white-space:nowrap;
+}
+.sec .line{flex:1;height:1px;background:var(--edge)}
+
+.card{border:1px solid var(--edge);border-radius:var(--r);background:var(--ground);margin-bottom:9px}
+.card-body{padding:11px 13px;display:flex;flex-direction:column;gap:10px}
+.card-sub{border-top:1px solid var(--edge);padding:10px 13px;display:flex;flex-direction:column;gap:9px}
+.card-sub.muted{background:rgba(20,38,34,.5)}
+
+/* one header row, then rows that are values — no label per cell */
+.rows{display:flex;flex-direction:column}
+.hrow,.drow{display:grid;align-items:center;gap:9px;grid-template-columns:var(--cols);padding:7px 0}
+.hrow{
+  font-size:11px;letter-spacing:.05em;text-transform:uppercase;color:var(--dim);
+  padding:0 0 5px;border-bottom:1px solid var(--edge);
+}
+.drow{border-bottom:1px solid rgba(39,69,61,.45)}
+.drow:last-child{border-bottom:none}
+.rows input,.rows select{
+  background:var(--ground);color:var(--chalk);border:1px solid var(--edge);
+  border-radius:var(--r);padding:6px 9px;width:100%;
+}
+.rows input:focus,.rows select:focus{outline:2px solid var(--signal);outline-offset:-1px}
+.num{color:var(--dim);text-align:right}
+.acts{display:flex;gap:6px;justify-content:flex-end;flex-wrap:wrap}
+
+/* the one-line summary a collapsed draw shows */
+.sumline{display:flex;align-items:center;gap:9px;flex-wrap:wrap}
+.sumline .what{font-size:14px;font-weight:600}
+.sumline .cfg{font-size:12.5px;color:var(--muted);flex:1;min-width:0}
+
+/* prose that is true but not needed every time */
+details.why{font-size:12.5px;color:var(--muted)}
+details.why > summary{cursor:pointer;color:var(--dim);list-style:none;width:max-content}
+details.why > summary::-webkit-details-marker{display:none}
+details.why > summary::before{content:"?";
+  display:inline-grid;place-items:center;width:15px;height:15px;margin-right:6px;
+  border:1px solid var(--edge);border-radius:50%;font-size:10.5px;vertical-align:-2px;
+}
+details.why > summary:hover{color:var(--chalk)}
+details.why[open] > summary{margin-bottom:5px}
+details.why p{margin:0 0 5px}
+
+.warn-in{
+  border-left:2px solid var(--signal);background:rgba(214,106,42,.07);
+  padding:8px 11px;font-size:12.5px;border-radius:var(--r);
+}
+.warn-in .inline{margin-top:7px}
+
+/* a field that just wrote itself away, instead of a Save button per row */
+@keyframes saved{0%{border-color:var(--signal)}100%{border-color:var(--edge)}}
+.rows input.just-saved,.field input.just-saved,
+.field textarea.just-saved,.rows select.just-saved{animation:saved .9s ease-out}
+.drow[data-dim="1"]{opacity:.5}
+.tabs .count{
+  display:inline-grid;place-items:center;min-width:16px;height:16px;padding:0 4px;
+  margin-left:5px;border-radius:8px;background:var(--signal);color:#150803;
+  font-size:11px;font-weight:700;vertical-align:1px;
+}
+.sumline a{color:var(--signal);text-decoration:none}
+.sumline a:hover{text-decoration:underline}
+
+/* one pending entry is one block: a pair is two lines that belong together,
+   and without this they read as four unrelated people */
+.entry{padding:2px 0}
+.entry + .entry{border-top:1px solid var(--edge)}
+.entry .drow{border-bottom:none}
+
+/* On a phone a fixed column grid squeezes the one cell that matters — the
+   name — down to nothing, so below this width the rows stop being a table
+   and become what they are: a few controls that wrap. The header goes with
+   it, since there is nothing left for it to head. */
+@media (max-width:640px){
+  .hrow{display:none}
+  .drow{display:flex;flex-wrap:wrap;align-items:center;gap:7px;padding:9px 0}
+  .drow > input,.drow > select{flex:1 1 130px;min-width:0}
+  .drow > .num{flex:0 0 auto;min-width:18px;text-align:left}
+  .drow > span:not(.num):not(.acts){flex:1 1 100%;min-width:0}
+  .drow > .acts{flex:1 1 100%;justify-content:flex-start}
+  .sec{margin:16px 0 8px}
+}
