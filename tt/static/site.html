@@ -35,10 +35,11 @@ body{padding-bottom:0}
   position:relative;display:flex;flex-direction:column;justify-content:space-between;
   gap:clamp(28px,4vw,48px);padding:clamp(24px,4vw,52px);
   border-radius:10px;overflow:hidden;min-height:clamp(420px,58vh,660px);
-  background-image:url('/static/poster.jpg');background-size:cover;background-position:center;
+  background-image:url('/static/texture.jpg');background-size:cover;background-position:center;
 }
-/* the poster reads through as texture, not as an image you look at. if no
-   poster is installed the panel is simply white, which is fine */
+/* two images: texture.jpg (the balls) sits behind the text as a wash, and
+   poster.jpg (the table) fills the panel beside it. if texture.jpg is missing
+   the text panel is simply white, which is fine */
 .hero-panel::before{content:"";position:absolute;inset:0;background:rgba(255,255,255,.86)}
 .hero-panel > *{position:relative}
 .lockup{display:inline-block;line-height:.8;align-self:flex-start}
