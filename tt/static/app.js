@@ -1461,7 +1461,8 @@ function cupPeople(c, pending, allEnts, q) {
       ${teams.length ? `<div class="rows">${teams.map(regRow).join('')}</div>`
         : `<p class="blank">${allRows.length ? 'None match.' : 'Nobody pre-registered for this cup.'}</p>`}
       <div class="subsec"><h3>In the pool${allEnts.length
-        ? ` <span class="count">${allEnts.length}</span>` : ''}</h3></div>`}
+        ? ` <span class="count">${allEnts.length}</span>` : ''}</h3>${allEnts.length > 1
+        ? `<button class="ghost tiny" data-act="rm-all" data-c="${c.id}">Remove all ${allEnts.length}</button>` : ''}</div>`}
     ${ents.length ? `<div class="rows">${ents.map(e => personRow(e)).join('')}</div>`
       : `<p class="blank">${allEnts.length ? 'None match.' : 'Nobody in this cup yet.'}</p>`}`;
 }
@@ -1938,6 +1939,14 @@ document.addEventListener('click', async e => {
       closeTeamModal();
       if (out.where === 'roster') toast(`Added to the roster — ${out.why}`);
     }
+    return;
+  }
+  if (a === 'rm-all') {
+    const cup = cupById(b.dataset.c);
+    const n = S.entrants.filter(e => (e.cup_id || '') === b.dataset.c).length;
+    if (!confirm(`Remove all ${n} from ${cup ? cup.name : 'this cup'}? Anybody already drawn into a match stays.`)) return;
+    const out = await api('remove_entrants', { cup_id: b.dataset.c });
+    if (out) toast(`Removed ${out.removed}` + (out.kept ? ` — ${out.kept} stayed, already in a match` : ''));
     return;
   }
   if (a === 'rm-entrant') {
