@@ -65,7 +65,10 @@ body{padding-bottom:0}
 .fact.venue .v{color:var(--signal);text-transform:uppercase}
 
 .poster{position:relative;background:var(--signal);min-height:320px;overflow:hidden;border-radius:10px}
-.poster img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;display:block}
+.poster img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;display:block;
+  /* which part of the photo stays in frame: x% y%. 50% 50% is the middle;
+     raise y to show more of the bottom, lower it to show more of the top */
+  object-position:var(--poster-pos,50% 50%)}
 
 /* the countdown, one quiet strip */
 .count{margin:2px 0 0;display:flex;align-items:baseline;gap:clamp(28px,5vw,64px);
@@ -252,6 +255,10 @@ body.pre .kicker,body.pre .hero h1,body.pre .blurb,body.pre .count,body.pre #foo
   .join-note{min-height:0;padding:32px 22px}
   .join-form{padding:24px 22px 28px}
   .jform .cta.send{align-self:stretch;width:100%}
+  /* one edge-to-edge column: no corners, so no white wedges between the blocks */
+  .hero-panel,.poster,.join-note,.join-form,.count,.cup{border-radius:0}
+  .hero-foot > *,#cta-slot{width:100%}
+  .poster{--poster-pos:var(--poster-pos-m,50% 50%)}
 }
 </style>
 </head>
