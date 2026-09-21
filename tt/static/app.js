@@ -273,7 +273,7 @@ function renderBoard() {
     const rows = b.up.map(r => `
       <div class="row hoverable ${r.blocked ? 'blocked' : ''} ${r.on_deck ? 'ondeck' : ''}">
         <span class="pos">${r.position}</span>
-        <span class="nm">${esc(r.a)}${r.b ? ` <span style="color:var(--dim)">v</span> ${esc(r.b)}` : ''}</span>
+        <span class="nm">${esc(r.a)}${r.b ? ` <span style="color:var(--muted)">v</span> ${esc(r.b)}` : ''}</span>
         ${whenLabel(r) ? `<span class="chip when">${esc(whenLabel(r))}</span>` : ''}
         <span class="chip where">${esc(whereLabel(r))}</span>
         ${r.kind === 'fixture' && canScore()
@@ -490,7 +490,7 @@ function renderRecent() {
       const sc = m.games.map(g => `${g[0]}-${g[1]}`).join(', ');
       const w = m.winner === 'a' ? m.a : m.b, l = m.winner === 'a' ? m.b : m.a;
       return `<div class="row hoverable">
-        <span class="nm">${esc(w)} <span style="color:var(--dim)">beat</span> ${esc(l)}</span>
+        <span class="nm">${esc(w)} <span style="color:var(--muted)">beat</span> ${esc(l)}</span>
         <span class="meta">${esc(sc)}</span>
         ${canScore() ? `<button class="ghost tiny on-hover" data-act="edit" data-m="${m.id}">Edit result</button>` : ''}
       </div>`;
@@ -712,7 +712,7 @@ function tabFormats() {
         <div class="pickers">${S.entrants.map(e => `
           <label class="pick"><input type="checkbox" data-ent="${e.id}"
             ${form.ents && form.ents[e.id] ? 'checked' : ''}> ${esc(e.name)}
-            <span style="color:var(--dim)">${e.strength}</span></label>`).join('')}</div>
+            <span style="color:var(--muted)">${e.strength}</span></label>`).join('')}</div>
         <button class="ghost tiny" data-act="pick-all">Select everyone</button>` : ''}
       <div><button class="primary" data-act="add-format">Create format</button></div>
     </fieldset>
@@ -767,7 +767,7 @@ function tabLog() {
   return `<div class="form">
     <p class="sub">Every change is an event. Rewinding drops everything after that point and rebuilds the evening from scratch.</p>
     ${S.history.map(h => `<div class="inline" style="align-items:center;gap:8px">
-      <span class="meta" style="width:48px;color:var(--dim)">${h.seq}</span>
+      <span class="meta" style="width:48px;color:var(--muted)">${h.seq}</span>
       <span style="flex:1;font-size:13px">${esc(h.type)} <span style="color:var(--muted)">${esc(JSON.stringify(h.payload).slice(0, 70))}</span></span>
       <button class="ghost tiny" data-act="rewind" data-s="${h.seq}">Rewind here</button>
     </div>`).join('')}

@@ -11,6 +11,15 @@ function fits() {
   return Math.max(4, Math.floor(window.innerHeight * 0.62 / (window.innerHeight * 0.0315)));
 }
 
+/* Columns for the tables in play, so the blocks are always equal and never a
+   full-width straggler: 3 tables are 3 across (or stacked when cups share the
+   width), 4 are 2x2, and so on. */
+function colsFor(n, multi) {
+  if (n <= 2) return Math.max(1, n);
+  if (multi) return n % 2 === 0 ? 2 : 1;
+  return n <= 3 ? n : n % 3 === 0 ? 3 : n % 2 === 0 ? 2 : 3;
+}
+
 function when(r) {
   if (r.blocked) return 'still playing';
   if (r.on_deck) return 'get ready';
@@ -50,12 +59,12 @@ function render(S) {
         ${when(r) ? `<span class="e when">${esc(when(r))}</span>` : ''}
       </div>`).join('');
     const more = b.total > cap ? `<div class="q"><span class="n"></span>
-      <span class="w" style="color:var(--dim)">and ${b.total - cap} more</span></div>` : '';
+      <span class="w" style="color:var(--muted)">and ${b.total - cap} more</span></div>` : '';
     return `<div class="cup">
       <h2>${esc(cup ? cup.name : (S.event.name || 'Tonight'))}
         <span>~${b.match_minutes} min a match</span></h2>
-      <div class="live">${now}</div>
-      <div class="list">${rows || '<div class="q"><span class="w" style="color:var(--dim)">Nobody waiting</span></div>'}${more}</div>
+      <div class="live" style="--cols:${colsFor(b.playing.length, bs.length > 1 && window.innerWidth > window.innerHeight)}">${now}</div>
+      <div class="list">${rows || '<div class="q"><span class="w" style="color:var(--muted)">Nobody waiting</span></div>'}${more}</div>
     </div>`;
   }).join('');
   const waiting = bs.reduce((n, b) => n + b.waiting, 0);
