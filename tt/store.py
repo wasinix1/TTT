@@ -47,6 +47,7 @@ class Store:
         )
         self.conn.commit()
         self._replaying = False
+        self._depth = 0          # nested appends commit with the outermost
         self.reset_state()
         self.replay()
 
@@ -79,18 +80,46 @@ class Store:
     # ------------------------------------------------------------- log core
 
     def append(self, etype: str, payload: dict):
-        """Record a decision and apply it. The only way state ever changes."""
+        """Record a decision and apply it. The only way state ever changes.
+
+        The write is not committed until the apply has succeeded. This used
+        to be the other way round, and the failure it allowed was quiet and
+        fatal: a payload the handler could not read was already in the log
+        by the time it raised, so the caller got an error and assumed
+        nothing had happened, while the event sat there forever. Nothing
+        went wrong until the next restart, when replay hit it and the store
+        would not load at all — which is to say, on the night, in the hall,
+        days after whatever wrote it.
+
+        An event that cannot be applied did not happen, so it does not get
+        to be in the log. Applying can also append — a result that finishes
+        a Swiss builds the knockout — and those inner writes join the outer
+        one: the whole cascade commits together or not at all, which is
+        what you want from "this result ended the round" anyway."""
         with self.lock:
             ts = time.time()
             cur = self.conn.execute(
                 "INSERT INTO events (ts, type, payload) VALUES (?,?,?)",
                 (ts, etype, json.dumps(payload)),
             )
-            self.conn.commit()
-            self.seq = cur.lastrowid
-            self.apply(etype, payload, self.seq, ts)
+            seq = cur.lastrowid
+            self._depth += 1
+            try:
+                self.apply(etype, payload, seq, ts)
+            except Exception:
+                self._depth -= 1
+                if not self._depth:
+                    # take the event back out, and rebuild from the log in
+                    # case the handler got half way through before it threw
+                    self.conn.rollback()
+                    self.replay()
+                raise
+            self._depth -= 1
+            if not self._depth:
+                self.conn.commit()
+            self.seq = seq
             self.version += 1
-            return self.seq
+            return seq
 
     def replay(self):
         with self.lock:
