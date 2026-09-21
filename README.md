@@ -146,16 +146,36 @@ One small server, one permanent URL, HTTPS handled for you.
 
 ```
 scp -r . root@your-server:/opt/tt-console
-ssh root@your-server 'cd /opt/tt-console && deploy/install.sh tt.yourdomain.at'
+ssh root@your-server 'cd /opt/tt-console && deploy/install.sh'
 ```
 
 That installs Caddy, creates a service user, wires up systemd and gets a TLS
 certificate. About €4/month for the box and €10/year for the domain.
 
-- Point an A record at the server's IP before running it.
+- Set your address in `deploy/domains.conf` and point an A record at the
+  server's IP before running it.
 - Your keys land in `/var/lib/tt-console/keys.json`.
 - Ship changes later with `deploy/update.sh root@your-server`. The event log
   lives in `/var/lib` and is never touched by a deploy.
+
+### Changing the address
+
+The address lives in one file, `deploy/domains.conf`, and nowhere in the app:
+pages, print sheets and QR codes use whatever address they were opened from.
+
+1. Add a DNS A record for the new name pointing at the server. Keep the old
+   record.
+2. In `domains.conf`, set `PRIMARY` to the new name and put the old one in
+   `ALIASES`, so both serve the app while old posters are still around.
+3. `deploy/update.sh root@your-server`. This rebuilds the Caddyfile, checks it
+   with `caddy validate` (the live file is untouched if it fails), reloads
+   Caddy, and Caddy fetches the certificate for the new name.
+4. Open Setup → Access on the new address and reprint the poster.
+5. Later, move the old name from `ALIASES` to `REDIRECTS` and deploy again. It
+   then forwards to the new address, keeping the path, so old referee and
+   admin links still land in the right place. Delete it once nobody uses it.
+
+Don't edit `/etc/caddy/Caddyfile` on the server; the next deploy rebuilds it.
 
 Because the URL is permanent, Setup → Access has a printable poster with a QR
 code for the spectator link. Print it once and it works for every future

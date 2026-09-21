@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 # One-time setup on a fresh Ubuntu 24.04 box. Run as root.
-#   curl -fsSL https://.../install.sh | bash -s tt.example.at
+#   cd /opt/tt-console && deploy/install.sh
+# The address comes from deploy/domains.conf, not from an argument.
 set -euo pipefail
-DOMAIN="${1:?usage: install.sh <your-domain>}"
+cd "$(dirname "$0")/.."
+source deploy/domains.conf
 
 apt-get update -qq
 apt-get install -y -qq python3 python3-pip debian-keyring debian-archive-keyring apt-transport-https curl
@@ -19,14 +21,13 @@ id -u tt &>/dev/null || useradd --system --home /opt/tt-console --shell /usr/sbi
 mkdir -p /opt/tt-console /var/lib/tt-console
 chown -R tt:tt /opt/tt-console /var/lib/tt-console
 
-sed "s/tt\.example\.at/${DOMAIN}/" deploy/Caddyfile > /etc/caddy/Caddyfile
 cp deploy/tt-console.service /etc/systemd/system/
 
 systemctl daemon-reload
 systemctl enable --now tt-console
-systemctl reload caddy
+deploy/apply-domains.sh
 
 echo
-echo "  Live at https://${DOMAIN}"
+echo "  Live at https://${PRIMARY}"
 echo "  Your keys:  cat /var/lib/tt-console/keys.json"
 echo
