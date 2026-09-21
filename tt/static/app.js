@@ -857,6 +857,8 @@ function tabEvent() {
         ${auto('ev-title', 'event_meta', 'name', ev.name, 'placeholder="October open"')}</div>
       <div class="field" style="max-width:230px"><label for="ev-start">Starts at</label>
         ${auto('ev-start', 'event_meta', 'starts_at', ev.starts_at, 'type="datetime-local"')}</div>
+      <div class="field" style="max-width:150px"><label for="ev-end">Ends at</label>
+        ${auto('ev-end', 'event_meta', 'ends_at', ev.ends_at || '', 'type="time"')}</div>
     </div>
     <div class="inline">
       <div class="field"><label for="ev-venue">Venue</label>

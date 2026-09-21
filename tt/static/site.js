@@ -7,10 +7,10 @@ const esc = s => String(s ?? '').replace(/[&<>"']/g, c =>
   ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
 const KIND = {
-  open_play: 'Open play', groups: 'Groups', single_elim: 'Knockout', swiss: 'Swiss',
+  open_play: 'Offenes Spiel', groups: 'Gruppen', single_elim: 'K.o.-Runde', swiss: 'Schweizer System',
 };
-const ENTRY = { single: 'Enter on your own', pair: 'Enter as a pair' };
-const PLACE = { 1: '1st', 2: '2nd', 3: '3rd' };
+const ENTRY = { single: 'Einzel', pair: 'Doppel' };
+const PLACE = { 1: '1.', 2: '2.', 3: '3.' };
 
 let P = null;
 let skew = 0;          // server clock minus ours, so the countdown is honest
@@ -19,6 +19,10 @@ let skew = 0;          // server clock minus ours, so the countdown is honest
    than read off the DOM, so a background refresh of the event details never
    takes half-typed answers with it. */
 const joining = () => location.pathname === '/join';
+/* The form is on the landing itself while entries are open, and still has its
+   own page at /join for links that point straight at it. */
+const showJoin = () => joining() || (!!P && (P.phase === 'registration' || P.phase === 'announced')
+  && P.cups.some(c => c.registration === 'open'));
 let draft = { cup_id: '', kind: 'single', name: '', strength: '5',
               partner_name: '', partner_strength: '5', team_name: '', note: '' };
 let sending = false, error = '';
@@ -42,17 +46,24 @@ function fmtDate(iso) {
   return `${p(d.getDate())}/${p(d.getMonth() + 1)}/${p(d.getFullYear() % 100)}`;
 }
 
-function fmtTime(iso) {
+/* 17:00 or 17:00–2:00 — hours unpadded, minutes always two digits */
+function fmtTime(iso, end) {
   const d = new Date(iso);
-  return isNaN(d) || !/T\d/.test(iso || '') ? '' : d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  if (isNaN(d) || !/T\d/.test(iso || '')) return '';
+  const hm = (h, m) => `${h}:${String(m).padStart(2, '0')}`;
+  const from = hm(d.getHours(), d.getMinutes());
+  const m = /^(\d{1,2}):(\d{2})/.exec(end || '');
+  return m ? `${from}–${hm(+m[1], +m[2])}` : from;
 }
 
 function render() {
   renderJoin();
   $('name').textContent = P.name;
   $('kicker').textContent =
-    P.phase === 'registration' ? 'Registration open'
-      : P.phase === 'done' ? 'Results' : 'Upcoming';
+    P.phase === 'registration' ? 'Anmeldung offen'
+      : P.phase === 'done' ? 'Ergebnisse' : 'Demnächst';
+  // while entries are open the page is just the lockup, the date, the way in
+  document.body.classList.toggle('pre', showJoin());
 
   const b = $('blurb');
   b.hidden = !P.blurb;
@@ -61,14 +72,14 @@ function render() {
   const facts = [];
   if (P.starts_at) facts.push(['When', fmtDate(P.starts_at)]);
   if (P.venue) facts.push(['Where', P.venue]);
-  if (fmtTime(P.starts_at)) facts.push(['Time', fmtTime(P.starts_at)]);
+  if (fmtTime(P.starts_at, P.ends_at)) facts.push(['Time', fmtTime(P.starts_at, P.ends_at)]);
   $('facts').innerHTML = facts.map(([k, v]) =>
     `<div class="fact${k === 'Where' ? ' venue' : ''}"><div class="k">${esc(k)}</div><div class="v">${esc(v)}</div></div>`).join('');
 
   const done = P.phase === 'done';
-  $('cups-head').textContent = done ? 'How it finished' : "What's being played";
+  $('cups-head').textContent = done ? 'So ist es ausgegangen' : 'Was gespielt wird';
   // on the form, the cup picker is the list — showing both says it twice
-  $('cups-section').hidden = !P.cups.length || joining();
+  $('cups-section').hidden = !P.cups.length || showJoin();
   $('cups').innerHTML = P.cups.map(c => cupCard(c, done)).join('');
 
   // an event with entries open but no cup taking them would be a dead end;
@@ -76,7 +87,7 @@ function render() {
   const note = $('cups-note');
   const anyOpen = P.cups.some(c => c.registration === 'open');
   note.hidden = !(P.phase === 'announced' && P.cups.length && !anyOpen);
-  note.textContent = 'Entries are not open yet — check back closer to the day.';
+  note.textContent = 'Die Anmeldung ist noch nicht offen — schau kurz vor dem Termin wieder vorbei.';
 
   const open = P.cups.filter(c => c.registration === 'open');
   const already = mine();
@@ -84,14 +95,14 @@ function render() {
   if (cta) {
     cta.innerHTML = (!joining() && open.length && !done)
       ? (already
-          ? `<a class="cta ghost" href="/join">You are on the list — add someone else</a>`
-          : `<a class="cta" href="/join">Put your name down</a>`)
+          ? `<a class="cta" href="#join">Noch jemanden anmelden</a>`
+          : `<a class="cta" href="#join">Voranmelden</a>`)
       : '';
   }
 
   $('foot-note').textContent = done
-    ? 'Full standings and every result are on the live page.'
-    : 'No account needed — the live page is open to everyone.';
+    ? 'Tabelle und alle Ergebnisse gibt es auf der Live-Seite.'
+    : 'Kein Konto nötig — die Live-Seite ist für alle offen.';
 
   tick();
 }
@@ -108,97 +119,99 @@ const STRENGTHS = [
   [8, '8'], [9, '9'], [10, '10 — league player'],
 ];
 
+/* the dark tile names the cups; the form sits beside it */
+function joinShell(inner, open) {
+  const list = open.map(c => `<div><b>${esc(c.name)}</b>${ENTRY[c.entry] ? ' <i>·</i> ' + ENTRY[c.entry] : ''}</div>`).join('');
+  return `<div class="join-grid">
+    <div class="join-note"><h2>Voranmelden</h2><div class="cups-list">${list}</div></div>
+    <div class="join-form"><div class="jf">${inner}</div></div>
+  </div>`;
+}
+const backLink = () => joining() ? '<a class="back" href="/">← Zurück zur Veranstaltung</a>' : '';
+
 function renderJoin() {
   const box = $('join');
-  if (!joining()) { box.hidden = true; return; }
+  if (!showJoin()) { box.hidden = true; return; }
   box.hidden = false;
 
   const open = P.cups.filter(c => c.registration === 'open');
   if (P.phase === 'live' || P.phase === 'doors') {
-    box.innerHTML = `<h2>Entries</h2>
-      <p class="blank">The event has started — come and find whoever is running it.</p>
-      <a class="back" href="/">← Back to the event</a>`;
+    box.innerHTML = `<h2>Anmeldung</h2>
+      <p class="blank">Die Veranstaltung läuft — sprich die Leute vor Ort an.</p>
+      <a class="back" href="/">← Zurück zur Veranstaltung</a>`;
     return;
   }
   if (!open.length) {
-    box.innerHTML = `<h2>Entries</h2>
-      <p class="blank">Nothing is taking entries at the moment.</p>
-      <a class="back" href="/">← Back to the event</a>`;
+    box.innerHTML = `<h2>Anmeldung</h2>
+      <p class="blank">Gerade nimmt nichts Anmeldungen an.</p>
+      <a class="back" href="/">← Zurück zur Veranstaltung</a>`;
     return;
   }
   if (draft.done) {
-    box.innerHTML = `<div class="done-card">
-        <h2>You are on the list</h2>
+    box.innerHTML = joinShell(`<div class="done-card">
+        <h2>Du stehst auf der Liste</h2>
         <p>${esc(draft.done.name)} — ${esc(draft.done.cup)}</p>
-        <p>Nothing else to do. We confirm everyone on the night, so just turn up.</p>
+        <p>Mehr ist nicht nötig. Wir bestätigen alle am Abend selbst — komm einfach vorbei.</p>
       </div>
-      <button class="cta ghost" data-act="again">Put someone else down</button>
-      <a class="back" href="/">← Back to the event</a>`;
+      <button class="cta ghost" data-act="again">Noch jemanden anmelden</button>
+      ${backLink()}`, open);
     return;
   }
   if (!draft.cup_id || !open.some(c => c.id === draft.cup_id)) draft.cup_id = open[0].id;
   const cup = open.find(c => c.id === draft.cup_id);
   const pair = cup.entry === 'pair';
+  const cupLabel = c => c.name + (ENTRY[c.entry] ? ' · ' + ENTRY[c.entry] : '');
 
-  box.innerHTML = `<h2>Put your name down</h2>
-    ${open.length > 1 ? `<div class="form-field"><label>Which cup</label>
-      <div class="choice">${open.map(c => `<button data-cup="${c.id}"
-        class="${c.id === draft.cup_id ? 'on' : ''}">
-        <span class="t">${esc(c.name)}</span>
-        <span class="s">${esc([KIND[c.format] || '', ENTRY[c.entry] || ''].filter(Boolean).join(' · '))}</span>
-      </button>`).join('')}</div></div>` : ''}
+  box.innerHTML = joinShell(`<div class="jform">
+    <label class="sr" for="j-name">Name</label>
+    <input id="j-name" value="${esc(draft.name)}" data-j="name" placeholder="Name"
+           autocomplete="name" autocapitalize="words" enterkeyhint="next">
 
-    ${pair ? `<div class="form-field"><label>How are you entering</label>
-      <div class="choice">
+    ${open.length > 1 ? `<label class="sr" for="j-cup">Kategorie</label>
+      <div class="selectwrap"><select id="j-cup" data-j="cup_id">
+        ${open.map(c => `<option value="${c.id}" ${c.id === draft.cup_id ? 'selected' : ''}>${esc(cupLabel(c))}</option>`).join('')}
+      </select></div>` : ''}
+
+    ${pair ? `<div class="choice">
         <button data-kind="pair" class="${draft.kind === 'pair' ? 'on' : ''}">
-          <span class="t">With a partner</span><span class="s">You both play together</span></button>
+          <span class="t">Mit Partner:in</span><span class="s">Ihr spielt zusammen</span></button>
         <button data-kind="seeking" class="${draft.kind === 'seeking' ? 'on' : ''}">
-          <span class="t">Looking for a partner</span><span class="s">We pair you up on the night</span></button>
-      </div></div>` : ''}
-
-    <div class="form-field"><label>${pair && draft.kind === 'pair' ? 'Your name' : 'Name'}</label>
-      <input id="j-name" value="${esc(draft.name)}" data-j="name" placeholder="Jana Berger"
-             autocomplete="name" enterkeyhint="next"></div>
-
-    ${ASK_STRENGTH ? `<div class="form-field"><label>How strong are you, roughly</label>
-      <select id="j-str" data-j="strength">${STRENGTHS.map(([n, l]) =>
-        `<option value="${n}" ${String(n) === String(draft.strength) ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select>
-      <div class="hint">Your own guess. It only sets who you play first — whoever is running it adjusts once you have played a couple.</div></div>` : ''}
+          <span class="t">Partner:in gesucht</span><span class="s">Wir teilen euch am Abend ein</span></button>
+      </div>` : ''}
 
     ${pair && draft.kind === 'pair' ? `
-      <div class="form-field"><label>Your partner's name</label>
-        <input id="j-pname" value="${esc(draft.partner_name)}" data-j="partner_name" placeholder="Milo Farkas"></div>
-      ${ASK_STRENGTH ? `<div class="form-field"><label>How strong are they</label>
-        <select id="j-pstr" data-j="partner_strength">${STRENGTHS.map(([n, l]) =>
-          `<option value="${n}" ${String(n) === String(draft.partner_strength) ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select></div>` : ''}
-      <div class="form-field"><label>Team name (optional)</label>
-        <input id="j-team" value="${esc(draft.team_name)}" data-j="team_name" placeholder="Two Left Hands"></div>` : ''}
+      <label class="sr" for="j-pname">Teampartner:in</label>
+      <input id="j-pname" class="partner" value="${esc(draft.partner_name)}" data-j="partner_name"
+             placeholder="Teampartner:in" autocomplete="off" autocapitalize="words">
+      <label class="sr" for="j-team">Teamname</label>
+      <input id="j-team" class="partner" value="${esc(draft.team_name)}" data-j="team_name"
+             placeholder="Teamname" autocomplete="off">` : ''}
 
-    <div class="form-field"><label>Anything you want to tell us?</label>
-      <textarea id="j-note" data-j="note" placeholder="Arriving late, changed my mind about something, anything at all.">${esc(draft.note)}</textarea></div>
+    <label class="sr" for="j-note">Anmerkung</label>
+    <textarea id="j-note" data-j="note" rows="2" placeholder="Anmerkung (optional)">${esc(draft.note)}</textarea>
 
     ${error ? `<div class="err">${esc(error)}</div>` : ''}
-    <button class="cta" data-act="send" ${sending ? 'disabled' : ''}>${sending ? 'Sending…' : 'Put me down'}</button>
-    <a class="back" href="/">← Back to the event</a>`;
+    <button class="cta send" data-act="send" ${sending ? 'disabled' : ''}>${sending ? 'Sende …' : 'Abschicken'}</button>
+    ${backLink()}</div>`, open);
 }
 
 async function send() {
   if (sending) return;
-  if (!draft.name.trim()) { error = 'We need a name to put down.'; return renderJoin(); }
+  if (!draft.name.trim()) { error = 'Wir brauchen einen Namen.'; return renderJoin(); }
   sending = true; error = ''; renderJoin();
   try {
     const r = await fetch('/api/action', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ op: 'register', data: draft }),
     });
-    const j = await r.json().catch(() => ({ error: 'Something went wrong.' }));
-    if (!r.ok) { error = j.error || 'Something went wrong.'; }
+    const j = await r.json().catch(() => ({ error: 'Da ist etwas schiefgegangen.' }));
+    if (!r.ok) { error = j.error || 'Da ist etwas schiefgegangen.'; }
     else {
       draft.done = { name: draft.name, cup: j.cup };
       remember({ id: j.registration_id, name: draft.name, cup: j.cup });
     }
   } catch (e) {
-    error = 'No connection just now — try again in a moment.';
+    error = 'Gerade keine Verbindung — versuch es gleich noch einmal.';
   }
   sending = false;
   renderJoin();
@@ -218,9 +231,9 @@ function cupCard(c, done) {
       ${meta.length ? `<div class="meta">${meta.map(esc).join(' · ')}</div>` : ''}
       ${line.length ? `<div class="line">${line.map(esc).join(' · ')}</div>` : ''}
       ${podium ? `<div class="podium">${podium}</div>` : ''}
-      ${done && !podium ? `<div class="line">No results recorded.</div>` : ''}
+      ${done && !podium ? `<div class="line">Keine Ergebnisse erfasst.</div>` : ''}
     </div>
-    ${!done && c.registration === 'open' ? '<span class="tag open">Entries open</span>' : ''}
+    ${!done && c.registration === 'open' ? '<span class="tag open">Anmeldung offen</span>' : ''}
   </div>`;
 }
 
@@ -234,8 +247,8 @@ function tick() {
   const h = Math.floor(left / 3600); left -= h * 3600;
   const m = Math.floor(left / 60);
   const s = Math.floor(left - m * 60);
-  const parts = d ? [[d, 'days'], [h, 'hours'], [m, 'min']]
-                  : [[h, 'hours'], [m, 'min'], [s, 'sec']];
+  const parts = d ? [[d, 'Tage'], [h, 'Std'], [m, 'Min']]
+                  : [[h, 'Std'], [m, 'Min'], [s, 'Sek']];
   box.innerHTML = parts.map(([n, l]) =>
     `<div><div class="n">${n}</div><div class="l">${l}</div></div>`).join('');
 }
@@ -262,7 +275,10 @@ document.addEventListener('input', e => {
 });
 document.addEventListener('change', e => {
   const k = e.target.dataset.j;
-  if (k) draft[k] = e.target.value;
+  if (!k) return;
+  draft[k] = e.target.value;
+  // a different cup can mean a different kind of entry, so the fields change
+  if (k === 'cup_id') { draft.kind = 'single'; error = ''; renderJoin(); }
 });
 document.addEventListener('click', e => {
   const cup = e.target.closest('button[data-cup]');
