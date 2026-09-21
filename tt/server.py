@@ -73,6 +73,31 @@ class App:
 
     # ------------------------------------------------------------ read side
 
+    def entrant_status(self, e):
+        """Where this entrant is in the evening, in the words the roster uses.
+
+        playing   on a table now
+        resting   sat out by hand; nobody will pair them until they are back
+        waiting   in the queue, next in line for a table
+        drawn     in a draw that is running but has nobody for them right
+                  now — between the fixtures a group stage or bracket set
+        entered   in a draw that has not started yet
+        outside   admitted to a cup that has no draw taking them: none set
+                  up yet, or one that started without them"""
+        s = self.store
+        for t in s.tables.values():
+            m = s.matches.get(t.match_id) if t.match_id else None
+            if m and e.id in (m.entrant_a, m.entrant_b, *(m.meta.get("queued") or [])):
+                return "playing"
+        if e.id in s.opted_out:
+            return "resting"
+        if any(q.entrant_id == e.id for q in s.queue):
+            return "waiting"
+        for f in s.formats.values():
+            if e.id in f.entrant_ids:
+                return "entered" if f.status == "setup" else "drawn"
+        return "outside"
+
     def side_name(self, m, which):
         """What to call one side of a match: the pair's name, the entrant's,
         or the players drawn into it for a scramble."""
@@ -190,30 +215,6 @@ class App:
                     "match": self.match_dto(m) if m else None,
                 })
 
-            # the board is what spectators read; this is the raw per-format
-            # queue, for whoever is actually running the thing
-            queues = []
-            for fid in s.format_order if role != "public" else []:
-                f = s.formats.get(fid)
-                if not f or not f.uses_queue():
-                    continue
-                qs = [q for q in s.queue if q.format_id == fid]
-                qs.sort(key=lambda q: (-q.passes, q.joined_seq))
-                busy = s.busy_players()
-                queues.append({
-                    "format_id": fid, "format_name": f.name,
-                    "cup_id": s.cup_of_format(f),
-                    "mode": f.config.get("mode", "pairs"),
-                    "entries": [{
-                        "entrant_id": q.entrant_id,
-                        "name": s.entrant_name(q.entrant_id),
-                        "strength": round(s.entrant_strength(q.entrant_id), 1),
-                        "passes": q.passes,
-                        "waiting_long": q.passes >= 2 * max(1, len(s.tables)),
-                        "blocked": not s.entrant_available(q.entrant_id, busy),
-                    } for q in qs],
-                })
-
             # Who plays next, and roughly when — see tt/board.py. This
             # replaces a flat "still to play" list that was cut off at 24
             # matches and, for open play, was always empty, because those
@@ -229,7 +230,6 @@ class App:
                 "now": time.time(),
                 "tables": tables,
                 "cups": [s.cups[c].to_dict() for c in s.cup_order if c in s.cups],
-                "queues": queues,
                 "board": boards,
                 "idle_tables": board.idle_reservations(s) if role == "admin" else [],
                 "recent": [self.match_dto(m) for m in recent],
@@ -239,11 +239,8 @@ class App:
                     s.players.values(), key=lambda p: p.name.lower())],
                 "entrants": [{**e.to_dict(),
                               "strength": round(s.entrant_strength(e.id), 1),
-                              "queued": any(q.entrant_id == e.id for q in s.queue),
-                              "playing": any(t.match_id and
-                                             e.id in (s.matches[t.match_id].entrant_a,
-                                                      s.matches[t.match_id].entrant_b)
-                                             for t in s.tables.values() if t.match_id)}
+                              "status": self.entrant_status(e),
+                              "resting": e.id in s.opted_out}
                              for e in sorted(s.entrants.values(),
                                              key=lambda e: e.name.lower())],
                 "people": [{**s.people[i].to_dict(),
@@ -274,13 +271,34 @@ class App:
             return out or {}
 
     # players & entrants
+    def _resolve_cup(self, cup_id):
+        """The cup somebody is being admitted to. Every way in goes through
+        here, because "which cup" is the one thing the pool needs to know.
+
+        Named, it must exist. Unnamed, it is only guessable when there is
+        exactly one; with several, guessing puts somebody in the wrong
+        tournament without a word, so it is an error instead. An event with
+        no cups at all is the old kind of evening, and stays cupless."""
+        s = self.store
+        if cup_id:
+            if cup_id not in s.cups:
+                raise ValueError("no such cup")
+            return s.cups[cup_id]
+        if len(s.cups) == 1:
+            return s.cups[s.cup_order[0]]
+        if s.cups:
+            raise ValueError("which cup is this for?")
+        return None
+
     def op_add_player(self, p):
         s = self.store
+        cup = self._resolve_cup(p.get("cup_id"))
         pid = self._make_player(p["name"].strip(), float(p.get("strength", 5)))
         if p.get("solo", True):
             eid = s.new_id("E", s.entrants)
             s.append("entrant_add", {"id": eid, "name": p["name"].strip(),
-                                     "player_ids": [pid]})
+                                     "player_ids": [pid],
+                                     "cup_id": cup.id if cup else ""})
         return {"player_id": pid}
 
     def op_update_player(self, p):
@@ -298,32 +316,28 @@ class App:
 
     def op_add_team(self, p):
         s = self.store
+        cup = self._resolve_cup(p.get("cup_id"))
         pids = [self._make_player(name.strip(), float(strength))
                 for name, strength in p["members"]]
         eid = s.new_id("E", s.entrants)
         label = p.get("name") or " / ".join(n for n, _ in p["members"])
-        s.append("entrant_add", {"id": eid, "name": label, "player_ids": pids})
+        s.append("entrant_add", {"id": eid, "name": label, "player_ids": pids,
+                                 "cup_id": cup.id if cup else ""})
         return {"entrant_id": eid}
 
     def op_update_entrant(self, p):
+        if p.get("cup_id"):
+            self._resolve_cup(p["cup_id"])
         self.store.append("entrant_update", p)
 
-    def op_add_entrant(self, p):
-        """Add a team to a Swiss already in progress. Only makes sense before
-        standings have pulled far apart: the newcomer starts at 0 wins and
-        joins the next round's pairing pool exactly like anyone else who is
-        still on 0, so this is meant for early on (round 1 still live), not
-        for dropping someone into round 6 of 8."""
-        s = self.store
-        f = s.formats[p["id"]]
-        if f.kind != "swiss":
-            raise ValueError("adding entrants mid-tournament only works for Swiss")
-        eid = p["entrant_id"]
-        if eid not in f.entrant_ids:
-            f.entrant_ids = f.entrant_ids + [eid]
-            s.append("format_update", {"id": f.id, "entrant_ids": f.entrant_ids})
-        if f.uses_queue() and f.status == "running":
-            s.append("queue_join", {"entrant_id": eid, "format_id": f.id})
+    def op_set_resting(self, p):
+        """Sit somebody out, or bring them back. The queue itself is never
+        edited by hand any more — it is whoever in the cup's pool is free
+        and not resting."""
+        if p["entrant_id"] not in self.store.entrants:
+            raise ValueError("no such entrant")
+        self.store.append("rest_set", {"entrant_id": p["entrant_id"],
+                                       "resting": bool(p.get("resting", True))})
 
     def op_set_table(self, p):
         self.store.append("table_set", p)
@@ -358,11 +372,17 @@ class App:
         fid = s.new_id("F", s.formats)
         cfg = dict(p.get("config", {}))
         cfg["entrant_ids"] = list(p.get("entrant_ids", []))
+        if cfg.get("cup_id") in s.cups:
+            cfg["entrant_ids"] = []          # a cup's draw is its pool, see dispatch
         s.append("format_add", {"id": fid, "kind": p["kind"],
                                 "name": p.get("name") or "", "config": cfg})
         return {"format_id": fid}
 
     def op_update_format(self, p):
+        p = dict(p)
+        f = self.store.formats.get(p.get("id"))
+        if f and self.store.cup_of_format(f):
+            p.pop("entrant_ids", None)       # the pool decides, not the form
         self.store.append("format_update", p)
 
     def op_start_format(self, p):
@@ -370,7 +390,8 @@ class App:
         f = s.formats[p["id"]]
         if f.status == "running":
             return
-        if "entrant_ids" in p:
+        dispatch.sync_pools(s)               # start on the pool as it is now
+        if "entrant_ids" in p and not s.cup_of_format(f):
             f.entrant_ids = list(p["entrant_ids"])
             s.append("format_update", {"id": f.id, "entrant_ids": f.entrant_ids})
         f.start(s)
@@ -401,7 +422,9 @@ class App:
     def op_remove_cup(self, p):
         self.store.append("cup_remove", p)
 
-    # queue
+    # queue — the console does not use these any more: who waits is worked
+    # out from the pool (dispatch.sync_queues), and sitting out is
+    # set_resting. They stay as the low-level way to force an entry.
     def op_join_queue(self, p):
         self.store.append("queue_join", {"entrant_id": p["entrant_id"],
                                          "format_id": p["format_id"]})
@@ -422,26 +445,11 @@ class App:
             (m.meta.get("queued") or []) + [x for x in (m.entrant_a, m.entrant_b) if x]))
         s.append("match_result", {"match_id": m.id, "games": games,
                                   "winner": winner})
-        if p.get("requeue", True):
-            self._requeue(m, involved)
-
-    def _requeue(self, m, involved=None):
-        """Hand players back to whichever queue they came out of. That covers
-        both open play itself and someone who was pulled out of the queue
-        into a scheduled draw match: when the draw is done with them for now,
-        they rejoin the queue rather than standing around."""
-        s = self.store
-        if involved is None:
-            involved = list(dict.fromkeys(
-                (m.meta.get("queued") or [])
-                + [x for x in (m.entrant_a, m.entrant_b) if x]))
-        for eid in involved:
-            if eid in s.opted_out:
-                continue
-            qf = s.came_from.get(eid, m.format_id)
-            f = s.formats.get(qf)
-            if f and f.uses_queue() and f.status == "running":
-                s.append("queue_join", {"entrant_id": eid, "format_id": qf})
+        # everyone is back in the queue by default — that is just what being
+        # free means now. Unticking "back in queue" is sitting them out.
+        if not p.get("requeue", True):
+            for eid in involved:
+                s.append("rest_set", {"entrant_id": eid, "resting": True})
 
     def op_void_match(self, p):
         self.store.append("match_void", {"match_id": p["match_id"]})
@@ -464,11 +472,18 @@ class App:
         s = self.store
         m = s.matches[p["match_id"]]
         f = s.formats.get(m.format_id)
+        pair = {x for x in (m.entrant_a, m.entrant_b) if x}
         if f and not f.can_redispatch_pending():
             s.append("match_void", {"match_id": m.id})
-            self._requeue(m)
         else:
             s.append("match_defer", {"match_id": m.id})
+        # Say what actually happened. When nobody else can use the table the
+        # same two come straight back, and a toast claiming they went to the
+        # back of the queue is a lie the organiser can see for themselves.
+        dispatch.tick(s)
+        seated = [s.matches[t.match_id] for t in s.tables.values() if t.match_id]
+        return {"reseated": any(pair and pair == {x.entrant_a, x.entrant_b} - {None}
+                                for x in seated)}
 
     def op_reopen_match(self, p):
         """Undo a result. The match becomes unplayed again and anything it
@@ -689,21 +704,17 @@ class App:
                                 "person_id": who.id})
         return pid
 
-    def _enter(self, entrant_id, cup):
-        """Put a confirmed entrant into the cup's draw if the draw can still
-        take them. A knockout that has already started cannot, and quietly
-        dropping them would be worse than saying so."""
+    def _intake(self, cup):
+        """What becoming part of this cup will mean for somebody: in the
+        draw, or on the cup's roster with nothing to play yet. The pool
+        carries them into the draw (dispatch.sync_pools); this only says so
+        out loud, because quietly dropping somebody into a knockout that has
+        already been drawn would be worse than telling the organiser."""
         s = self.store
         f = s.formats.get(cup.format_id) if cup else None
         if not f:
             return "roster", "no draw set up for that cup yet"
-        if f.status != "running":
-            if entrant_id not in f.entrant_ids:
-                s.append("format_update", {"id": f.id,
-                                           "entrant_ids": f.entrant_ids + [entrant_id]})
-            return "entered", ""
-        if f.kind == "swiss" and f.phase != "ko":
-            self.op_add_entrant({"id": f.id, "entrant_id": entrant_id})
+        if f.takes_new_entrants():
             return "entered", ""
         return "roster", f"{f.name or f.kind} has already started"
 
@@ -719,7 +730,7 @@ class App:
         if reg and reg.status == "confirmed":
             raise ValueError("that one is already in")
 
-        cup = s.cups.get(p.get("cup_id") or (reg.cup_id if reg else ""))
+        cup = self._resolve_cup(p.get("cup_id") or (reg.cup_id if reg else ""))
         kind = p.get("kind") or (reg.kind if reg else "single")
         name = " ".join(str(p.get("name") or (reg.name if reg else "")).split())[:60]
         if not name:
@@ -740,9 +751,10 @@ class App:
         label = (p.get("team_name") or (reg.team_name if reg else "")
                  or " / ".join(s.players[i].name for i in ids))
         eid = s.new_id("E", s.entrants)
-        s.append("entrant_add", {"id": eid, "name": label, "player_ids": ids})
+        s.append("entrant_add", {"id": eid, "name": label, "player_ids": ids,
+                                 "cup_id": cup.id if cup else ""})
 
-        where, why = self._enter(eid, cup)
+        where, why = self._intake(cup)
         if reg:
             s.append("registration_update", {"id": reg.id, "status": "confirmed",
                                              "entrant_id": eid})
@@ -763,11 +775,12 @@ class App:
             raise ValueError("no such person")
         if s.person_playing(who.id):
             raise ValueError(f"{who.name} is already in this event")
+        cup = self._resolve_cup(p.get("cup_id"))     # before anything is written
         pid = self._make_player(who.name, p.get("strength", who.strength), who.id)
         eid = s.new_id("E", s.entrants)
-        s.append("entrant_add", {"id": eid, "name": who.name, "player_ids": [pid]})
-        cup = s.cups.get(p.get("cup_id") or "")
-        where, why = self._enter(eid, cup) if cup else ("roster", "")
+        s.append("entrant_add", {"id": eid, "name": who.name, "player_ids": [pid],
+                                 "cup_id": cup.id if cup else ""})
+        where, why = self._intake(cup) if cup else ("roster", "")
         return {"entrant_id": eid, "where": where, "why": why}
 
     def op_update_registration(self, p):
@@ -789,7 +802,7 @@ OP_LEVEL = {
     "add_player": 2, "update_player": 2, "add_team": 2, "update_entrant": 2,
     "set_table": 2, "remove_table": 2, "share_tables": 2, "split_tables": 2,
     "add_format": 2, "update_format": 2, "start_format": 2, "remove_format": 2,
-    "reset_format": 2, "swiss_cut_ko": 2, "add_entrant": 2,
+    "reset_format": 2, "swiss_cut_ko": 2, "set_resting": 1,
     "add_cup": 2, "update_cup": 2, "remove_cup": 2,
     "join_queue": 1, "leave_queue": 1,
     "report": 1, "void_match": 1, "reopen_match": 1, "put_back": 2, "assign": 2,

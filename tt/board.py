@@ -127,13 +127,25 @@ def cup_board(store, cup_id, app):
                 "blocked": not (store.entrant_available(m.entrant_a, busy)
                                 and store.entrant_available(m.entrant_b, busy)),
             })
-    # then whoever is waiting in a queue; two of them make one match, so a
-    # person's wait is set by their pair's position, not their own
+    # then whoever is waiting in a queue. The match they will make is shown
+    # as a pairing, worked out by the very function that will seat them, so
+    # the board is not a second guess; the rest wait behind it as names
+    # because a pairing that depends on results still to come is not real yet
     for f in running:
         if not f.uses_queue():
             continue
         qs = sorted([q for q in store.queue if q.format_id == f.id],
                     key=lambda q: (-q.passes, q.joined_seq))
+        if len(qs) >= 2:
+            prop = f.propose(store, busy) or f.propose(store, busy, force=True)
+            if prop and len(prop.entrants) == 2:
+                a, b = prop.entrants
+                rows.append({
+                    "kind": "pairing", "id": f"{f.id}:{a}:{b}", "format_name": f.name,
+                    "a": store.entrant_name(a), "b": store.entrant_name(b),
+                    "label": f.name, "blocked": False,
+                })
+                qs = [q for q in qs if q.entrant_id not in (a, b)]
         for q in qs:
             rows.append({
                 "kind": "waiting", "id": q.entrant_id, "format_name": f.name,
@@ -179,7 +191,7 @@ def cup_board(store, cup_id, app):
         "reserved": reserved,
         "match_minutes": int(per // 60),
         "waiting": sum(1 for r in rows if r["kind"] == "waiting"),
-        "fixtures": sum(1 for r in rows if r["kind"] == "fixture"),
+        "fixtures": sum(1 for r in rows if r["kind"] in ("fixture", "pairing")),
     }
 
 
@@ -210,11 +222,20 @@ def idle_reservations(store):
     Cup B" should not find Cup A on it — but an idle reserved table with a
     queue next to it is worth an admin's attention rather than silence.
     """
+    # one person alone is not a match: a queue only counts once it holds
+    # enough people to make one, or the warning fires over a table nobody
+    # could have used
     waiting = set()
+    counts = {}
     for q in store.queue:
         f = store.formats.get(q.format_id)
         if f:
-            waiting.add(store.cup_key(f))
+            counts.setdefault((store.cup_key(f), f.id), 0)
+            counts[(store.cup_key(f), f.id)] += 1
+    for (cup, fid), n in counts.items():
+        need = store.formats[fid].min_entries() if hasattr(store.formats[fid], "min_entries") else 2
+        if n >= need:
+            waiting.add(cup)
     for m in store.matches.values():
         if m.status == "pending" and m.is_filled():
             waiting.add(store.cup_key(store.formats.get(m.format_id)))

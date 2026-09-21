@@ -218,7 +218,7 @@ class Store:
     def _ev_entrant_add(self, p, seq):
         self.entrants[p["id"]] = Entrant(
             id=p["id"], name=p["name"], player_ids=list(p["player_ids"]),
-            active=p.get("active", True),
+            active=p.get("active", True), cup_id=p.get("cup_id") or "",
         )
 
     def _ev_entrant_update(self, p, seq):
@@ -233,6 +233,11 @@ class Store:
             e.active = bool(p["active"])
             if not e.active:
                 self.queue = [q for q in self.queue if q.entrant_id != e.id]
+        if "cup_id" in p and (p["cup_id"] or "") != e.cup_id:
+            # moved to another cup's pool: whatever queue they were in
+            # belonged to the old one
+            e.cup_id = p["cup_id"] or ""
+            self.queue = [q for q in self.queue if q.entrant_id != e.id]
 
     def _ev_table_set(self, p, seq):
         n = int(p["number"])
@@ -419,6 +424,18 @@ class Store:
         self.queue = [q for q in self.queue if q.entrant_id != p["entrant_id"]]
         if p.get("opt_out"):
             self.opted_out.add(p["entrant_id"])
+
+    def _ev_rest_set(self, p, seq):
+        """Sit somebody out, or bring them back. Resting is the only thing
+        an organiser ever needs to say about the queue: who is waiting is
+        worked out from the cup's pool, so the one manual input left is who
+        is not to be picked."""
+        eid = p["entrant_id"]
+        if p.get("resting", True):
+            self.opted_out.add(eid)
+            self.queue = [q for q in self.queue if q.entrant_id != eid]
+        else:
+            self.opted_out.discard(eid)
 
     def _ev_queue_pass(self, p, seq):
         ids = set(p["entrant_ids"])
@@ -671,6 +688,11 @@ class Store:
         return None
 
     # --------------------------------------------------------- registration
+
+    def cup_pool(self, cup_id):
+        """Everyone admitted to this cup, in the order they were admitted.
+        This is the one list a cup has; its draws read from it."""
+        return [e.id for e in self.entrants.values() if e.cup_id == cup_id]
 
     def regs_for_cup(self, cup_id, status="pending"):
         return [r for r in (self.registrations[i] for i in self.registration_order

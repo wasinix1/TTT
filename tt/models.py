@@ -64,6 +64,7 @@ class Entrant:
     name: str
     player_ids: list[str]
     active: bool = True
+    cup_id: str = ""        # the pool they were admitted to; "" = no cup
 
     def to_dict(self):
         return asdict(self)
