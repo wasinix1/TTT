@@ -139,6 +139,17 @@ class Format:
     def uses_queue(self) -> bool:
         return False
 
+    def takes_new_entrants(self) -> bool:
+        """Whether somebody admitted now can still join this draw. A group
+        stage or a bracket that has been drawn cannot: its fixtures already
+        exist. Pairing-on-demand formats can, right up to the last match."""
+        return self.status == "setup"
+
+    def queue_candidates(self, store):
+        """Who belongs in this format's queue when they are not on a table:
+        the whole draw, unless the format has a reason to say otherwise."""
+        return list(self.entrant_ids)
+
     # -- lifecycle
     def start(self, store):
         self.status = "running"
@@ -205,8 +216,11 @@ class Format:
     def order_key(self, m):
         """The order this format wants its fixtures seated in. The board
         shows people their place in exactly this order, so it has to be the
-        same function the dispatcher uses, not a second guess at it."""
-        return (m.meta.get("round", 0), m.seq)
+        same function the dispatcher uses, not a second guess at it.
+
+        A match put back goes behind everything else, which is the whole
+        point of putting it back."""
+        return (m.meta.get("deferred", 0), m.meta.get("round", 0), m.seq)
 
     def pending_fixtures(self, store):
         return sorted((m for m in store.matches.values()
@@ -344,8 +358,11 @@ def build_bracket(store, fid, seeded, scoring, third_place=False, prefix="ko"):
 
 
 def bracket_view(store, fid):
+    # a voided bracket is a bracket that was thrown away — a reset or a redo —
+    # and drawing it is how an old run kept haunting the next one
     ms = [m for m in store.matches.values()
-          if m.format_id == fid and m.meta.get("phase") == "ko"]
+          if m.format_id == fid and m.meta.get("phase") == "ko"
+          and m.status != "void"]
     if not ms:
         return None
     by_round = defaultdict(list)
@@ -389,6 +406,9 @@ class OpenPlay(Format):
 
     def uses_queue(self):
         return True
+
+    def takes_new_entrants(self):
+        return self.status != "done"
 
     def start(self, store):
         self.status = "running"
@@ -576,7 +596,8 @@ class GroupStage(Format):
         store.append("format_update", {"id": self.id, "phase": "ko"})
 
     def order_key(self, m):
-        return (0 if m.meta.get("phase") == "groups" else 1,
+        return (m.meta.get("deferred", 0),
+                0 if m.meta.get("phase") == "groups" else 1,
                 m.meta.get("round", 0), m.meta.get("group", ""), m.seq)
 
     def propose(self, store, busy, force=False):
@@ -648,6 +669,18 @@ class Swiss(Format):
         # queue nothing would ever dispatch them from again
         return bool(self.config.get("continuous")) and self.phase != "ko"
 
+    def takes_new_entrants(self):
+        # a newcomer starts on 0 and is paired like anyone else on 0, so this
+        # is right up to the cut; after it the bracket is already drawn
+        return self.status == "setup" or (self.status == "running" and self.phase != "ko")
+
+    def queue_candidates(self, store):
+        budget = self._round_budget()
+        if not budget:
+            return list(self.entrant_ids)
+        played = self._played(store)
+        return [e for e in self.entrant_ids if played.get(e, 0) < budget]
+
     def paced(self):
         """Continuous pairing, but nobody gets ahead: an entrant is only
         paired against someone who has played the same number of matches,
@@ -691,7 +724,7 @@ class Swiss(Format):
         """Same bar as entrant_available, minus the busy check: a player sat
         out mid-tournament must not keep getting drawn into new rounds."""
         ent = store.entrants.get(e)
-        if not ent or not ent.active:
+        if not ent or not ent.active or e in store.opted_out:
             return False
         return all(store.players[p].active for p in ent.player_ids if p in store.players)
 

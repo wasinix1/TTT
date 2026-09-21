@@ -1,7 +1,9 @@
 """Plays complete events through every format and checks the invariants."""
 
-import os, random, shutil, sys, tempfile
-from tt.server import App
+import http.client, json, os, random, shutil, sys, tempfile, threading
+from datetime import datetime, timedelta
+from http.server import ThreadingHTTPServer
+from tt.server import App, Handler
 from tt import dispatch
 
 random.seed(7)
@@ -12,13 +14,15 @@ def fresh():
     return App(d), d
 
 
-def add_player(app, name, s):
-    return app.act("admin", "add_player", {"name": name, "strength": s, "solo": True})["player_id"]
+def add_player(app, name, s, cup=None):
+    return app.act("admin", "add_player", {"name": name, "strength": s, "solo": True,
+                                           "cup_id": cup})["player_id"]
 
 
-def add_pair(app, n1, s1, n2, s2, label=None):
+def add_pair(app, n1, s1, n2, s2, label=None, cup=None):
     return app.act("admin", "add_team",
-                   {"name": label, "members": [[n1, s1], [n2, s2]]})["entrant_id"]
+                   {"name": label, "members": [[n1, s1], [n2, s2]],
+                    "cup_id": cup})["entrant_id"]
 
 
 def play_one(app, table_no, upset=0.15):
@@ -302,8 +306,8 @@ def test_cups_and_tables():
     for n in (4, 5):
         app.act("admin", "set_table", {"number": n, "cup_id": cup_b})
 
-    a_ents = [add_pair(app, f"A{i}a", 5, f"A{i}b", 5, f"A{i}") for i in range(6)]
-    b_ents = [add_pair(app, f"B{i}a", 5, f"B{i}b", 5, f"B{i}") for i in range(6)]
+    a_ents = [add_pair(app, f"A{i}a", 5, f"A{i}b", 5, f"A{i}", cup=cup_a) for i in range(6)]
+    b_ents = [add_pair(app, f"B{i}a", 5, f"B{i}b", 5, f"B{i}", cup=cup_b) for i in range(6)]
     fa = app.act("admin", "add_format", {
         "kind": "open_play", "name": "Cup A open",
         "config": {"mode": "pairs", "cup_id": cup_a,
@@ -468,13 +472,22 @@ def entrant_ids(app):
     return [e.id for e in app.store.entrants.values()]
 
 
+def into_cups(app, mapping):
+    """Put already-admitted entrants into cups, the way the console does: by
+    saying which cup they are in, and nothing else."""
+    for cid, eids in mapping.items():
+        for e in eids:
+            app.act("admin", "update_entrant", {"id": e, "cup_id": cid})
+
+
 def test_fair_cup_share():
     print("\n[two cups sharing tables get served fairly]")
     app, d = fresh()
+    solo_field(app, 16)
     ca = app.act("admin", "add_cup", {"name": "Cup A"})["cup_id"]
     cb = app.act("admin", "add_cup", {"name": "Cup B"})["cup_id"]
-    solo_field(app, 16)
     es = entrant_ids(app)
+    into_cups(app, {ca: es[:8], cb: es[8:]})
     fa = app.act("admin", "add_format", {"kind": "groups", "name": "A",
          "config": {"n_groups": 1, "then_ko": False, "cup_id": ca},
          "entrant_ids": es[:8]})["format_id"]
@@ -506,10 +519,11 @@ def test_fair_cup_share():
 def test_swiss_does_not_outrun_a_bigger_cup():
     print("\n[a small cup cannot reach its knockout while a big one is in round one]")
     app, d = fresh()
+    solo_field(app, 20)
     big = app.act("admin", "add_cup", {"name": "Big"})["cup_id"]
     small = app.act("admin", "add_cup", {"name": "Small"})["cup_id"]
-    solo_field(app, 20)
     es = entrant_ids(app)
+    into_cups(app, {big: es[:16], small: es[16:]})
     fbig = app.act("admin", "add_format", {"kind": "swiss", "name": "Big draw",
            "config": {"continuous": True, "paced": True, "rounds": 4,
                       "cup_id": big}, "entrant_ids": es[:16]})["format_id"]
@@ -596,8 +610,8 @@ def test_swiss_ko_drops_the_queue():
     shutil.rmtree(d)
 
 
-def test_send_back_returns_players():
-    print("\n[sending an open-play match back off its table]")
+def test_put_back_returns_players():
+    print("\n[putting an open-play match back off its table]")
     app, d = fresh()
     solo_field(app, 10)
     f = app.act("admin", "add_format", {"kind": "open_play", "name": "Open",
@@ -608,7 +622,7 @@ def test_send_back_returns_players():
     s = app.store
     m = [x for x in s.matches.values() if x.status == "live"][0]
     pair = [m.entrant_a, m.entrant_b]
-    app.act("admin", "unassign", {"match_id": m.id})
+    app.act("admin", "put_back", {"match_id": m.id})
     queued = {q.entrant_id for q in s.queue}
     playing = set()
     for t in s.tables.values():
@@ -620,6 +634,62 @@ def test_send_back_returns_players():
     check(not [x for x in s.matches.values()
                if x.status == "pending" and x.format_id == f],
           "no un-seatable open-play match is left behind")
+    shutil.rmtree(d)
+
+
+def test_put_back_frees_the_table():
+    print("\n[putting a scheduled fixture back gives the table to the next one]")
+    app, d = fresh()
+    solo_field(app, 16)
+    f = app.act("admin", "add_format", {"kind": "groups", "name": "Main",
+        "config": {"n_groups": 1, "then_ko": False},
+        "entrant_ids": entrant_ids(app)})["format_id"]
+    app.act("admin", "start_format", {"id": f})
+    s = app.store
+    first = s.tables[1].match_id
+    app.act("admin", "put_back", {"match_id": first})
+    # unseating alone put the identical fixture straight back on the same
+    # table, because it was still the next one due
+    check(s.tables[1].match_id != first, "the table goes to a different match")
+    check(s.matches[first].status == "pending", "the put-back match is still to be played")
+    check(s.matches[first].table is None, "and is not holding a table")
+    check(s.matches[first].meta.get("deferred") == 1, "it is marked as put back once")
+
+    order = app.store.formats[f].pending_fixtures(s)
+    check(order and order[-1].id == first, "it sits at the back of the queue")
+
+    app.act("admin", "put_back", {"match_id": s.tables[1].match_id})
+    check(s.matches[first].meta.get("deferred") == 1, "putting another back leaves the first alone")
+
+    # it must still get played rather than being lost
+    drain(app)
+    check(s.matches[first].status == "done", "a put-back match still gets played in the end")
+    check(all(m.status == "done" for m in s.matches.values()
+              if m.format_id == f and m.status != "void"),
+          "and the draw finishes completely")
+    shutil.rmtree(d)
+
+
+def test_put_back_comes_round_again():
+    print("\n[a put-back match returns when nothing else can use the table]")
+    app, d = fresh()
+    solo_field(app, 2)
+    f = app.act("admin", "add_format", {"kind": "groups", "name": "Solo",
+        "config": {"n_groups": 1, "then_ko": False},
+        "entrant_ids": entrant_ids(app)})["format_id"]
+    app.act("admin", "start_format", {"id": f})
+    s = app.store
+    mid = s.tables[1].match_id
+    app.act("admin", "put_back", {"match_id": mid})
+    check(s.matches[mid].meta.get("deferred") == 1, "it was put back once")
+    # the only fixture there is, so the table has nothing else to offer and
+    # it comes straight back rather than the evening stalling
+    check(s.tables[1].match_id == mid,
+          "with nothing else to play it comes round again by itself")
+    app.act("admin", "put_back", {"match_id": mid})
+    check(s.matches[mid].meta.get("deferred") == 2, "putting it back again counts again")
+    drain(app)
+    check(s.matches[mid].status == "done", "and it still gets played")
     shutil.rmtree(d)
 
 
@@ -683,8 +753,8 @@ def test_housekeeping():
             {"id": s.entrants[waiting].player_ids[0], "active": False})
     check(not any(q.entrant_id == waiting for q in s.queue),
           "sitting a waiting player out takes them out of the queue")
-    check(not [e for q in app.state("admin")["queues"]
-               for e in q["entries"] if e["blocked"]],
+    busy = s.busy_players()
+    check(not [q for q in s.queue if not s.entrant_available(q.entrant_id, busy)],
           "no permanently blocked ghost rows are left in the queue")
 
     mid = s.tables[1].match_id
@@ -722,6 +792,749 @@ def test_table_split_and_share():
     shutil.rmtree(d)
 
 
+def test_phase():
+    print("\n[event phase]")
+    app, d = fresh()
+    s = app.store
+    check(s.phase() == "live",
+          "an unscheduled event behaves exactly as it did before")
+
+    soon = (datetime.now() + timedelta(days=3)).strftime("%Y-%m-%dT%H:%M")
+    app.act("admin", "event_meta", {"starts_at": soon})
+    check(s.phase() == "announced", "scheduled ahead with nothing open — announced")
+
+    cid = app.act("admin", "add_cup", {"name": "Singles"})["cup_id"]
+    app.act("admin", "update_cup", {"id": cid, "registration": "open"})
+    check(s.phase() == "registration", "a cup taking entries — registration")
+
+    past = (datetime.now() - timedelta(minutes=5)).strftime("%Y-%m-%dT%H:%M")
+    app.act("admin", "event_meta", {"starts_at": past})
+    check(s.phase() == "live", "the clock flips it on its own at the start time")
+
+    app.act("admin", "set_phase", {"phase": "doors"})
+    check(s.phase() == "doors" and s.shows_console(), "a pin outranks the clock")
+    app.act("admin", "set_phase", {"phase": ""})
+    check(s.phase() == "live", "clearing the pin hands it back to the clock")
+    shutil.rmtree(d)
+
+
+def test_public_payload():
+    print("\n[the public payload]")
+    app, d = fresh()
+    app.act("admin", "event_meta", {"blurb": "Bats provided.", "venue": "Turnhalle"})
+    app.act("admin", "add_cup", {"name": "Singles"})
+    add_player(app, "Jana", 7)
+    pub = app.public_state()
+    flat = json.dumps(pub)
+    check(pub["blurb"] == "Bats provided." and pub["venue"] == "Turnhalle",
+          "carries what the landing page needs")
+    check([c["name"] for c in pub["cups"]] == ["Singles"], "lists the cups")
+    check("Jana" not in flat, "leaks no roster")
+    check("strength" not in flat, "leaks no strengths")
+    check(app.keys["admin"] not in flat, "leaks no keys")
+    shutil.rmtree(d)
+
+
+def test_new_event():
+    print("\n[new event]")
+    app, d = fresh()
+    s = app.store
+    add_pair(app, "a", 5, "b", 5)
+    cid = app.act("admin", "add_cup", {"name": "Singles"})["cup_id"]
+    app.act("admin", "update_cup", {"id": cid, "registration": "open"})
+    fid = app.act("admin", "add_format",
+                  {"kind": "open_play", "config": {"cup_id": cid}})["format_id"]
+    app.act("admin", "update_cup", {"id": cid, "format_id": fid})
+    app.act("admin", "set_table", {"number": 2, "name": "Far table", "cup_id": cid})
+    before = s.seq
+
+    app.act("admin", "new_event", {"name": "October open"})
+    check(not s.players and not s.entrants, "players and teams cleared")
+    check(not s.formats and not s.format_order, "formats cleared")
+    check(not s.queue, "queue cleared")
+    check(s.tables[2].name == "Far table", "tables carry forward")
+    check(cid in s.cups and s.cups[cid].registration == "open",
+          "cups carry forward with their registration setup")
+    check(s.cups[cid].format_id is None, "the cup's dead format pointer was cleared")
+    check(s.event["name"] == "October open" and s.event["id"], "the new event is named")
+    check(s.seq > before, "nothing was deleted from the log")
+
+    eid = s.event["id"]
+    s.replay()
+    check(s.event["id"] == eid and not s.players, "replay is deterministic across it")
+    s.rewind(before)
+    check(any(p.name == "a" for p in s.players.values()),
+          "rewinding back past it restores the old event")
+    shutil.rmtree(d)
+
+
+def test_wizard():
+    print("\n[the new-event wizard]")
+    app, d = fresh()
+    s = app.store
+
+    # last month: a roster, a cup, a format, a reserved table
+    add_pair(app, "a", 5, "b", 5)
+    old_cup = app.act("admin", "add_cup", {"name": "Singles"})["cup_id"]
+    app.act("admin", "add_format", {"kind": "swiss", "config": {"cup_id": old_cup}})
+    app.act("admin", "set_table", {"number": 1, "name": "By the door"})
+
+    out = app.act("admin", "create_event", {
+        "name": "October open", "venue": "Turnhalle", "blurb": "Bats provided.",
+        "starts_at": "2026-10-04T19:00",
+        "cups": [
+            {"name": "Singles cup", "entry": "single", "registration": "open",
+             "blurb": "Five rounds.", "kind": "swiss",
+             "config": {"rounds": 5, "paced": True, "continuous": True,
+                        "scoring": {"best_of": 5, "points_to": 11}}},
+            {"name": "Doubles cup", "entry": "pair", "registration": "closed",
+             "kind": "groups", "config": {"n_groups": 2, "then_ko": True}},
+        ],
+        "tables": [{"name": "Table 1", "cup": -1}, {"name": "Table 2", "cup": 0},
+                   {"name": "Table 3", "cup": 1}],
+    })
+
+    check(s.event["name"] == "October open" and s.event["venue"] == "Turnhalle",
+          "the event is what the wizard was given")
+    check(s.event["starts_at"] == "2026-10-04T19:00", "with its start time")
+    check(not s.players and not s.entrants, "last month's roster is gone")
+    check("Singles" not in [c.name for c in s.cups.values()],
+          "and so are the cups it replaced — ids recycle, names do not lie")
+    check([c.name for c in s.cups.values()] == ["Singles cup", "Doubles cup"],
+          "the cups it was given exist, in order")
+
+    a, b = out["cup_ids"]
+    check(s.cups[a].registration == "open" and s.cups[a].entry == "single",
+          "a cup keeps its entry setup")
+    fa = s.formats[s.cups[a].format_id]
+    check(fa.kind == "swiss" and fa.config["rounds"] == 5,
+          "each cup got its format, configured")
+    check(fa.config["scoring"]["best_of"] == 5, "including its scoring")
+    check(s.cup_of_format(fa) == a, "and the format points back at its cup")
+    check(fa.entrant_ids == [], "nobody is entered until the door")
+
+    check(len(s.tables) == 3, "the tables it was given")
+    check(s.cup_of_table(s.tables[1]) is None, "a shared table stays shared")
+    check(s.cup_of_table(s.tables[2]) == a, "a reserved one is reserved")
+    check(s.tables[1].name == "Table 1", "the old table name was replaced, not merged")
+
+    check(s.phase() == "announced" or s.phase() == "registration",
+          "a scheduled event comes up on the site, not the console")
+
+    s.replay()
+    check(len(s.cups) == 2 and s.event["name"] == "October open",
+          "the whole thing replays from the log")
+    shutil.rmtree(d)
+
+
+def test_wizard_writes_ordinary_events():
+    print("\n[the wizard is not a second config path]")
+    app, d = fresh()
+    app.act("admin", "create_event", {
+        "name": "Test", "cups": [{"name": "Cup", "kind": "single_elim",
+                                  "config": {"third_place": True}}],
+        "tables": [{"name": "T1", "cup": 0}]})
+    kinds = [h["type"] for h in app.store.history(40)]
+    check(set(kinds) <= {"event_new", "cup_add", "format_add", "cup_update",
+                         "table_set", "table_remove"},
+          "it emits only the events the Setup tabs already emit")
+    check("event_new" in kinds, "starting with the event_new marker")
+    shutil.rmtree(d)
+
+
+def test_site():
+    print("\n[the site]")
+    app, d = fresh()
+    s = app.store
+    app.act("admin", "create_event", {
+        "name": "October open", "venue": "Turnhalle", "blurb": "Bats provided.",
+        "starts_at": "2026-10-04T19:00",
+        "cups": [{"name": "Singles cup", "entry": "single", "registration": "open",
+                  "kind": "swiss", "config": {"rounds": 3,
+                                              "scoring": {"best_of": 5, "points_to": 11}}}],
+        "tables": [{"name": "Table 1", "cup": -1}, {"name": "Table 2", "cup": -1}]})
+
+    pub = app.public_state()
+    cup = pub["cups"][0]
+    check(cup["format_line"] and cup["scoring"] == "Best of 5 to 11",
+          "a cup explains its own format and scoring")
+    check(pub["open"] is True, "the payload says entries are open")
+    check("podium" not in cup, "no results while it has not been played")
+
+    # play it out, then put the site back up
+    eids = [add_pair(app, f"p{i}", 5, f"q{i}", 5) for i in range(4)]
+    fid = s.cups[pub["cups"][0]["id"]].format_id
+    app.act("admin", "start_format", {"id": fid, "entrant_ids": eids})
+    drain(app)
+    app.act("admin", "set_phase", {"phase": "done"})
+
+    pub = app.public_state()
+    podium = pub["cups"][0].get("podium") or []
+    check(podium and podium[0]["place"] == 1, "afterwards the site says who won")
+    check(all(p["name"] for p in podium), "with real names on it")
+    check(len(podium) <= 3, "and stops at three")
+
+    flat = json.dumps(pub)
+    check(app.keys["admin"] not in flat and "strength" not in flat,
+          "the results face leaks no more than the rest of it")
+    shutil.rmtree(d)
+
+
+def test_link_preview():
+    print("\n[a pasted link]")
+    app, d = fresh()
+    Handler.app = app
+    srv = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    port = srv.server_address[1]
+
+    def get(path):
+        c = http.client.HTTPConnection("127.0.0.1", port)
+        c.request("GET", path)
+        return c.getresponse().read().decode()
+
+    app.act("admin", "create_event", {
+        "name": "October open", "venue": "Turnhalle",
+        "blurb": 'Bats & "everything" provided.',
+        "starts_at": "2026-10-04T19:00", "cups": [], "tables": []})
+    html = get("/")
+    check("<title>October open</title>" in html, "the page is titled after the event")
+    check('og:title" content="October open"' in html, "and carries a link-preview card")
+    check("Turnhalle" in html and "October" in html,
+          "with the date and venue in the description")
+    check("&quot;everything&quot;" in html and '"everything"' not in html.split("og:description")[1][:200],
+          "a blurb with quotes in it cannot break out of the tag")
+    check("<!--META-->" not in html, "the placeholder is gone")
+
+    poster = get("/print?mode=event&base=http%3A%2F%2Fx%2F")
+    check("October open" in poster and "Turnhalle" in poster,
+          "the noticeboard poster advertises the event")
+    check("enter your name" in poster, "and says what the QR code is for")
+    srv.shutdown()
+    shutil.rmtree(d)
+
+
+def test_registration():
+    print("\n[registration]")
+    app, d = fresh()
+    s = app.store
+    app.act("admin", "create_event", {
+        "name": "October open", "starts_at": "2099-10-04T19:00",
+        "cups": [{"name": "Singles", "entry": "single", "registration": "open",
+                  "kind": "swiss", "config": {"rounds": 3}},
+                 {"name": "Doubles", "entry": "pair", "registration": "open",
+                  "kind": "groups", "config": {}},
+                 {"name": "Veterans", "entry": "single", "registration": "closed",
+                  "kind": "swiss", "config": {}}],
+        "tables": [{"name": "T1", "cup": -1}]})
+    singles, doubles, shut = [c["id"] for c in app.public_state()["cups"]]
+
+    out = app.act("public", "register",
+                  {"cup_id": singles, "name": "Jana Berger", "strength": 7,
+                   "note": "Arriving a bit late."})
+    r = s.registrations[out["registration_id"]]
+    check(r.name == "Jana Berger" and r.strength == 7.0, "an entry is taken")
+    check(r.status == "pending", "and sits pending")
+    check(not s.players and not s.entrants,
+          "it creates no player and no entrant — nothing the dispatcher sees")
+
+    app.act("public", "register", {"cup_id": doubles, "kind": "pair",
+                                   "name": "Ada", "partner_name": "Ben",
+                                   "team_name": "Two Left Hands"})
+    app.act("public", "register", {"cup_id": doubles, "kind": "seeking", "name": "Milo"})
+    check(len(s.regs_for_cup(doubles)) == 2, "pairs and lone entrants both land")
+    check(s.regs_for_cup(doubles)[1].kind == "seeking",
+          "somebody without a partner says so")
+
+    def refused(data, why):
+        try:
+            app.act("public", "register", data)
+        except ValueError:
+            return True
+        print("   (accepted when it should not have:", why + ")")
+        return False
+
+    check(refused({"cup_id": shut, "name": "X"}, "closed cup"),
+          "a cup that is not taking entries refuses")
+    check(refused({"cup_id": singles, "name": "  "}, "blank name"),
+          "so does a blank name")
+    check(refused({"cup_id": "nope", "name": "X"}, "unknown cup"),
+          "and an unknown cup")
+    check(refused({"cup_id": doubles, "kind": "pair", "name": "A"}, "half a pair"),
+          "a pair needs both names")
+
+    # claims are claims: clamped and trimmed, never trusted
+    out = app.act("public", "register",
+                  {"cup_id": singles, "name": "  Spacey   Name  ", "strength": 99,
+                   "note": "x" * 900})
+    r = s.registrations[out["registration_id"]]
+    check(r.strength == 10.0, "a silly strength is clamped, not believed")
+    check(r.name == "Spacey Name", "whitespace is tidied")
+    check(len(r.note) == 500, "the notes box has a ceiling")
+
+    # entering a singles cup as a pair cannot smuggle a second player in
+    out = app.act("public", "register", {"cup_id": singles, "kind": "pair",
+                                         "name": "Solo", "partner_name": "Ghost"})
+    check(s.registrations[out["registration_id"]].partner_name == "",
+          "a singles cup takes one name however the form is filled in")
+
+    check(app.public_state().get("registrations") is None
+          and "Jana" not in json.dumps(app.public_state()),
+          "the public payload gives no entry list away")
+    check(len(app.state("admin")["registrations"]) == 5, "the admin sees them all")
+    check(app.state("public")["registrations"] == [], "a spectator sees none")
+
+    s.replay()
+    check(len(s.registrations) == 5, "they replay from the log")
+    shutil.rmtree(d)
+
+
+def test_registration_closes():
+    print("\n[registration and the clock]")
+    app, d = fresh()
+    s = app.store
+    app.act("admin", "create_event", {
+        "name": "E", "starts_at": "2099-10-04T19:00",
+        "cups": [{"name": "Singles", "registration": "open", "kind": "swiss",
+                  "config": {}}], "tables": []})
+    cid = app.public_state()["cups"][0]["id"]
+    app.act("admin", "set_phase", {"phase": "live"})
+    ok = True
+    try:
+        app.act("public", "register", {"cup_id": cid, "name": "Late"})
+        ok = False
+    except ValueError:
+        pass
+    check(ok, "once the console is up the form stops taking entries")
+
+    app.act("admin", "set_phase", {"phase": ""})
+    app.act("public", "register", {"cup_id": cid, "name": "Early"})
+    check(len(s.pending_regs()) == 1, "and takes them again when it is not")
+
+    app.act("admin", "new_event", {"name": "Next one"})
+    check(not s.registrations, "a new event does not inherit last event's entries")
+    shutil.rmtree(d)
+
+
+def test_registration_throttle():
+    print("\n[the public write path has a ceiling]")
+    app, d = fresh()
+    Handler.app = app
+    srv = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    port = srv.server_address[1]
+    app.act("admin", "create_event", {
+        "name": "E", "starts_at": "2099-10-04T19:00",
+        "cups": [{"name": "Singles", "registration": "open", "kind": "swiss",
+                  "config": {}}], "tables": []})
+    cid = app.public_state()["cups"][0]["id"]
+
+    def post(name):
+        c = http.client.HTTPConnection("127.0.0.1", port)
+        c.request("POST", "/api/action", json.dumps(
+            {"op": "register", "data": {"cup_id": cid, "name": name}}),
+            {"Content-Type": "application/json"})
+        return c.getresponse().status
+
+    codes = [post(f"P{i}") for i in range(9)]
+    check(codes[0] == 200, "the first one goes through")
+    check(429 in codes, "hammering it gets cut off")
+    check(len(app.store.pending_regs()) == app.REG_BURST,
+          "and no more than the burst was ever written")
+    srv.shutdown()
+    shutil.rmtree(d)
+
+
+def door_event(app, entry="single", kind="swiss"):
+    app.act("admin", "create_event", {
+        "name": "October open", "starts_at": "2099-10-04T19:00",
+        "cups": [{"name": "Cup", "entry": entry, "registration": "open",
+                  "kind": kind, "config": {"rounds": 3}}],
+        "tables": [{"name": "T1", "cup": -1}]})
+    return app.public_state()["cups"][0]["id"]
+
+
+def test_the_door():
+    print("\n[the door]")
+    app, d = fresh()
+    s = app.store
+    cup = door_event(app)
+    rid = app.act("public", "register",
+                  {"cup_id": cup, "name": "Jana Berger", "strength": 9})["registration_id"]
+
+    out = app.act("admin", "admit", {"registration_id": rid, "strength": 7})
+    check(s.registrations[rid].status == "confirmed", "confirming marks the entry")
+    check(s.registrations[rid].entrant_id == out["entrant_id"],
+          "and records what it became")
+    e = s.entrants[out["entrant_id"]]
+    check(e.name == "Jana Berger" and len(e.player_ids) == 1, "a player exists now")
+    check(s.players[e.player_ids[0]].strength == 7.0,
+          "at the strength the door set, not the one they claimed")
+    f = s.formats[s.cups[cup].format_id]
+    check(out["entrant_id"] in f.entrant_ids, "and they are in the draw")
+    check(out["where"] == "entered", "which the door is told")
+
+    ok = True
+    try:
+        app.act("admin", "admit", {"registration_id": rid})
+        ok = False
+    except ValueError:
+        pass
+    check(ok, "confirming twice is refused")
+
+    # a walk-in is the same thing with no entry behind it
+    out = app.act("admin", "admit", {"cup_id": cup, "name": "Ilya Marek", "strength": 6})
+    check(out["where"] == "entered" and len(s.entrants) == 2,
+          "a walk-in goes in the same way")
+    check(not s.pending_regs(), "and leaves no phantom entry behind")
+    shutil.rmtree(d)
+
+
+def test_the_door_pairs():
+    print("\n[the door, pairs]")
+    app, d = fresh()
+    s = app.store
+    cup = door_event(app, entry="pair", kind="groups")
+    rid = app.act("public", "register",
+                  {"cup_id": cup, "kind": "pair", "name": "Ada", "strength": 6,
+                   "partner_name": "Ben", "partner_strength": 4,
+                   "team_name": "Two Left Hands"})["registration_id"]
+    out = app.act("admin", "admit", {"registration_id": rid})
+    e = s.entrants[out["entrant_id"]]
+    check(len(e.player_ids) == 2, "a pair confirms as two players")
+    check(e.name == "Two Left Hands", "under the name they gave themselves")
+    check(sorted(s.players[i].strength for i in e.player_ids) == [4.0, 6.0],
+          "each with their own strength")
+
+    rid2 = app.act("public", "register",
+                   {"cup_id": cup, "kind": "seeking", "name": "Milo"})["registration_id"]
+    out = app.act("admin", "admit", {"registration_id": rid2,
+                                     "kind": "pair", "partner_name": "Sofia"})
+    check(len(s.entrants[out["entrant_id"]].player_ids) == 2,
+          "somebody who wanted a partner can be paired up at the door")
+    shutil.rmtree(d)
+
+
+def test_the_door_after_the_draw_starts():
+    print("\n[confirming late]")
+    app, d = fresh()
+    s = app.store
+    cup = door_event(app, kind="single_elim")
+    fid = s.cups[cup].format_id
+    for n in ("A", "B", "C", "D"):
+        app.act("admin", "admit", {"cup_id": cup, "name": n})
+    app.act("admin", "start_format", {"id": fid})
+
+    out = app.act("admin", "admit", {"cup_id": cup, "name": "Latecomer"})
+    check(out["where"] == "roster", "a started knockout does not silently take them")
+    check(out["why"], "and the door is told why")
+    check(any(e.name == "Latecomer" for e in s.entrants.values()),
+          "they are still in the roster, not dropped on the floor")
+    shutil.rmtree(d)
+
+
+def test_directory():
+    print("\n[the club directory]")
+    app, d = fresh()
+    s = app.store
+    cup = door_event(app)
+    rid = app.act("public", "register",
+                  {"cup_id": cup, "name": "Jana Berger", "strength": 9})["registration_id"]
+    app.act("admin", "admit", {"registration_id": rid, "strength": 7})
+    who = s.person_by_name("Jana Berger")
+    check(who is not None, "confirming somebody adds them to the directory")
+    check(who.strength == 7.0, "at the strength the door settled on")
+
+    # tuning during the evening is what next month starts from
+    pl = [p for p in s.players.values() if p.name == "Jana Berger"][0]
+    app.act("admin", "update_player", {"id": pl.id, "strength": 8})
+    check(s.people[who.id].strength == 8.0, "a strength tuned tonight writes back")
+
+    app.act("admin", "new_event", {"name": "November open"})
+    check(not s.players, "a new event clears the roster")
+    check(s.person_by_name("Jana Berger").strength == 8.0,
+          "but the directory outlives it, with the number still on it")
+
+    out = app.act("admin", "add_from_directory", {"person_id": who.id})
+    check(s.players[s.entrants[out["entrant_id"]].player_ids[0]].strength == 8.0,
+          "adding her back starts from what we learned, not from five")
+    check(s.person_playing(who.id) is not None, "and she counts as playing")
+
+    ok = True
+    try:
+        app.act("admin", "add_from_directory", {"person_id": who.id})
+        ok = False
+    except ValueError:
+        pass
+    check(ok, "adding the same person twice is refused")
+
+    check("  jana   BERGER " and s.person_by_name("  jana   BERGER ") is not None,
+          "matching ignores case and stray spaces")
+    check(s.person_by_name("J. Berger") is None,
+          "and does not guess at near misses")
+
+    flat = json.dumps(app.public_state())
+    check("Jana" not in flat, "the directory never reaches the public page")
+    check(len(app.state("admin")["people"]) >= 1, "the admin sees it")
+    check(app.state("referee")["people"] == [], "a referee does not")
+    shutil.rmtree(d)
+
+
+def test_routing():
+    print("\n[phase-driven root]")
+    app, d = fresh()
+    Handler.app = app
+    srv = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    port = srv.server_address[1]
+
+    def get(path):
+        c = http.client.HTTPConnection("127.0.0.1", port)
+        c.request("GET", path)
+        r = c.getresponse()
+        return r.status, r.read().decode()
+
+    soon = (datetime.now() + timedelta(days=3)).strftime("%Y-%m-%dT%H:%M")
+    app.act("admin", "event_meta", {"starts_at": soon})
+    check("site.js" in get("/")[1], "the plain URL is the site before the doors open")
+    check("app.js" in get("/a/" + app.keys["admin"])[1],
+          "the admin link is the console whatever the phase")
+    check("app.js" in get("/r/" + app.keys["referee"])[1],
+          "so is the referee link")
+    check("site.js" in get("/join")[1], "/join is the site")
+    check(get("/api/public")[0] == 200, "/api/public answers")
+    app.act("admin", "set_phase", {"phase": "live"})
+    check("app.js" in get("/")[1], "once live the plain URL is the console")
+    app.act("admin", "set_phase", {"phase": "done"})
+    check("site.js" in get("/")[1], "afterwards the site comes back")
+    srv.shutdown()
+    shutil.rmtree(d)
+
+
+def test_a_bad_event_never_reaches_the_log():
+    """The log is the truth, so nothing that cannot be replayed may enter it.
+
+    Committing before applying meant a payload the handler could not read
+    was already written by the time it raised: the caller saw an error and
+    assumed nothing had happened, and the store then refused to load on the
+    next restart. Days later, in the hall."""
+    print("\n[a bad event never reaches the log]")
+    app, d = fresh()
+    app.act("admin", "add_cup", {"name": "Singles"})
+    good = app.store.seq
+
+    # "cup_id" is not the key the handler reads; it wants "id"
+    try:
+        app.act("admin", "update_cup", {"cup_id": "C1", "registration": "open"})
+        check(False, "a payload the handler cannot read is refused")
+    except Exception:
+        check(True, "a payload the handler cannot read is refused")
+
+    check(app.store.seq == good, "and the log did not grow")
+    rows = app.store.conn.execute(
+        "SELECT COUNT(*) FROM events WHERE type='cup_update'").fetchone()[0]
+    check(rows == 0, "nothing was written to take back")
+
+    # the state it half-touched is still sound, and still writable
+    app.act("admin", "update_cup", {"id": "C1", "registration": "open"})
+    check(app.store.cups["C1"].registration == "open", "the correct call still works")
+
+    # and the whole point: it still opens next time
+    app.store.conn.close()
+    reopened = App(d)
+    check(reopened.store.cups["C1"].registration == "open",
+          "and the store still replays from cold")
+    shutil.rmtree(d)
+
+
+def test_a_failed_cascade_is_all_or_nothing():
+    """Applying can append — a result that ends a Swiss builds the knockout.
+    Those inner writes belong to the outer one."""
+    print("\n[a failed cascade leaves nothing behind]")
+    app, d = fresh()
+    app.act("admin", "add_cup", {"name": "Cup"})
+    before = app.store.seq
+    try:
+        app.act("admin", "update_cup", {})          # no id at all
+    except Exception:
+        pass
+    check(app.store.seq == before, "a throwing apply advances nothing")
+    n = app.store.conn.execute("SELECT COUNT(*) FROM events").fetchone()[0]
+    check(n == before, "and the log holds exactly what succeeded")
+    shutil.rmtree(d)
+
+
+
+def pool_event(app, cups=1, kind="swiss", config=None):
+    app.act("admin", "create_event", {
+        "name": "Pool night", "starts_at": "2099-10-04T19:00",
+        "cups": [{"name": f"Cup {chr(65 + i)}", "entry": "single", "registration": "open",
+                  "kind": kind, "config": config or {"continuous": True, "paced": True,
+                                                     "rounds": 3}}
+                 for i in range(cups)],
+        "tables": [{"name": "T1", "cup": -1}, {"name": "T2", "cup": -1}]})
+    return list(app.store.cup_order)
+
+
+def admit(app, name, cup=None, **kw):
+    return app.act("admin", "admit", {"name": name, "cup_id": cup, "kind": "single",
+                                      "strength": 5, **kw})
+
+
+def test_the_pool():
+    print("\n[a cup has one list of people, and the draw is fed from it]")
+    app, d = fresh()
+    s = app.store
+    (cup,) = pool_event(app)
+    f = s.formats[s.cups[cup].format_id]
+
+    # people arrive by every route before the draw starts: the door (a
+    # registration), a walk-in, the directory, and add-by-hand
+    reg = app.act("public", "register", {"cup_id": cup, "name": "Reg Ina", "strength": 5,
+                                         "kind": "single"})["registration_id"]
+    admit(app, "", cup, registration_id=reg)
+    admit(app, "Walk Ulf", cup)
+    app.act("admin", "add_player", {"name": "Hand Hedda", "strength": 5, "cup_id": cup})
+    check(len(s.cup_pool(cup)) == 3, "every way in lands in the cup's pool")
+    check(f.entrant_ids == s.cup_pool(cup), "and the draw reads the same list")
+
+    app.act("admin", "start_format", {"id": f.id})
+    check(sum(1 for t in s.tables.values() if t.match_id) == 1,
+          "starting it seats a match straight away")
+    playing = {x for t in s.tables.values() if t.match_id
+               for x in (s.matches[t.match_id].entrant_a, s.matches[t.match_id].entrant_b)}
+    waiting = {q.entrant_id for q in s.queue}
+    check(playing | waiting == set(s.cup_pool(cup)),
+          "everybody is either playing or waiting — nobody was left off the queue")
+
+    admit(app, "Late Lena", cup)
+    late = s.cup_pool(cup)[-1]
+    on_a_table = {x for t in s.tables.values() if t.match_id
+                  for x in (s.matches[t.match_id].entrant_a, s.matches[t.match_id].entrant_b)}
+    check(late in f.entrant_ids and (late in {q.entrant_id for q in s.queue}
+                                     or late in on_a_table),
+          "somebody admitted mid-evening goes straight into the pairing pool")
+    check(len(on_a_table) == 4, "and with a second free table they are paired at once")
+
+    # finishing a match puts both back without anyone doing anything
+    m = s.matches[[t.match_id for t in s.tables.values() if t.match_id][0]]
+    app.act("referee", "report", {"match_id": m.id, "games": [[11, 5], [11, 5]]})
+    back = {q.entrant_id for q in s.queue} | {
+        x for t in s.tables.values() if t.match_id
+        for x in (s.matches[t.match_id].entrant_a, s.matches[t.match_id].entrant_b)}
+    check({m.entrant_a, m.entrant_b} <= back, "finishing a match returns both players to the pool")
+    shutil.rmtree(d)
+
+
+def test_the_pool_rules():
+    print("\n[which cup — the one thing every way in has to say]")
+    app, d = fresh()
+    s = app.store
+    a, b = pool_event(app, cups=2)
+    for op, body in (("add_player", {"name": "X", "strength": 5}),
+                     ("admit", {"name": "X", "kind": "single"})):
+        try:
+            app.act("admin", op, body)
+            ok = False
+        except ValueError:
+            ok = True
+        check(ok, f"{op} with two cups and no cup named is refused, not guessed")
+    check(not s.players and not s.entrants,
+          "and the refusal leaves nothing half-written behind")
+    admit(app, "Ana", a)
+    e = s.cup_pool(a)[0]
+    fa, fb = (s.formats[s.cups[c].format_id] for c in (a, b))
+    check(fa.entrant_ids == [e] and fb.entrant_ids == [], "each draw sees only its own cup")
+    app.act("admin", "update_entrant", {"id": e, "cup_id": b})
+    check(fa.entrant_ids == [] and fb.entrant_ids == [e],
+          "moving somebody to the other cup moves them between the draws")
+    shutil.rmtree(d)
+
+    app, d = fresh()
+    (only,) = pool_event(app)
+    app.act("admin", "add_player", {"name": "Solo", "strength": 5})
+    check(app.store.entrants["E1"].cup_id == only,
+          "with exactly one cup there is nothing to ask")
+    shutil.rmtree(d)
+
+
+def test_resting_and_put_back():
+    print("\n[resting, and putting a match back]")
+    app, d = fresh()
+    s = app.store
+    (cup,) = pool_event(app, config={"continuous": True, "paced": False})
+    for n in "ABCDEF":
+        admit(app, n, cup)
+    f = s.formats[s.cups[cup].format_id]
+    app.act("admin", "start_format", {"id": f.id})
+    waiting = [q.entrant_id for q in s.queue][0]
+    app.act("referee", "set_resting", {"entrant_id": waiting})
+    check(waiting not in {q.entrant_id for q in s.queue}, "resting takes somebody out of the queue")
+    for _ in range(4):
+        for n in sorted(s.tables):
+            play_one(app, n)
+    check(waiting not in {q.entrant_id for q in s.queue}
+          and not any(waiting in (s.matches[t.match_id].entrant_a, s.matches[t.match_id].entrant_b)
+                      for t in s.tables.values() if t.match_id),
+          "and they stay out however many matches finish around them")
+    app.act("referee", "set_resting", {"entrant_id": waiting, "resting": False})
+    check(waiting in {q.entrant_id for q in s.queue} or any(
+        waiting in (s.matches[t.match_id].entrant_a, s.matches[t.match_id].entrant_b)
+        for t in s.tables.values() if t.match_id), "bringing them back puts them in the pool")
+
+    old = s.tables[1].match_id
+    out = app.act("admin", "put_back", {"match_id": old})
+    check(out["reseated"] is False and s.tables[1].match_id != old,
+          "putting a match back gives the table to somebody else when there is somebody")
+    shutil.rmtree(d)
+
+    app, d = fresh()
+    s = app.store
+    (cup,) = pool_event(app)
+    admit(app, "P", cup); admit(app, "Q", cup)
+    app.act("admin", "start_format", {"id": s.cups[cup].format_id})
+    out = app.act("admin", "put_back", {"match_id": s.tables[1].match_id})
+    check(out["reseated"] is True,
+          "and says so when nobody else can play, instead of pretending they went away")
+    shutil.rmtree(d)
+
+
+def test_a_reset_draw_leaves_no_old_bracket():
+    print("\n[a draw that was reset does not show its old bracket]")
+    from tt.formats import bracket_view
+    app, d = fresh()
+    s = app.store
+    (cup,) = pool_event(app, config={"continuous": True, "paced": True, "rounds": 3,
+                                     "then_ko": True, "advance": 4})
+    for n in "ABCDEF":
+        admit(app, n, cup)
+    f = s.formats[s.cups[cup].format_id]
+    app.act("admin", "start_format", {"id": f.id})
+    app.act("admin", "swiss_cut_ko", {"id": f.id})
+    check(bracket_view(s, f.id) is not None, "a real bracket is shown")
+    app.act("admin", "reset_format", {"id": f.id})
+    check(bracket_view(s, f.id) is None, "a reset draw shows none")
+    shutil.rmtree(d)
+
+
+def test_the_board_shows_the_next_pairing():
+    print("\n[coming up shows a pairing, not a list of strangers]")
+    app, d = fresh()
+    s = app.store
+    (cup,) = pool_event(app)
+    for n in "ABCDEF":
+        admit(app, n, cup)
+    app.act("admin", "start_format", {"id": s.cups[cup].format_id})
+    rows = app.state("admin")["board"][0]["up"]
+    check(rows and rows[0]["kind"] == "pairing" and rows[0]["b"],
+          "the head of the list is the pair that will play next")
+    check(all(r["kind"] != "waiting" or r["a"] not in (rows[0]["a"], rows[0]["b"]) for r in rows),
+          "and nobody appears twice")
+    seated = s.tables[1].match_id
+    check(seated is not None, "sanity: a match is on a table")
+    shutil.rmtree(d)
+
+
 if __name__ == "__main__":
     test_open_play()
     test_scramble()
@@ -740,9 +1553,33 @@ if __name__ == "__main__":
     test_swiss_does_not_outrun_a_bigger_cup()
     test_paced_swiss_keeps_the_field_level()
     test_swiss_ko_drops_the_queue()
-    test_send_back_returns_players()
+    test_put_back_returns_players()
+    test_put_back_frees_the_table()
+    test_put_back_comes_round_again()
     test_undo_unwinds_a_bracket()
     test_correcting_a_result_in_place()
     test_housekeeping()
     test_table_split_and_share()
+    test_phase()
+    test_public_payload()
+    test_new_event()
+    test_wizard()
+    test_wizard_writes_ordinary_events()
+    test_site()
+    test_link_preview()
+    test_registration()
+    test_registration_closes()
+    test_registration_throttle()
+    test_the_door()
+    test_the_door_pairs()
+    test_the_door_after_the_draw_starts()
+    test_directory()
+    test_routing()
+    test_a_bad_event_never_reaches_the_log()
+    test_a_failed_cascade_is_all_or_nothing()
+    test_the_pool()
+    test_the_pool_rules()
+    test_resting_and_put_back()
+    test_a_reset_draw_leaves_no_old_bracket()
+    test_the_board_shows_the_next_pairing()
     print("\nall good\n")

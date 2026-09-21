@@ -77,13 +77,16 @@ that happens rather than quietly wasting it.
 is on which table now, then the running order with a rough time against each
 name. No key, no controls.
 
-It commits to **order** and never to **place**. Order is a promise that can
-be kept: it is read from the same function the dispatcher seats matches
-with, so what a spectator sees is what actually happens. Pre-assigning a
-table is what creates idle-table time — table 2 comes free but the next
-match is "on table 3", so table 2 waits. The table is decided the instant
-one frees up; until then a match shows the set it could land on, which for a
-cup with reserved tables is already a definite answer.
+It commits to **order** and never to a single **table**. Order is a promise
+that can be kept: it is read from the same function the dispatcher seats
+matches with, so what a spectator sees is what actually happens. Naming one
+table in advance is what creates idle-table time — table 2 comes free but
+the next match is "on table 3", so table 2 waits.
+
+What it names instead is the set a match can land on, once per cup rather
+than on every line: `Tables 1-3` for a cup with its own tables, `Any table`
+for one drawing on the shared pool. Split the tables and "which table" has
+an exact answer without anything being pinned to a number too early.
 
 Times are measured, not guessed: the median of what matches have actually
 taken tonight, divided by the tables serving that cup. They drift as the
@@ -133,6 +136,14 @@ Every change is an event appended to `data/event.db`; the live state is a
 replay of that log. Nothing is updated in place. A crashed laptop loses
 nothing but the last request.
 
+*Put back* on a table frees it and sends that match to the back of the
+queue, so the table goes to whoever is next rather than to the same two
+people again. A match put back always comes round again — when nothing else can
+use the table (or, in a paced Swiss, nobody else is a fair opponent), that is
+immediately, and the console says so instead of pretending. Nobody is put in
+the queue by hand: everyone in a running cup who is not on a table and not
+sitting out is waiting.
+
 Hover any result and *Edit result* reopens the same pad it was entered on.
 Saving a different score puts it right and re-resolves whatever it decided
 in later rounds — a first-round score entered backwards fixes the bracket
@@ -146,16 +157,36 @@ One small server, one permanent URL, HTTPS handled for you.
 
 ```
 scp -r . root@your-server:/opt/tt-console
-ssh root@your-server 'cd /opt/tt-console && deploy/install.sh tt.yourdomain.at'
+ssh root@your-server 'cd /opt/tt-console && deploy/install.sh'
 ```
 
 That installs Caddy, creates a service user, wires up systemd and gets a TLS
 certificate. About €4/month for the box and €10/year for the domain.
 
-- Point an A record at the server's IP before running it.
+- Set your address in `deploy/domains.conf` and point an A record at the
+  server's IP before running it.
 - Your keys land in `/var/lib/tt-console/keys.json`.
 - Ship changes later with `deploy/update.sh root@your-server`. The event log
   lives in `/var/lib` and is never touched by a deploy.
+
+### Changing the address
+
+The address lives in one file, `deploy/domains.conf`, and nowhere in the app:
+pages, print sheets and QR codes use whatever address they were opened from.
+
+1. Add a DNS A record for the new name pointing at the server. Keep the old
+   record.
+2. In `domains.conf`, set `PRIMARY` to the new name and put the old one in
+   `ALIASES`, so both serve the app while old posters are still around.
+3. `deploy/update.sh root@your-server`. This rebuilds the Caddyfile, checks it
+   with `caddy validate` (the live file is untouched if it fails), reloads
+   Caddy, and Caddy fetches the certificate for the new name.
+4. Open Setup → Access on the new address and reprint the poster.
+5. Later, move the old name from `ALIASES` to `REDIRECTS` and deploy again. It
+   then forwards to the new address, keeping the path, so old referee and
+   admin links still land in the right place. Delete it once nobody uses it.
+
+Don't edit `/etc/caddy/Caddyfile` on the server; the next deploy rebuilds it.
 
 Because the URL is permanent, Setup → Access has a printable poster with a QR
 code for the spectator link. Print it once and it works for every future

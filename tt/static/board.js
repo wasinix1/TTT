@@ -27,16 +27,8 @@ function when(r) {
   return r.eta_min <= 5 ? 'a few min' : '~' + r.eta_min + ' min';
 }
 
-function where(r, all) {
-  const el = (r.tables || []);
-  if (!el.length) return '';
-  if (el.length === all) return '';
-  return el.length === 1 ? 'table ' + el[0] : 'tables ' + el.join('/');
-}
-
 function render(S) {
   $('title').textContent = S.event.name || 'Coming up';
-  const total = S.tables.length;
   const bs = (S.board || []);
   if (!bs.length) {
     $('cups').innerHTML = `<div class="cup"><h2>Nothing running yet</h2></div>`;
@@ -55,14 +47,13 @@ function render(S) {
       <div class="q ${r.on_deck ? 'ondeck' : ''}">
         <span class="n">${r.position}</span>
         <span class="w">${esc(r.a)}${r.b ? ' v ' + esc(r.b) : ''}</span>
-        ${where(r, total) ? `<span class="e where">${esc(where(r, total))}</span>` : ''}
         ${when(r) ? `<span class="e when">${esc(when(r))}</span>` : ''}
       </div>`).join('');
     const more = b.total > cap ? `<div class="q"><span class="n"></span>
       <span class="w" style="color:var(--muted)">and ${b.total - cap} more</span></div>` : '';
     return `<div class="cup">
       <h2>${esc(cup ? cup.name : (S.event.name || 'Tonight'))}
-        <span>~${b.match_minutes} min a match</span></h2>
+        <span>${esc(b.tables_label)} · ~${b.match_minutes} min a match</span></h2>
       <div class="live" style="--cols:${colsFor(b.playing.length, bs.length > 1 && window.innerWidth > window.innerHeight)}">${now}</div>
       <div class="list">${rows || '<div class="q"><span class="w" style="color:var(--muted)">Nobody waiting</span></div>'}${more}</div>
     </div>`;

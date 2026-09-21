@@ -27,6 +27,34 @@ def _tables_serving(store, cup_id):
             if not store.tables[n].paused]
 
 
+def _range_label(nums):
+    """[1,2,3] -> "Tables 1-3"; [1,3,4,7] -> "Tables 1, 3-4, 7".
+
+    Which table you are on is the other half of "when am I playing", and a
+    cup with its own tables can answer it exactly. Collapsing runs is what
+    makes that readable across a hall instead of "table 1 or 2 or 3"."""
+    nums = sorted(nums)
+    if not nums:
+        return "No table"
+    runs, start, prev = [], nums[0], nums[0]
+    for n in nums[1:]:
+        if n == prev + 1:
+            prev = n
+            continue
+        runs.append((start, prev))
+        start = prev = n
+    runs.append((start, prev))
+    parts = [str(a) if a == b else f"{a}\u2013{b}" for a, b in runs]
+    return ("Table " if len(nums) == 1 else "Tables ") + ", ".join(parts)
+
+
+def _reserved_for(store, cup_id, tables):
+    """True when every table this cup can use is held for it, so naming
+    them is a promise rather than a guess at the shared pool."""
+    return bool(tables) and cup_id is not None and all(
+        store.cup_of_table(store.tables[n]) == cup_id for n in tables)
+
+
 def _share(store, cup_id, tables):
     """How many tables this cup can really expect to be using at once.
 
@@ -95,16 +123,29 @@ def cup_board(store, cup_id, app):
                 "kind": "fixture", "id": m.id, "format_name": f.name,
                 "a": app.side_name(m, "a"), "b": app.side_name(m, "b"),
                 "label": m.label, "scoring": m.scoring.to_dict(),
+                "deferred": int(m.meta.get("deferred", 0)),
                 "blocked": not (store.entrant_available(m.entrant_a, busy)
                                 and store.entrant_available(m.entrant_b, busy)),
             })
-    # then whoever is waiting in a queue; two of them make one match, so a
-    # person's wait is set by their pair's position, not their own
+    # then whoever is waiting in a queue. The match they will make is shown
+    # as a pairing, worked out by the very function that will seat them, so
+    # the board is not a second guess; the rest wait behind it as names
+    # because a pairing that depends on results still to come is not real yet
     for f in running:
         if not f.uses_queue():
             continue
         qs = sorted([q for q in store.queue if q.format_id == f.id],
                     key=lambda q: (-q.passes, q.joined_seq))
+        if len(qs) >= 2:
+            prop = f.propose(store, busy) or f.propose(store, busy, force=True)
+            if prop and len(prop.entrants) == 2:
+                a, b = prop.entrants
+                rows.append({
+                    "kind": "pairing", "id": f"{f.id}:{a}:{b}", "format_name": f.name,
+                    "a": store.entrant_name(a), "b": store.entrant_name(b),
+                    "label": f.name, "blocked": False,
+                })
+                qs = [q for q in qs if q.entrant_id not in (a, b)]
         for q in qs:
             rows.append({
                 "kind": "waiting", "id": q.entrant_id, "format_name": f.name,
@@ -134,14 +175,23 @@ def cup_board(store, cup_id, app):
         r["tables"] = tables
         r["on_deck"] = (not r["blocked"]) and secs is not None and secs < per
 
+    reserved = _reserved_for(store, cup_id, tables)
     return {
         "cup_id": cup_id,
         "playing": now,
         "up": rows,
         "tables": tables,
+        # the set a match here could land on: named, because that is the
+        # other half of the question, and a cup with its own tables can
+        # answer it exactly. Only a cup that could turn up anywhere gets
+        # the vague version.
+        "tables_label": ("Any table"
+                         if not reserved and len(tables) == len(store.tables)
+                         else _range_label(tables)),
+        "reserved": reserved,
         "match_minutes": int(per // 60),
         "waiting": sum(1 for r in rows if r["kind"] == "waiting"),
-        "fixtures": sum(1 for r in rows if r["kind"] == "fixture"),
+        "fixtures": sum(1 for r in rows if r["kind"] in ("fixture", "pairing")),
     }
 
 
@@ -172,11 +222,20 @@ def idle_reservations(store):
     Cup B" should not find Cup A on it — but an idle reserved table with a
     queue next to it is worth an admin's attention rather than silence.
     """
+    # one person alone is not a match: a queue only counts once it holds
+    # enough people to make one, or the warning fires over a table nobody
+    # could have used
     waiting = set()
+    counts = {}
     for q in store.queue:
         f = store.formats.get(q.format_id)
         if f:
-            waiting.add(store.cup_key(f))
+            counts.setdefault((store.cup_key(f), f.id), 0)
+            counts[(store.cup_key(f), f.id)] += 1
+    for (cup, fid), n in counts.items():
+        need = store.formats[fid].min_entries() if hasattr(store.formats[fid], "min_entries") else 2
+        if n >= need:
+            waiting.add(cup)
     for m in store.matches.values():
         if m.status == "pending" and m.is_filled():
             waiting.add(store.cup_key(store.formats.get(m.format_id)))

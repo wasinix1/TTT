@@ -11,10 +11,28 @@ import sqlite3
 import threading
 import time
 from collections import defaultdict
+from datetime import datetime
 
 from .models import (
-    Player, Entrant, Match, Table, QueueEntry, Scoring, Cup, decide_winner,
+    Player, Entrant, Match, Table, QueueEntry, Scoring, Cup, Registration,
+    Person, decide_winner,
 )
+
+
+PHASES = ("announced", "registration", "doors", "live", "done")
+
+# Phases that show the console rather than the public site.
+CONSOLE_PHASES = ("doors", "live")
+
+BLANK_EVENT = {
+    "id": "",
+    "name": "Table tennis evening",
+    "note": "",
+    "blurb": "",            # what the landing page says about the event
+    "venue": "",
+    "starts_at": "",        # naive local "YYYY-MM-DDTHH:MM", "" = unscheduled
+    "phase_pin": "",        # admin override; "" = derive from the clock
+}
 
 
 class Store:
@@ -29,6 +47,7 @@ class Store:
         )
         self.conn.commit()
         self._replaying = False
+        self._depth = 0          # nested appends commit with the outermost
         self.reset_state()
         self.replay()
 
@@ -44,11 +63,16 @@ class Store:
         self.formats = {}            # id -> Format instance
         self.format_order: list[str] = []
         self.queue: list[QueueEntry] = []
+        self.registrations: dict[str, Registration] = {}
+        self.registration_order: list[str] = []
+        # the club directory — venue level, so event_new leaves it alone
+        self.people: dict[str, Person] = {}
+        self.people_order: list[str] = []
         self.opted_out: set[str] = set()
         # who was pulled out of which queue, so a scheduled match can hand
         # them back to open play when it finishes
         self.came_from: dict[str, str] = {}
-        self.event: dict = {"name": "Table tennis evening", "note": ""}
+        self.event: dict = dict(BLANK_EVENT)
         self.seq = 0
         self.version = 0             # bumped on every applied event, for polling
         self._now = 0.0              # timestamp of the event being applied
@@ -56,18 +80,46 @@ class Store:
     # ------------------------------------------------------------- log core
 
     def append(self, etype: str, payload: dict):
-        """Record a decision and apply it. The only way state ever changes."""
+        """Record a decision and apply it. The only way state ever changes.
+
+        The write is not committed until the apply has succeeded. This used
+        to be the other way round, and the failure it allowed was quiet and
+        fatal: a payload the handler could not read was already in the log
+        by the time it raised, so the caller got an error and assumed
+        nothing had happened, while the event sat there forever. Nothing
+        went wrong until the next restart, when replay hit it and the store
+        would not load at all — which is to say, on the night, in the hall,
+        days after whatever wrote it.
+
+        An event that cannot be applied did not happen, so it does not get
+        to be in the log. Applying can also append — a result that finishes
+        a Swiss builds the knockout — and those inner writes join the outer
+        one: the whole cascade commits together or not at all, which is
+        what you want from "this result ended the round" anyway."""
         with self.lock:
             ts = time.time()
             cur = self.conn.execute(
                 "INSERT INTO events (ts, type, payload) VALUES (?,?,?)",
                 (ts, etype, json.dumps(payload)),
             )
-            self.conn.commit()
-            self.seq = cur.lastrowid
-            self.apply(etype, payload, self.seq, ts)
+            seq = cur.lastrowid
+            self._depth += 1
+            try:
+                self.apply(etype, payload, seq, ts)
+            except Exception:
+                self._depth -= 1
+                if not self._depth:
+                    # take the event back out, and rebuild from the log in
+                    # case the handler got half way through before it threw
+                    self.conn.rollback()
+                    self.replay()
+                raise
+            self._depth -= 1
+            if not self._depth:
+                self.conn.commit()
+            self.seq = seq
             self.version += 1
-            return self.seq
+            return seq
 
     def replay(self):
         with self.lock:
@@ -110,11 +162,35 @@ class Store:
     def _ev_event_meta(self, p, seq):
         self.event.update(p)
 
+    def _ev_person_add(self, p, seq):
+        self.people[p["id"]] = Person(
+            id=p["id"], name=p["name"],
+            strength=float(p.get("strength", 5.0)),
+            note=p.get("note", ""), last_seen=p.get("last_seen", ""),
+        )
+        if p["id"] not in self.people_order:
+            self.people_order.append(p["id"])
+
+    def _ev_person_update(self, p, seq):
+        who = self.people.get(p["id"])
+        if not who:
+            return
+        for k in ("name", "note", "last_seen"):
+            if k in p:
+                setattr(who, k, p[k])
+        if "strength" in p:
+            who.strength = float(p["strength"])
+
+    def _ev_person_remove(self, p, seq):
+        self.people.pop(p["id"], None)
+        self.people_order = [i for i in self.people_order if i != p["id"]]
+
     def _ev_player_add(self, p, seq):
         self.players[p["id"]] = Player(
             id=p["id"], name=p["name"],
             strength=float(p.get("strength", 5.0)),
             active=p.get("active", True),
+            person_id=p.get("person_id"),
         )
 
     def _ev_player_update(self, p, seq):
@@ -142,7 +218,7 @@ class Store:
     def _ev_entrant_add(self, p, seq):
         self.entrants[p["id"]] = Entrant(
             id=p["id"], name=p["name"], player_ids=list(p["player_ids"]),
-            active=p.get("active", True),
+            active=p.get("active", True), cup_id=p.get("cup_id") or "",
         )
 
     def _ev_entrant_update(self, p, seq):
@@ -157,6 +233,11 @@ class Store:
             e.active = bool(p["active"])
             if not e.active:
                 self.queue = [q for q in self.queue if q.entrant_id != e.id]
+        if "cup_id" in p and (p["cup_id"] or "") != e.cup_id:
+            # moved to another cup's pool: whatever queue they were in
+            # belonged to the old one
+            e.cup_id = p["cup_id"] or ""
+            self.queue = [q for q in self.queue if q.entrant_id != e.id]
 
     def _ev_table_set(self, p, seq):
         n = int(p["number"])
@@ -180,8 +261,14 @@ class Store:
             m.table = None
             m.started_ts = None
 
+    CUP_FIELDS = ("name", "blurb", "entry", "registration", "format_id")
+
     def _ev_cup_add(self, p, seq):
-        self.cups[p["id"]] = Cup(id=p["id"], name=p.get("name") or "Cup")
+        c = Cup(id=p["id"], name=p.get("name") or "Cup")
+        for k in self.CUP_FIELDS:
+            if k in p and k != "name":
+                setattr(c, k, p[k])
+        self.cups[p["id"]] = c
         if p["id"] not in self.cup_order:
             self.cup_order.append(p["id"])
 
@@ -189,8 +276,9 @@ class Store:
         c = self.cups.get(p["id"])
         if not c:
             return
-        if "name" in p:
-            c.name = p["name"]
+        for k in self.CUP_FIELDS:
+            if k in p:
+                setattr(c, k, p[k] or ("" if k != "format_id" else None))
 
     def _ev_cup_remove(self, p, seq):
         self.cups.pop(p["id"], None)
@@ -250,8 +338,64 @@ class Store:
             m.winner = None
         self.queue = [q for q in self.queue if q.format_id != fid]
 
+    def _ev_event_new(self, p, seq):
+        """Start a new event inside the same log.
+
+        Clears what is evening-level — players, entrants, matches, queue,
+        formats — and carries forward what is venue-level: tables, cup
+        definitions, access keys. The log is never truncated, so Setup -> Log
+        still rewinds across the boundary, and each event is a marked span,
+        which is what makes a real multi-event entity additive later rather
+        than a rewrite.
+        """
+        for fid in list(self.formats.keys()):
+            self._purge_format_matches(fid)
+        self.formats = {}
+        self.format_order = []
+        self.players = {}
+        self.entrants = {}
+        self.queue = []
+        self.opted_out = set()
+        self.came_from = {}
+        self.registrations = {}
+        self.registration_order = []
+        for c in self.cups.values():
+            c.format_id = None          # the formats it pointed at are gone
+        if not p.get("keep_cups", True):
+            self.cups = {}
+            self.cup_order = []
+        self.event = dict(BLANK_EVENT)
+        self.event["id"] = p.get("id") or f"EV{seq}"
+        for k in ("name", "note", "blurb", "venue", "starts_at", "phase_pin"):
+            if k in p:
+                self.event[k] = p[k]
+
+    REG_FIELDS = ("cup_id", "kind", "name", "strength", "partner_name",
+                  "partner_strength", "team_name", "note", "status", "entrant_id")
+
+    def _ev_registration_add(self, p, seq):
+        r = Registration(id=p["id"], cup_id=p.get("cup_id", ""),
+                         created_ts=p.get("ts") or time.time())
+        for k in self.REG_FIELDS:
+            if k in p and k != "cup_id":
+                setattr(r, k, p[k])
+        self.registrations[r.id] = r
+        if r.id not in self.registration_order:
+            self.registration_order.append(r.id)
+
+    def _ev_registration_update(self, p, seq):
+        r = self.registrations.get(p["id"])
+        if not r:
+            return
+        for k in self.REG_FIELDS:
+            if k in p:
+                setattr(r, k, p[k])
+
     def _ev_players_reset(self, p, seq):
-        """Wipe the whole roster — players, entrants, and every match/queue
+        """No longer emitted — the new-event wizard replaced it. Kept so that
+        event logs written before that still replay.
+
+        Wipe the whole roster — players, entrants, and every match/queue
         entry that depends on them — so a stale player list doesn't linger
         between events. Tables, cups and format settings are untouched, so
         formats just drop back to 'setup' with nobody entered yet rather
@@ -280,6 +424,18 @@ class Store:
         self.queue = [q for q in self.queue if q.entrant_id != p["entrant_id"]]
         if p.get("opt_out"):
             self.opted_out.add(p["entrant_id"])
+
+    def _ev_rest_set(self, p, seq):
+        """Sit somebody out, or bring them back. Resting is the only thing
+        an organiser ever needs to say about the queue: who is waiting is
+        worked out from the cup's pool, so the one manual input left is who
+        is not to be picked."""
+        eid = p["entrant_id"]
+        if p.get("resting", True):
+            self.opted_out.add(eid)
+            self.queue = [q for q in self.queue if q.entrant_id != eid]
+        else:
+            self.opted_out.discard(eid)
 
     def _ev_queue_pass(self, p, seq):
         ids = set(p["entrant_ids"])
@@ -347,6 +503,26 @@ class Store:
         m.table = None
         if m.status == "live":
             m.status = "pending"
+
+    def _ev_match_defer(self, p, seq):
+        """Take a match off its table and send it to the back of the line.
+
+        Unseating alone did nothing visible: the dispatcher runs again in the
+        same request and put the very same fixture straight back on the very
+        same table, because it was still the next one due. The deferral is
+        what actually gives the table to somebody else, and it is counted
+        rather than flagged so pressing it twice pushes the match back twice.
+        """
+        m = self.matches.get(p["match_id"])
+        if not m:
+            return
+        if m.table in self.tables and self.tables[m.table].match_id == m.id:
+            self.tables[m.table].match_id = None
+        m.table = None
+        m.started_ts = None
+        if m.status == "live":
+            m.status = "pending"
+        m.meta["deferred"] = int(m.meta.get("deferred", 0)) + 1
 
     def _ev_match_result(self, p, seq):
         m = self.matches.get(p["match_id"])
@@ -424,6 +600,38 @@ class Store:
                 nxt.winner = None
                 nxt.started_ts = nxt.done_ts = None
 
+    # --------------------------------------------------------------- phase
+
+    def starts_at_ts(self):
+        """The start time as an epoch, or None if unscheduled."""
+        raw = (self.event.get("starts_at") or "").strip()
+        if not raw:
+            return None
+        try:
+            return datetime.fromisoformat(raw).timestamp()
+        except ValueError:
+            return None
+
+    def phase(self) -> str:
+        """Which phase the event is in. Derived from the clock unless an
+        admin has pinned it — pinning is how you open the doors early, hold
+        them, or put the page back to the landing view afterwards.
+
+        An unscheduled event is 'live', so an evening that never touches any
+        of this behaves exactly as it did before."""
+        pin = self.event.get("phase_pin") or ""
+        if pin in PHASES:
+            return pin
+        start = self.starts_at_ts()
+        if start is None or time.time() >= start:
+            return "live"
+        if any(c.registration == "open" for c in self.cups.values()):
+            return "registration"
+        return "announced"
+
+    def shows_console(self) -> bool:
+        return self.phase() in CONSOLE_PHASES
+
     # ------------------------------------------------------------- helpers
 
     def new_id(self, prefix: str, pool: dict) -> str:
@@ -451,6 +659,50 @@ class Store:
         if not m:
             return
         self._fill_slot(m, slot, entrant_id)
+
+    # ------------------------------------------------------------ directory
+
+    @staticmethod
+    def name_key(name: str) -> str:
+        return " ".join(str(name or "").split()).casefold()
+
+    def person_by_name(self, name):
+        """Whoever in the directory goes by that name, ignoring case and
+        stray spaces. Deliberately exact beyond that: guessing that "J.
+        Berger" is "Jana Berger" is the kind of helpfulness that silently
+        gives somebody else's strength to a stranger."""
+        k = self.name_key(name)
+        if not k:
+            return None
+        for i in self.people_order:
+            who = self.people.get(i)
+            if who and self.name_key(who.name) == k:
+                return who
+        return None
+
+    def person_playing(self, person_id):
+        """The player in tonight's roster who is this person, if any."""
+        for pl in self.players.values():
+            if pl.person_id and pl.person_id == person_id:
+                return pl
+        return None
+
+    # --------------------------------------------------------- registration
+
+    def cup_pool(self, cup_id):
+        """Everyone admitted to this cup, in the order they were admitted.
+        This is the one list a cup has; its draws read from it."""
+        return [e.id for e in self.entrants.values() if e.cup_id == cup_id]
+
+    def regs_for_cup(self, cup_id, status="pending"):
+        return [r for r in (self.registrations[i] for i in self.registration_order
+                            if i in self.registrations)
+                if r.cup_id == cup_id and (status is None or r.status == status)]
+
+    def pending_regs(self):
+        return [self.registrations[i] for i in self.registration_order
+                if i in self.registrations
+                and self.registrations[i].status == "pending"]
 
     # ------------------------------------------------------------ cups
 
