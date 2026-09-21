@@ -19,6 +19,11 @@ let skew = 0;          // server clock minus ours, so the countdown is honest
    than read off the DOM, so a background refresh of the event details never
    takes half-typed answers with it. */
 const joining = () => location.pathname === '/join';
+/* The form is on the landing itself while entries are open, and still has its
+   own page at /join for links that point straight at it. */
+const showJoin = () => joining() || (!!P && (P.phase === 'registration' || P.phase === 'announced')
+  && P.cups.some(c => c.registration === 'open'));
+const ENTRY_DE = { single: 'Einzel', pair: 'Doppel' };
 let draft = { cup_id: '', kind: 'single', name: '', strength: '5',
               partner_name: '', partner_strength: '5', team_name: '', note: '' };
 let sending = false, error = '';
@@ -68,7 +73,7 @@ function render() {
   const done = P.phase === 'done';
   $('cups-head').textContent = done ? 'How it finished' : "What's being played";
   // on the form, the cup picker is the list — showing both says it twice
-  $('cups-section').hidden = !P.cups.length || joining();
+  $('cups-section').hidden = !P.cups.length || showJoin();
   $('cups').innerHTML = P.cups.map(c => cupCard(c, done)).join('');
 
   // an event with entries open but no cup taking them would be a dead end;
@@ -84,8 +89,8 @@ function render() {
   if (cta) {
     cta.innerHTML = (!joining() && open.length && !done)
       ? (already
-          ? `<a class="cta ghost" href="/join">You are on the list — add someone else</a>`
-          : `<a class="cta" href="/join">Put your name down</a>`)
+          ? `<a class="cta" href="#join">Noch jemanden anmelden</a>`
+          : `<a class="cta" href="#join">Voranmelden</a>`)
       : '';
   }
 
@@ -108,9 +113,19 @@ const STRENGTHS = [
   [8, '8'], [9, '9'], [10, '10 — league player'],
 ];
 
+/* the dark tile names the cups; the form sits beside it */
+function joinShell(inner, open) {
+  const list = open.map(c => `<div><b>${esc(c.name)}</b>${ENTRY_DE[c.entry] ? ' · ' + ENTRY_DE[c.entry] : ''}</div>`).join('');
+  return `<div class="join-grid">
+    <div class="join-note"><h2>Voranmelden</h2><div class="cups-list">${list}</div></div>
+    <div class="join-form"><div class="jf">${inner}</div></div>
+  </div>`;
+}
+const backLink = () => joining() ? '<a class="back" href="/">← Back to the event</a>' : '';
+
 function renderJoin() {
   const box = $('join');
-  if (!joining()) { box.hidden = true; return; }
+  if (!showJoin()) { box.hidden = true; return; }
   box.hidden = false;
 
   const open = P.cups.filter(c => c.registration === 'open');
@@ -127,20 +142,20 @@ function renderJoin() {
     return;
   }
   if (draft.done) {
-    box.innerHTML = `<div class="done-card">
+    box.innerHTML = joinShell(`<div class="done-card">
         <h2>You are on the list</h2>
         <p>${esc(draft.done.name)} — ${esc(draft.done.cup)}</p>
         <p>Nothing else to do. We confirm everyone on the night, so just turn up.</p>
       </div>
       <button class="cta ghost" data-act="again">Put someone else down</button>
-      <a class="back" href="/">← Back to the event</a>`;
+      ${backLink()}`, open);
     return;
   }
   if (!draft.cup_id || !open.some(c => c.id === draft.cup_id)) draft.cup_id = open[0].id;
   const cup = open.find(c => c.id === draft.cup_id);
   const pair = cup.entry === 'pair';
 
-  box.innerHTML = `<h2>Put your name down</h2>
+  box.innerHTML = joinShell(`
     ${open.length > 1 ? `<div class="form-field"><label>Which cup</label>
       <div class="choice">${open.map(c => `<button data-cup="${c.id}"
         class="${c.id === draft.cup_id ? 'on' : ''}">
@@ -179,7 +194,7 @@ function renderJoin() {
 
     ${error ? `<div class="err">${esc(error)}</div>` : ''}
     <button class="cta" data-act="send" ${sending ? 'disabled' : ''}>${sending ? 'Sending…' : 'Put me down'}</button>
-    <a class="back" href="/">← Back to the event</a>`;
+    ${backLink()}`, open);
 }
 
 async function send() {

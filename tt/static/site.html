@@ -24,7 +24,7 @@
 [hidden]{display:none!important}
 
 body{padding-bottom:0}
-.site{max-width:1240px;margin:0 auto;padding:0 0 40px}
+.site{max-width:none;margin:0;padding:0 clamp(0px,1vw,14px) 40px}
 
 /* ------------------------------------------------------------------ hero */
 .hero{
@@ -62,7 +62,7 @@ body{padding-bottom:0}
 .fact .k{display:none}
 .fact .v{font-size:clamp(24px,3vw,40px);font-weight:800;letter-spacing:-.03em;
          line-height:1.06;max-width:22ch;text-wrap:pretty}
-.fact.venue .v{color:var(--signal)}
+.fact.venue .v{color:var(--signal);text-transform:uppercase}
 
 .poster{position:relative;background:var(--signal);min-height:320px;overflow:hidden;border-radius:10px}
 .poster img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;display:block}
@@ -109,18 +109,18 @@ body{padding-bottom:0}
 /* ------------------------------------------------- the form, at /join
    site.js renders #join as a single column: h2, .form-field blocks, a .cta
    and a .back link. It is its own page, so it gets a page heading. */
-#join{max-width:620px}
+#join{max-width:none;padding-left:0;padding-right:0}
 #join > h2{font-size:clamp(30px,4.2vw,50px);font-weight:800;letter-spacing:-.02em;
            line-height:1;margin:0 0 clamp(20px,3vw,28px);text-transform:none;color:var(--chalk)}
 
-.cta{display:inline-block;text-align:center;background:var(--signal);color:#fff;
+.cta{display:inline-block;text-align:center;background:var(--chalk);color:#fff;
      border:0;border-radius:8px;padding:15px 28px;font-size:16px;font-weight:600;
      cursor:pointer;text-decoration:none;
      transition:background .09s,transform .09s}
-.cta:hover{background:var(--chalk);color:#fff;filter:none}
+.cta:hover{background:var(--signal);color:#fff;filter:none}
 .cta:active{transform:translateY(2px)}
-.cta.ghost{background:var(--chalk);color:#fff;border:none;font-weight:600}
-.cta.ghost:hover{background:var(--signal)}
+.cta.ghost{background:var(--surface);color:var(--chalk);border:none;font-weight:600}
+.cta.ghost:hover{background:var(--edge)}
 #join .cta{margin-top:22px}
 
 .form-field{margin-top:18px}
@@ -158,6 +158,25 @@ body{padding-bottom:0}
 .done-card p{color:var(--muted);margin:0 0 6px;font-size:17px;line-height:1.5}
 .back{display:inline-block;margin-top:26px;color:var(--muted);font-size:15px}
 .back:hover{color:var(--signal)}
+
+/* the dark tile beside the form: the cups named, then the fields */
+.join-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:2px}
+.join-note{background:var(--chalk);color:#fff;border-radius:10px;
+           padding:clamp(28px,4vw,52px);display:flex;flex-direction:column;
+           justify-content:center;gap:16px;min-height:280px}
+.join-note h2{margin:0;font-size:clamp(30px,3.7vw,64px);font-weight:800;
+              letter-spacing:-.02em;line-height:1;color:#fff;text-transform:none}
+.join-note .cups-list{display:flex;flex-direction:column;gap:6px;font-size:18px;line-height:1.3;
+                      color:rgba(255,255,255,.75)}
+.join-note .cups-list b{color:#fff;font-weight:700;letter-spacing:.02em}
+.join-form{background:var(--surface);border-radius:10px;padding:clamp(24px,3.5vw,44px);
+           display:flex;align-items:center}
+.join-form > .jf{width:100%}
+.join-form .form-field input,.join-form .form-field select,.join-form .form-field textarea{background:var(--raised)}
+#join .cta{margin-top:22px}
+.join-form .choice button{background:var(--raised)}
+.join-form .choice button:hover{background:var(--edge)}
+.join-form .choice button.on{background:var(--chalk)}
 
 @media (max-width:720px){
   .hero{grid-template-columns:1fr}
