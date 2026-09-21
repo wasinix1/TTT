@@ -155,6 +155,7 @@ class Registration:
     note: str = ""
     status: str = "pending"        # pending | confirmed | dropped
     entrant_id: Optional[str] = None
+    matched_with: Optional[str] = None   # kind = seeking: the other one looking
     created_ts: float = 0.0
 
     def to_dict(self):
