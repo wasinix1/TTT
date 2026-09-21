@@ -829,6 +829,22 @@ class App:
                 f"There is already a {name} tonight — add something to tell "
                 f"them apart, like \u201c{name} (blue shirt)\u201d")
 
+    def _why_not_removable(self, e):
+        """Why this entrant cannot be deleted, or "" if they can. A match
+        that was voided (a draw that was reset) no longer counts."""
+        s = self.store
+        mine = set(e.player_ids)
+        for m in s.matches.values():
+            if m.status == "void":
+                continue
+            if e.id in (m.entrant_a, m.entrant_b, *(m.meta.get("queued") or [])) \
+                    or mine & set(m.players()):
+                return f"{e.name} has already been drawn into a match"
+        for f in s.formats.values():
+            if e.id in f.entrant_ids and not f.takes_new_entrants():
+                return f"{e.name} is in a draw that has started"
+        return ""
+
     def op_remove_entrant(self, p):
         """Take somebody out of the pool — a mistaken confirm, a duplicate, a
         person who went home before their first game.
@@ -836,22 +852,28 @@ class App:
         Only while nothing depends on them. Once they have played, their
         results are in somebody else's standings and a bracket has been drawn
         around them; deleting them would rewrite that, so it is Sit out
-        instead."""
+        instead. Reset the draw first and they can go."""
         s = self.store
         e = s.entrants.get(p.get("id") or "")
         if not e:
             raise ValueError("no such player")
-        mine = set(e.player_ids)
-        for m in s.matches.values():
-            if e.id in (m.entrant_a, m.entrant_b, *(m.meta.get("queued") or [])) \
-                    or mine & set(m.players()):
-                raise ValueError(f"{e.name} has already been drawn into a match — "
-                                 "use Sit out instead")
-        for f in s.formats.values():
-            if e.id in f.entrant_ids and not f.takes_new_entrants():
-                raise ValueError(f"{e.name} is in a draw that has started — "
-                                 "use Sit out instead")
+        why = self._why_not_removable(e)
+        if why:
+            raise ValueError(f"{why} — use Sit out, or reset the draw first")
         s.append("entrant_remove", {"id": e.id})
+
+    def op_remove_entrants(self, p):
+        """Empty a cup's pool, skipping anybody who cannot be removed."""
+        s = self.store
+        cup_id = p.get("cup_id") or ""
+        gone, kept = 0, 0
+        for eid in [e.id for e in s.entrants.values() if (e.cup_id or "") == cup_id]:
+            if self._why_not_removable(s.entrants[eid]):
+                kept += 1
+            else:
+                s.append("entrant_remove", {"id": eid})
+                gone += 1
+        return {"removed": gone, "kept": kept}
 
     def op_update_person(self, p):
         self.store.append("person_update", p)
@@ -905,7 +927,7 @@ OP_LEVEL = {
     "manual_match": 2, "manual_result": 1, "event_meta": 2, "rewind": 2,
     "new_event": 2, "create_event": 2, "set_phase": 2,
     "register": 0, "update_registration": 2,
-    "admit": 2, "add_registration": 2, "remove_entrant": 2, "update_person": 2, "remove_person": 2, "add_from_directory": 2,
+    "admit": 2, "add_registration": 2, "remove_entrant": 2, "remove_entrants": 2, "update_person": 2, "remove_person": 2, "add_from_directory": 2,
 }
 
 
