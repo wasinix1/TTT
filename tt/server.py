@@ -1026,15 +1026,16 @@ class Handler(BaseHTTPRequestHandler):
               ) if (has_qr and base) else ""
         html = f"""<!doctype html><meta charset="utf-8">
 <title>{name}</title>
+<link href="https://fonts.googleapis.com/css2?family=Syne:wght@400..800&display=swap" rel="stylesheet" media="print" onload="this.media='all'">
 <style>
- body{{font-family:ui-sans-serif,system-ui,sans-serif;color:#10211f;background:#fff;
+ body{{font-family:"Syne",ui-sans-serif,system-ui,sans-serif;color:#0a0a0a;background:#fff;
       margin:0;display:flex;min-height:100vh;align-items:center;justify-content:center}}
  .sheet{{text-align:center;padding:40px}}
- h1{{font-size:34px;margin:0 0 6px;letter-spacing:-.02em}}
- p{{color:#5d7972;margin:0 0 28px;font-size:17px}}
- .url{{font-size:23px;margin-top:22px;font-weight:600;word-break:break-all}}
+ h1{{font-size:38px;font-weight:800;margin:0 0 6px;letter-spacing:-.03em}}
+ p{{color:#5f5f5f;margin:0 0 28px;font-size:17px}}
+ .url{{font-size:23px;margin-top:22px;font-weight:700;color:#d8241a;word-break:break-all}}
  .detail{{font-size:19px;margin-bottom:8px;max-width:30em}}
- .detail:last-of-type{{color:#5d7972;font-size:16px;margin-bottom:24px}}
+ .detail:last-of-type{{color:#5f5f5f;font-size:16px;margin-bottom:24px}}
  @media print{{.sheet{{padding:0}}}}
 </style>
 <div class="sheet"><h1>{name}</h1>

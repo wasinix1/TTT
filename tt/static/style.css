@@ -1,21 +1,31 @@
-/* Visual language borrowed from the room this runs in: a dark table surface,
-   chalk-white lines, and the orange of a three-star ball as the only signal
-   colour. Numerals are the hero — everything is read at four metres. */
+
+/* TTT — GUI revamp v1.
+   White paper, black ink, one red. The red is the only colour in the system
+   and it is never decoration: it marks the live table, the pair who should be
+   walking over, the seat that qualified, the match being played right now.
+   Blocks sit flat on the page separated by a 2px gutter instead of borders,
+   so the grid reads as one object rather than a set of framed boxes. */
 
 :root{
-  --ground:#0d1b1a;
-  --surface:#142622;
-  --raised:#1b332e;
-  --edge:#27453d;
-  --chalk:#eef4ee;
-  --muted:#8ba69d;
-  --dim:#5d7972;
-  --signal:#ff6b1f;
-  --signal-dim:#7a3a17;
+  --ground:#ffffff;
+  --surface:#f2f2f0;
+  --raised:#ffffff;
+  --edge:#e4e4e0;
+  --hair:rgba(10,10,10,.06);
+  --chalk:#0a0a0a;
+  --muted:#5f5f5f;
+  --dim:#767671;
+  --signal:#d8241a;
+  --signal-dim:rgba(216,36,26,.22);
+  --signal-wash:rgba(216,36,26,.07);
+  --on-signal:#ffffff;
 
-  --sans:ui-sans-serif,system-ui,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
-  --gap:14px;
-  --r:3px;
+  --sans:"Syne",ui-sans-serif,system-ui,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
+  --gap:2px;          /* the gutter between blocks */
+  --pad:18px;         /* page padding, previously conflated with --gap */
+  --r:8px;            /* panels and cards */
+  --r-sm:6px;         /* inputs */
+  --r-xs:5px;         /* chips and tiny buttons */
 }
 
 *{box-sizing:border-box}
@@ -31,139 +41,173 @@ body{
   padding-bottom:60px;
 }
 button,input,select,textarea{font:inherit;font-variant-numeric:tabular-nums}
-h1,h2,h3{margin:0;font-weight:650;letter-spacing:-.015em}
+h1,h2,h3{margin:0;font-weight:700;letter-spacing:-.02em}
+a{color:var(--signal);text-decoration:none}
+a:hover{color:var(--chalk)}
 
 /* ------------------------------------------------------------------- bar */
 .bar{
   display:flex;align-items:center;justify-content:space-between;gap:12px;
-  padding:12px 18px;border-bottom:1px solid var(--edge);
+  padding:14px var(--pad);border-bottom:1px solid var(--edge);
   position:sticky;top:0;z-index:20;background:var(--ground);
 }
-.bar-left{display:flex;align-items:center;gap:11px;min-width:0}
-.bar-right{display:flex;align-items:center;gap:10px}
+.bar-left{display:flex;align-items:center;gap:13px;min-width:0}
+.bar-right{display:flex;align-items:center;gap:12px}
+/* the ball, still a dot — swap the element for the letters TTT if you want
+   the wordmark from the landing page (see CHANGES.md) */
 .mark{
-  width:13px;height:13px;border-radius:50%;flex:none;
-  background:var(--signal);box-shadow:0 0 0 3px var(--ground),0 0 0 4px var(--signal-dim);
+  width:12px;height:12px;border-radius:50%;flex:none;background:var(--signal);
 }
-.bar h1{font-size:17px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.role-tag{font-size:12.5px;color:var(--muted)}
-.pulse{width:7px;height:7px;border-radius:50%;background:var(--dim);transition:background .25s}
+/* the letters instead of the dot — matches the landing page lockup */
+.mark.wordmark{
+  width:auto;height:auto;border-radius:0;background:none;
+  font-size:20px;font-weight:800;letter-spacing:-.04em;color:var(--chalk);
+}
+.bar h1{font-size:18px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.role-tag{font-size:13px;color:var(--muted)}
+.pulse{width:9px;height:9px;border-radius:50%;background:var(--dim);transition:background .25s}
 .pulse.on{background:var(--signal)}
 
-main{padding:var(--gap) 18px 40px;max-width:1400px;margin:0 auto}
+main{padding:var(--pad) var(--pad) 40px;max-width:1400px;margin:0 auto}
 
 /* -------------------------------------------------------------- cup tabs */
 .cup-tabs[hidden]{display:none}
 .cup-tabs{
-  display:flex;gap:6px;flex-wrap:wrap;padding:10px 18px;
-  border-bottom:1px solid var(--edge);position:sticky;top:57px;z-index:19;
-  background:var(--ground);
+  display:flex;gap:var(--gap);flex-wrap:wrap;padding:0 var(--pad) 14px;
+  position:sticky;top:61px;z-index:19;background:var(--ground);
 }
-.cup-tabs button{background:transparent;border-color:transparent;color:var(--muted);padding:6px 13px;font-size:13.5px}
-.cup-tabs button.on{background:var(--raised);border-color:var(--edge);color:var(--chalk);font-weight:600}
+.cup-tabs button{background:var(--surface);border:none;color:var(--muted);padding:9px 16px;font-size:15px;font-weight:600}
+.cup-tabs button:hover{background:var(--edge);color:var(--chalk)}
+.cup-tabs button.on{background:var(--chalk);color:var(--ground);font-weight:700}
 
 /* ---------------------------------------------------------------- tables */
 #tables{
   display:grid;gap:var(--gap);
-  grid-template-columns:repeat(auto-fit,minmax(290px,1fr));
-  margin-bottom:26px;
+  grid-template-columns:repeat(auto-fit,minmax(300px,1fr));
+  margin-bottom:var(--gap);
 }
 .table-card{
-  background:var(--surface);border:1px solid var(--edge);border-radius:var(--r);
-  padding:16px 16px 14px;display:flex;flex-direction:column;gap:12px;
-  min-height:196px;position:relative;
+  background:var(--surface);border:none;border-radius:var(--r);
+  padding:20px 20px 18px;display:flex;flex-direction:column;gap:14px;
+  min-height:210px;position:relative;
 }
-.table-card.live{border-color:var(--signal);background:var(--raised)}
+/* a live table is a red block, legible from the far side of the room */
+.table-card.live{background:var(--signal);color:var(--on-signal)}
 .table-card.paused{opacity:.5}
-.table-head{display:flex;align-items:baseline;gap:10px}
+.table-head{display:flex;align-items:baseline;gap:12px}
 .table-no{
-  font-size:34px;font-weight:750;line-height:.9;letter-spacing:-.04em;
-  color:var(--signal);
+  font-size:38px;font-weight:800;line-height:.85;letter-spacing:-.05em;
+  color:var(--on-signal);
 }
-.table-card:not(.live) .table-no{color:var(--dim)}
-.table-name{font-size:13px;color:var(--muted);flex:1}
-.table-state{font-size:12.5px;color:var(--muted)}
+.table-card:not(.live) .table-no{color:var(--chalk)}
+.table-card.empty .table-no,
+.table-card:not(.live):not(.has-match) .table-no{color:var(--dim)}
+.table-name{
+  font-size:13px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;
+  color:var(--muted);flex:1;
+}
+.table-state{font-size:13px;font-weight:600;color:var(--muted)}
+.table-card.live .table-name{color:rgba(255,255,255,.78)}
+.table-card.live .table-state{color:var(--on-signal)}
 
-.match-label{font-size:11.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.03em}
-.versus{display:flex;flex-direction:column;gap:6px;flex:1;justify-content:center}
+.match-label{font-size:12px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.08em}
+.table-card.live .match-label{color:rgba(255,255,255,.78)}
+.versus{display:flex;flex-direction:column;gap:8px;flex:1;justify-content:center}
 .side{display:flex;align-items:baseline;gap:10px}
-.side-name{font-size:21px;font-weight:640;letter-spacing:-.02em;line-height:1.15}
-.side-sub{font-size:12px;color:var(--muted)}
-.vs{font-size:12px;color:var(--dim);margin:1px 0}
-.empty-table{color:var(--dim);font-size:15px;display:flex;flex:1;align-items:center}
+.side-name{font-size:23px;font-weight:700;letter-spacing:-.025em;line-height:1.15}
+.side-sub{font-size:13px;color:var(--muted)}
+.vs{font-size:12px;font-weight:600;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);margin:1px 0}
+.table-card.live .side-sub{color:rgba(255,255,255,.72)}
+.table-card.live .vs{color:rgba(255,255,255,.6)}
+.empty-table{color:var(--muted);font-size:16px;display:flex;flex:1;align-items:center}
 
 /* ------------------------------------------------------------- score pad */
-.pad{border-top:1px solid var(--edge);padding-top:11px;display:flex;flex-direction:column;gap:9px}
-.games{display:flex;flex-wrap:wrap;gap:7px}
-.game{display:flex;align-items:center;gap:4px}
+.pad{border-top:1px solid var(--edge);padding-top:14px;display:flex;flex-direction:column;gap:11px}
+.table-card.live .pad{border-top-color:rgba(255,255,255,.28)}
+.games{display:flex;flex-wrap:wrap;gap:8px}
+.game{display:flex;align-items:center;gap:5px}
 .game input{
-  width:46px;padding:7px 4px;text-align:center;
-  background:var(--ground);color:var(--chalk);
-  border:1px solid var(--edge);border-radius:var(--r);font-size:17px;font-weight:600;
+  width:52px;padding:9px 4px;text-align:center;
+  background:var(--raised);color:var(--chalk);
+  border:none;border-radius:var(--r-xs);font-size:18px;font-weight:700;
 }
-.game input:focus{outline:2px solid var(--signal);outline-offset:-1px;border-color:transparent}
-.game .sep{color:var(--dim);font-size:13px}
-.pad-row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
-.hint{font-size:12px;color:var(--muted)}
+.table-card.live .game input{background:var(--on-signal);color:var(--signal)}
+.game input:focus{outline:2px solid var(--chalk);outline-offset:-2px}
+.table-card.live .game input:focus{outline-color:var(--chalk)}
+.game .sep{color:var(--dim);font-size:13px;font-weight:600}
+.table-card.live .game .sep{color:rgba(255,255,255,.6)}
+.pad-row{display:flex;gap:var(--gap);flex-wrap:wrap;align-items:center}
+.hint{font-size:13px;color:var(--muted)}
+.table-card.live .hint{color:rgba(255,255,255,.78)}
 
 /* --------------------------------------------------------------- buttons */
 button{
-  background:var(--raised);color:var(--chalk);border:1px solid var(--edge);
-  border-radius:var(--r);padding:8px 13px;cursor:pointer;
-  transition:background .12s,border-color .12s;
+  background:var(--surface);color:var(--chalk);border:none;
+  border-radius:var(--r-sm);padding:10px 15px;cursor:pointer;font-weight:600;
+  transition:background .09s,color .09s,transform .09s;
 }
-button:hover{background:var(--edge)}
+button:hover{background:var(--chalk);color:var(--ground)}
+button:active{transform:translateY(1px)}
 button:focus-visible{outline:2px solid var(--signal);outline-offset:2px}
-button.primary{background:var(--signal);border-color:var(--signal);color:#150803;font-weight:620}
-button.primary:hover{background:#ff7f3d}
+button.primary{background:var(--signal);color:var(--on-signal);font-weight:700}
+button.primary:hover{background:var(--chalk);color:var(--ground)}
 button.ghost{background:transparent;color:var(--muted)}
 button.ghost:hover{background:var(--surface);color:var(--chalk)}
-button.tiny{padding:4px 9px;font-size:12.5px}
+button.tiny{padding:7px 12px;font-size:13px;border-radius:var(--r-xs);font-weight:700}
 button:disabled{opacity:.4;cursor:default}
+button:disabled:hover{background:var(--surface);color:var(--chalk)}
+/* inside a live card the ground is red, so the buttons invert */
+.table-card.live button{background:rgba(255,255,255,.16);color:var(--on-signal)}
+.table-card.live button:hover{background:rgba(255,255,255,.26)}
+.table-card.live button.primary{background:var(--raised);color:var(--signal)}
+.table-card.live button.primary:hover{background:var(--chalk);color:var(--ground)}
 
 /* ----------------------------------------------------------------- panels */
 .cols{display:grid;gap:var(--gap);grid-template-columns:repeat(auto-fit,minmax(340px,1fr))}
 .col{display:flex;flex-direction:column;gap:var(--gap);min-width:0}
-.panel{background:var(--surface);border:1px solid var(--edge);border-radius:var(--r);overflow:hidden}
+.panel{background:var(--surface);border:none;border-radius:var(--r);overflow:hidden}
 .panel-head{
   display:flex;align-items:center;justify-content:space-between;gap:10px;
-  padding:11px 15px;border-bottom:1px solid var(--edge);
+  padding:15px 18px;border-bottom:none;
 }
-.panel-head h2{font-size:14px;font-weight:620}
-.panel-head .note{font-size:12px;color:var(--muted)}
-.panel-body{padding:6px 15px 13px}
-.panel-body.flush{padding:0}
-.blank{color:var(--dim);font-size:13.5px;padding:12px 0}
+.panel-head h2{
+  font-size:13px;font-weight:700;letter-spacing:.1em;
+  text-transform:uppercase;color:var(--muted);
+}
+.panel-head .note{font-size:13px;font-weight:500;color:var(--muted)}
+.panel-body{padding:0 18px 14px}
+.panel-body.flush{padding:0 0 6px}
+.blank{color:var(--muted);font-size:14px;padding:12px 18px}
 
 /* ------------------------------------------------------------------ rows */
 .row{
-  display:flex;align-items:center;gap:10px;
-  padding:9px 15px;border-bottom:1px solid rgba(39,69,61,.5);
+  display:flex;align-items:center;gap:12px;
+  padding:12px 18px;border-bottom:1px solid var(--hair);
 }
 .row:last-child{border-bottom:none}
-.row .pos{font-size:12.5px;color:var(--dim);width:19px;flex:none}
-.row .nm{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.row .meta{font-size:12px;color:var(--muted);flex:none}
+.row .pos{font-size:13px;font-weight:700;color:var(--muted);width:20px;flex:none}
+.row .nm{flex:1;min-width:0;font-size:16px;font-weight:500;line-height:1.25;overflow-wrap:break-word}
+.row .meta{font-size:15px;font-weight:700;letter-spacing:-.01em;color:var(--chalk);flex:none}
 .row.waiting-long .pos{color:var(--signal)}
-.row.blocked{opacity:.45}
+.row.blocked{opacity:.6}
 .chip{
-  font-size:11.5px;color:var(--muted);border:1px solid var(--edge);
-  border-radius:9px;padding:1px 7px;flex:none;
+  font-size:12px;font-weight:600;color:var(--muted);border:none;
+  border-radius:var(--r-xs);padding:5px 9px;flex:none;letter-spacing:.04em;
 }
-.chip.hot{color:var(--signal);border-color:var(--signal-dim)}
-.chip.next{color:#150803;background:var(--signal);border-color:var(--signal);font-weight:650}
+.chip.hot{color:var(--signal);background:var(--signal-wash);font-weight:700}
+.chip.next{color:var(--on-signal);background:var(--signal);font-weight:700}
 .chip.where{color:var(--muted)}
-/* a state, not an action — orange is reserved for things you can press */
-.chip.state{color:var(--chalk);background:var(--raised)}
+/* a state, not an action */
+.chip.state{color:var(--chalk);background:var(--edge)}
+.chip.when{color:var(--muted)}
+/* quiet and warning variants — the warning is a wash, not a fill, so it never reads as live */
 .chip.dim{color:var(--dim)}
-.chip.warn{color:var(--signal);border-color:var(--signal-dim)}
-.chip.when{color:var(--chalk)}
+.chip.warn{color:var(--signal);background:var(--signal-wash)}
 /* whoever should be putting their shoes on */
-.row.ondeck{background:rgba(214,106,42,.09)}
+.row.ondeck{background:var(--signal-wash)}
 .row.ondeck .pos{color:var(--signal)}
-.row.ondeck .chip.when{
-  color:#150803;background:var(--signal);border-color:var(--signal);font-weight:650;
-}
+.row.ondeck .nm{font-weight:600}
+.row.ondeck .chip.when{color:var(--on-signal);background:var(--signal);font-weight:700}
 /* an action that would otherwise be a button on every single row */
 .row .on-hover{opacity:0;transition:opacity .12s}
 .row.hoverable:hover .on-hover,
@@ -171,176 +215,310 @@ button:disabled{opacity:.4;cursor:default}
 @media (hover:none){.row .on-hover{opacity:1}}
 .sheet-inner.narrow{max-width:460px}
 .warn{
-  border:1px solid var(--signal-dim);border-left:3px solid var(--signal);
-  border-radius:var(--r);background:rgba(214,106,42,.07);
-  padding:9px 13px;font-size:13.5px;color:var(--chalk);margin-bottom:12px;
+  border:none;border-left:3px solid var(--signal);
+  border-radius:var(--r);background:var(--surface);
+  padding:12px 16px;font-size:14px;font-weight:500;color:var(--chalk);margin-bottom:18px;
 }
 
-button.danger{color:var(--signal);border-color:var(--signal-dim)}
-button.danger:hover{background:var(--signal-dim);color:var(--chalk)}
+button.danger{color:var(--signal);background:var(--signal-wash)}
+button.danger:hover{background:var(--signal);color:var(--on-signal)}
 
-table.grid{width:100%;border-collapse:collapse;font-size:13.5px}
+table.grid{width:100%;border-collapse:collapse;font-size:15px}
 table.grid th{
-  text-align:left;font-weight:560;color:var(--muted);font-size:12px;
-  padding:8px 15px;border-bottom:1px solid var(--edge);
+  text-align:left;font-weight:700;color:var(--muted);font-size:11px;
+  letter-spacing:.08em;text-transform:uppercase;
+  padding:0 18px 8px;border-bottom:none;
 }
-table.grid td{padding:7px 15px;border-bottom:1px solid rgba(39,69,61,.45)}
+table.grid td{padding:11px 18px;border-bottom:1px solid var(--hair)}
 table.grid tr:last-child td{border-bottom:none}
 table.grid td.n,table.grid th.n{text-align:right;width:1%;white-space:nowrap}
-table.grid tr.qualified td{color:var(--chalk)}
-table.grid tr.qualified td:first-child{box-shadow:inset 2px 0 0 var(--signal)}
+table.grid tr.qualified td{color:var(--chalk);font-weight:700}
+table.grid tr.qualified td:first-child{box-shadow:inset 3px 0 0 var(--signal);color:var(--signal)}
 
 /* --------------------------------------------------------------- bracket */
-.bracket{display:flex;gap:12px;overflow-x:auto;padding:12px 15px}
-.bround{display:flex;flex-direction:column;justify-content:space-around;gap:10px;min-width:170px}
-.bround h3{font-size:11.5px;color:var(--muted);font-weight:560;margin-bottom:2px}
-.bmatch{border:1px solid var(--edge);border-radius:var(--r);overflow:hidden;background:var(--ground)}
-.bmatch div{padding:5px 9px;font-size:13px;display:flex;justify-content:space-between;gap:8px}
-.bmatch div:first-child{border-bottom:1px solid var(--edge)}
-.bmatch .won{color:var(--chalk);font-weight:620}
-.bmatch .lost{color:var(--dim)}
-.bmatch .tbd{color:var(--dim);font-style:italic}
-.bmatch.live{border-color:var(--signal)}
+.bracket{display:flex;gap:var(--gap);overflow-x:auto;padding:0 18px 18px}
+.bround{display:flex;flex-direction:column;justify-content:space-around;gap:var(--gap);min-width:165px;flex:1}
+.bround h3{
+  font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;
+  color:var(--muted);margin-bottom:4px;
+}
+.bmatch{border:none;border-radius:var(--r-sm);overflow:hidden;background:var(--raised)}
+.bmatch div{padding:9px 12px;font-size:14px;display:flex;justify-content:space-between;gap:8px}
+.bmatch div:first-child{border-bottom:1px solid var(--hair)}
+.bmatch .won{color:var(--chalk);font-weight:700}
+.bmatch .lost{color:var(--muted);font-weight:500}
+.bmatch .tbd{color:var(--muted);font-style:italic}
+.bmatch.live{box-shadow:inset 0 0 0 2px var(--signal)}
 
 /* ----------------------------------------------------------------- sheet */
 .sheet[hidden]{display:none}
-.sheet{position:fixed;inset:0;background:rgba(5,12,11,.72);z-index:50;display:flex;justify-content:center;align-items:flex-start;padding:22px 14px}
+.sheet{position:fixed;inset:0;background:rgba(10,10,10,.5);z-index:50;display:flex;justify-content:center;align-items:flex-start;padding:clamp(12px,4vh,44px) 14px}
 .sheet-inner{
-  background:var(--surface);border:1px solid var(--edge);border-radius:var(--r);
-  width:100%;max-width:900px;max-height:92vh;display:flex;flex-direction:column;
+  background:var(--ground);border:none;border-radius:10px;
+  width:100%;max-width:900px;max-height:90vh;display:flex;flex-direction:column;
+  overflow:hidden;
 }
-.sheet-head{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 14px;border-bottom:1px solid var(--edge)}
-.tabs{display:flex;gap:4px;flex-wrap:wrap}
-.tabs button{background:transparent;border-color:transparent;color:var(--muted);padding:6px 11px;font-size:13.5px}
-.tabs button.on{background:var(--raised);border-color:var(--edge);color:var(--chalk)}
-.sheet-body{padding:16px;overflow-y:auto}
+.sheet-head{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:14px 18px;border-bottom:none}
+.tabs{display:flex;gap:var(--gap);flex-wrap:wrap}
+.tabs button{background:var(--surface);border:none;color:var(--muted);padding:8px 14px;font-size:14px;font-weight:600}
+.tabs button:hover{background:var(--edge);color:var(--chalk)}
+.tabs button.on{background:var(--chalk);color:var(--ground);font-weight:700}
+.sheet-body{padding:4px 18px 22px;overflow-y:auto}
 
-.form{display:flex;flex-direction:column;gap:13px}
-.field{display:flex;flex-direction:column;gap:5px}
-.field > label{font-size:12.5px;color:var(--muted)}
-.field input,.field select,.field textarea{
-  background:var(--ground);color:var(--chalk);border:1px solid var(--edge);
-  border-radius:var(--r);padding:8px 10px;width:100%;
+.form{display:flex;flex-direction:column;gap:14px}
+.field{display:flex;flex-direction:column;gap:6px}
+.field > label{
+  font-size:12px;font-weight:600;letter-spacing:.06em;
+  text-transform:uppercase;color:var(--muted);
 }
-.field textarea{resize:vertical;min-height:62px;line-height:1.4}
-.field input:focus,.field select:focus,.field textarea:focus{outline:2px solid var(--signal);outline-offset:-1px}
-.inline{display:flex;gap:9px;flex-wrap:wrap;align-items:flex-end}
-.inline .field{flex:1;min-width:120px}
-.sub{font-size:12.5px;color:var(--muted);margin:0}
-fieldset{border:1px solid var(--edge);border-radius:var(--r);padding:12px 14px;margin:0}
-legend{font-size:12.5px;color:var(--muted);padding:0 6px}
-.pickers{display:grid;gap:5px;grid-template-columns:repeat(auto-fill,minmax(165px,1fr));max-height:230px;overflow-y:auto}
-.pick{display:flex;align-items:center;gap:7px;font-size:13.5px;padding:4px 6px;border-radius:var(--r);cursor:pointer}
-.pick:hover{background:var(--raised)}
-.hr{height:1px;background:var(--edge);margin:6px 0}
+.field input,.field select,.field textarea{
+  background:var(--raised);color:var(--chalk);border:none;
+  border-bottom:2px solid transparent;
+  border-radius:var(--r-sm);padding:12px 14px;width:100%;font-size:16px;font-weight:500;
+  transition:border-color .11s;
+}
+.field textarea{resize:vertical;min-height:74px;line-height:1.45}
+.field input:focus,.field select:focus,.field textarea:focus{outline:none;border-bottom-color:var(--signal)}
+/* on a white sheet the inputs need the grey, not the white */
+.sheet-body .field input,.sheet-body .field select,.sheet-body .field textarea{background:var(--surface)}
+.card .field input,.card .field select,.card .field textarea{background:var(--raised)}
+.sheet-body fieldset .field input,.sheet-body fieldset .field select,.sheet-body fieldset .field textarea{background:var(--raised)}.inline{display:flex;gap:var(--gap);flex-wrap:wrap;align-items:flex-end}
+.inline .field{flex:1;min-width:150px}
+.sub{font-size:13px;color:var(--muted);margin:0}
+fieldset{border:none;border-radius:var(--r);padding:16px 18px;margin:0;background:var(--surface)}
+legend{font-size:12px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);padding:0 6px}
+.pickers{display:grid;gap:var(--gap);grid-template-columns:repeat(auto-fill,minmax(165px,1fr));max-height:230px;overflow-y:auto}
+.pick{display:flex;align-items:center;gap:8px;font-size:15px;padding:7px 9px;border-radius:var(--r-sm);cursor:pointer}
+.pick:hover{background:var(--surface)}
+.hr{height:1px;background:var(--edge);margin:8px 0}
 .key{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:13px;color:var(--signal);word-break:break-all}
 
 .toast{
-  position:fixed;left:50%;transform:translateX(-50%);bottom:22px;z-index:80;
-  background:var(--raised);border:1px solid var(--signal);border-radius:var(--r);
-  padding:10px 16px;font-size:14px;max-width:90vw;
+  position:fixed;left:50%;transform:translateX(-50%);bottom:26px;z-index:80;
+  background:var(--chalk);color:var(--ground);border:none;border-radius:var(--r);
+  padding:13px 20px;font-size:15px;font-weight:600;max-width:90vw;
 }
 
 @media (max-width:640px){
   /* names matter more than tidy single lines on a phone */
-  .row{align-items:flex-start}
-  .row .nm{white-space:normal;overflow:visible;text-overflow:clip}
+  .row .on-hover{opacity:1}
   main{padding:12px 12px 30px}
-  .bar{padding:10px 12px}
-  .table-no{font-size:29px}
-  .side-name{font-size:19px}
+  .bar{padding:12px 12px}
+  .cup-tabs{padding:0 12px 12px}
+  .table-no{font-size:32px}
+  .side-name{font-size:20px}
   .sheet{padding:0}
-  .sheet-inner{max-height:100vh;height:100vh;border-radius:0;border:none}
+  .sheet-inner{max-height:100vh;height:100vh;border-radius:0}
+  /* the scorepad is the one thing entered standing at a table */
+  .game input{width:58px;padding:11px 4px;font-size:19px}
+  button{padding:11px 16px}
+}
+/* --------------------------------------------------- queue rows, two-line
+   In a narrow column (a phone, or the half-width column on a laptop) four
+   things on one line means clipped names. Name first, then the status chips
+   beneath it aligned to the name, with any action at the far edge. */
+.panel-body{container-type:inline-size}
+@container (max-width:560px){
+  /* name on its own line; the status chips sit under it, aligned to the name,
+     and any action rides the same line at the far edge */
+  .row{align-items:center;flex-wrap:wrap;row-gap:6px;column-gap:8px;padding:14px 16px}
+  .row .nm{flex:1 1 calc(100% - 28px);white-space:normal;overflow:visible;text-overflow:clip}
+  .row .nm + *{margin-left:28px}
+  .row .chip{padding:4px 0}
+  .row .chip + .chip{margin-left:0}
+  .row .on-hover{margin-left:auto}
+  .row .on-hover ~ .on-hover{margin-left:0}
+  .row button.tiny{background:var(--raised);color:var(--chalk);padding:8px 14px}
+  .row button.tiny:hover{background:var(--chalk);color:var(--ground)}
+  .row button.tiny.danger{background:var(--signal-wash);color:var(--signal)}
 }
 @media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
 
-/* --------------------------------------------------- setup: the event tab
-   A cup is a card, not three rows on three tabs. Sections are a heading and
-   a hairline rather than a fieldset, because the legend already said what
-   the border was repeating, and repeating rows carry one header instead of
-   a label per cell. */
-.sec{display:flex;align-items:baseline;gap:10px;margin:20px 0 9px}
-.sec:first-child{margin-top:0}
+/* --------------------------------------------------- setup: the event tab */
+.sec{display:flex;align-items:baseline;gap:12px;margin:30px 0 12px}
+.sec:first-child{margin-top:14px}
 .sec h2{
-  font-size:11.5px;font-weight:620;letter-spacing:.08em;
+  font-size:11px;font-weight:700;letter-spacing:.1em;
   text-transform:uppercase;color:var(--muted);white-space:nowrap;
 }
 .sec .line{flex:1;height:1px;background:var(--edge)}
 
-.card{border:1px solid var(--edge);border-radius:var(--r);background:var(--ground);margin-bottom:9px}
-.card-body{padding:11px 13px;display:flex;flex-direction:column;gap:10px}
-.card-sub{border-top:1px solid var(--edge);padding:10px 13px;display:flex;flex-direction:column;gap:9px}
-.card-sub.muted{background:rgba(20,38,34,.5)}
+.card{border:none;border-radius:var(--r);background:var(--surface);margin-bottom:var(--gap)}
+.card-body{padding:18px;display:flex;flex-direction:column;gap:14px}
+.card-sub{border-top:1px solid var(--edge);padding:16px 18px;display:flex;flex-direction:column;gap:12px}
+.card-sub.muted{background:rgba(10,10,10,.03)}
 
 /* one header row, then rows that are values — no label per cell */
 .rows{display:flex;flex-direction:column}
-.hrow,.drow{display:grid;align-items:center;gap:9px;grid-template-columns:var(--cols);padding:7px 0}
+.hrow,.drow{display:grid;align-items:center;gap:10px;grid-template-columns:var(--cols);padding:11px 0}
 .hrow{
-  font-size:11px;letter-spacing:.05em;text-transform:uppercase;color:var(--dim);
-  padding:0 0 5px;border-bottom:1px solid var(--edge);
+  font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);
+  padding:0 0 8px;border-bottom:none;
 }
-.drow{border-bottom:1px solid rgba(39,69,61,.45)}
+.drow{border-bottom:1px solid var(--hair)}
 .drow:last-child{border-bottom:none}
 .rows input,.rows select{
-  background:var(--ground);color:var(--chalk);border:1px solid var(--edge);
-  border-radius:var(--r);padding:6px 9px;width:100%;
+  background:var(--raised);color:var(--chalk);border:none;
+  border-bottom:2px solid transparent;
+  border-radius:var(--r-sm);padding:10px 12px;width:100%;transition:border-color .11s;
 }
-.rows input:focus,.rows select:focus{outline:2px solid var(--signal);outline-offset:-1px}
-.num{color:var(--dim);text-align:right}
-.acts{display:flex;gap:6px;justify-content:flex-end;flex-wrap:wrap}
+.rows input:focus,.rows select:focus{outline:none;border-bottom-color:var(--signal)}
+.num{color:var(--muted);text-align:right;font-size:13px;font-weight:500}
+.acts{display:flex;gap:var(--gap);justify-content:flex-end;flex-wrap:wrap}
 
 /* the one-line summary a collapsed draw shows */
-.sumline{display:flex;align-items:center;gap:9px;flex-wrap:wrap}
-.sumline .what{font-size:14px;font-weight:600}
-.sumline .cfg{font-size:12.5px;color:var(--muted);flex:1;min-width:0}
+.sumline{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+.sumline .what{font-size:15px;font-weight:700}
+.sumline .cfg{font-size:14px;font-weight:500;color:var(--muted);flex:1;min-width:0}
 
 /* prose that is true but not needed every time */
-details.why{font-size:12.5px;color:var(--muted)}
-details.why > summary{cursor:pointer;color:var(--dim);list-style:none;width:max-content}
+details.why{font-size:13px;color:var(--muted)}
+details.why > summary{cursor:pointer;color:var(--muted);list-style:none;width:max-content}
 details.why > summary::-webkit-details-marker{display:none}
 details.why > summary::before{content:"?";
-  display:inline-grid;place-items:center;width:15px;height:15px;margin-right:6px;
-  border:1px solid var(--edge);border-radius:50%;font-size:10.5px;vertical-align:-2px;
+  display:inline-grid;place-items:center;width:16px;height:16px;margin-right:7px;
+  background:var(--edge);border-radius:50%;font-size:10.5px;font-weight:700;vertical-align:-3px;
 }
 details.why > summary:hover{color:var(--chalk)}
-details.why[open] > summary{margin-bottom:5px}
-details.why p{margin:0 0 5px}
+details.why[open] > summary{margin-bottom:6px}
+details.why p{margin:0 0 6px}
 
 .warn-in{
-  border-left:2px solid var(--signal);background:rgba(214,106,42,.07);
-  padding:8px 11px;font-size:12.5px;border-radius:var(--r);
+  border-left:2px solid var(--signal);background:var(--signal-wash);
+  padding:10px 13px;font-size:13px;border-radius:var(--r-sm);
 }
-.warn-in .inline{margin-top:7px}
+.warn-in .inline{margin-top:8px}
 
 /* a field that just wrote itself away, instead of a Save button per row */
-@keyframes saved{0%{border-color:var(--signal)}100%{border-color:var(--edge)}}
+@keyframes saved{0%{border-bottom-color:var(--signal)}100%{border-bottom-color:transparent}}
 .rows input.just-saved,.field input.just-saved,
 .field textarea.just-saved,.rows select.just-saved{animation:saved .9s ease-out}
 .drow[data-dim="1"]{opacity:.5}
 .tabs .count{
-  display:inline-grid;place-items:center;min-width:16px;height:16px;padding:0 4px;
-  margin-left:5px;border-radius:8px;background:var(--signal);color:#150803;
+  display:inline-grid;place-items:center;min-width:18px;height:18px;padding:0 5px;
+  margin-left:7px;border-radius:9px;background:var(--signal);color:var(--on-signal);
   font-size:11px;font-weight:700;vertical-align:1px;
 }
+.tabs button.on .count{background:var(--on-signal);color:var(--chalk)}
 .sumline a{color:var(--signal);text-decoration:none}
-.sumline a:hover{text-decoration:underline}
+.sumline a:hover{color:var(--chalk)}
 
-/* one pending entry is one block: a pair is two lines that belong together,
-   and without this they read as four unrelated people */
+/* one pending entry is one block */
 .entry{padding:2px 0}
 .entry + .entry{border-top:1px solid var(--edge)}
 .entry .drow{border-bottom:none}
 
-/* On a phone a fixed column grid squeezes the one cell that matters — the
-   name — down to nothing, so below this width the rows stop being a table
-   and become what they are: a few controls that wrap. The header goes with
-   it, since there is nothing left for it to head. */
 @media (max-width:640px){
   .hrow{display:none}
-  .drow{display:flex;flex-wrap:wrap;align-items:center;gap:7px;padding:9px 0}
+  .drow{display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:11px 0}
   .drow > input,.drow > select{flex:1 1 130px;min-width:0}
   .drow > .num{flex:0 0 auto;min-width:18px;text-align:left}
   .drow > span:not(.num):not(.acts){flex:1 1 100%;min-width:0}
   .drow > .acts{flex:1 1 100%;justify-content:flex-start}
-  .sec{margin:16px 0 8px}
+  .sec{margin:20px 0 10px}
+}
+
+/* GUI revamp v1.1 — additions only.
+   Append to the end of tt/static/style.css after v1 is in place. Nothing here
+   overrides a v1 rule; every selector below was either unstyled in v1 or is a
+   light-theme gap that only showed up once the remaining screens were built:
+   the Door / Event / Links / More sheet tabs, manual entry, the inline editor
+   and the event wizard. */
+
+/* ---------------------------------------------------- inputs on grey cards
+   v1 put form inputs on white. Inside .card and .card-sub the ground is
+   already grey, so a white input reads correctly — but .card-sub.muted is
+   darker again and needs the white back explicitly. */
+.card-sub.muted .field input,.card-sub.muted .field select,
+.card-sub.muted .field textarea,
+.card-sub.muted .rows input,.card-sub.muted .rows select{background:var(--raised)}
+
+/* ------------------------------------------------------------------ picks
+   Checkboxes were inheriting the browser's blue. */
+.pick input[type=checkbox],.pick input[type=radio]{
+  accent-color:var(--signal);width:17px;height:17px;flex:none;margin:0;
+}
+.pick{font-weight:500}
+.pick:has(input:checked){background:var(--raised);font-weight:600}
+
+/* ------------------------------------------------------------------ links
+   The share URLs are the one monospace thing in the app. On white they need
+   a ground of their own or they read as body copy. */
+.key{
+  background:var(--surface);border-radius:var(--r-xs);padding:6px 9px;
+  display:inline-block;max-width:100%;min-width:0;
+}
+/* only where the ground is actually grey — .rows lives on .sheet-body (white),
+   so the chip there keeps --surface or it disappears */
+.card .key,.card-sub .key{background:var(--raised)}
+/* .key is a direct span child of .drow (app.js:1401) — the grid cell is what
+   has to be allowed to shrink, not a wrapper */
+.drow > .key{overflow-x:auto;white-space:nowrap;-webkit-overflow-scrolling:touch}
+
+/* ------------------------------------------------------------- door tab
+   A pending pair is two .drow lines in one .entry. v1 gave .entry a top
+   border; these stop the inner rows from adding a second one. */
+.entry .drow{border-bottom:none;padding:9px 0}
+.entry .drow:first-child{padding-top:11px}
+.entry .drow:last-child{padding-bottom:11px}
+/* the partner line sits under the player, quieter but not grey-on-grey */
+.entry .drow + .drow > span:first-child{color:#4a4a46;font-weight:500}
+/* a note the entrant typed — its own full-width .drow (app.js:1304) */
+.entry .sub{font-size:14px;line-height:1.45;color:var(--muted)}
+
+/* ------------------------------------------------------ destructive tinies
+   .danger exists in the original CSS but had no tiny variant. Red text on a
+   red wash rather than a red fill — a fill competes with the live table.
+   (Undo on a result row is .ghost.tiny, app.js:239, and stays quiet.) */
+button.danger.tiny{background:var(--signal-wash);color:var(--signal)}
+button.danger.tiny:hover{background:var(--signal);color:var(--on-signal)}
+
+/* ---------------------------------------------------------------- wizard
+   No rules needed: renderWizard (app.js:648) writes its steps into the
+   sheet's own #tabs nav as <button class="on" data-wstep="…">1. Event</button>,
+   so they inherit .tabs button / .tabs button.on from v1 — the wizard's
+   numbered steps and the sheet's Door/Event/Links/More tabs are deliberately
+   the same control in the same place. */
+
+/* ------------------------------------------------------------ details.why
+   v1 styled the marker; the summary text itself was still body weight. */
+details.why > summary{font-weight:600}
+details.why p{line-height:1.5}
+
+/* --------------------------------------------------------- manual entry
+   renderManual (app.js:381) emits a plain .panel-body — no .flush — holding
+   .field blocks and a .games row, so v1's .panel-body padding already
+   applies. Only the score row needed air above it. */
+#manual-entry .games{margin-top:6px}
+
+/* --------------------------------------------------------- inline editor
+   renderEditor (app.js:332) emits .sheet-inner.narrow, which v1 already
+   styles and caps at 460px. Nothing to add but the inner padding, since the
+   editor has no .sheet-body wrapper of its own. */
+#editor .games,#editor .versus,#editor .pad-row{padding-left:18px;padding-right:18px}
+
+/* the active tab's count badge inverts with its tab */
+.tabs button.on .count{background:var(--on-signal);color:var(--chalk)}
+
+/* ---------------------------------------------------------------- mobile
+   The setup sheet is where a phone hurts most: four tabs, then grids. v1
+   already collapses .drow to wrapping flex below 640px. These finish it. */
+@media (max-width:640px){
+  .sheet-head{flex-wrap:wrap;gap:8px}
+  .sheet-head .tabs{order:2;width:100%}
+  .sheet-head #sheet-close{margin-left:auto}
+  /* v1 already makes .sheet-inner full-screen here, .narrow included */
+  .drow > .key{max-width:100%}
+}
+
+/* ------------------------------------------------- landing: mobile polish
+   Belongs to site.html but is CSS, so it lives here. */
+.site input,.site select,.site textarea{font-size:17px}  /* ≥16px: no iOS zoom on focus */
+.site a,.site button,.site input,.site select{-webkit-tap-highlight-color:transparent}
+#join{scroll-margin-top:16px}
+.hero h1,.cup .name,.join-note h2{text-wrap:pretty}
+/* the poster panel should not outgrow the text beside it on a short laptop */
+@media (min-width:721px) and (max-height:760px){
+  .hero{min-height:0}
+  .hero-panel{gap:28px}
 }

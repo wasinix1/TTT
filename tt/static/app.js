@@ -267,7 +267,7 @@ function renderBoard() {
     const rows = b.up.map(r => `
       <div class="row hoverable ${r.blocked ? 'blocked' : ''} ${r.on_deck ? 'ondeck' : ''}">
         <span class="pos">${r.position}</span>
-        <span class="nm">${esc(r.a)}${r.b ? ` <span style="color:var(--dim)">v</span> ${esc(r.b)}` : ''}</span>
+        <span class="nm">${esc(r.a)}${r.b ? ` <span style="color:var(--muted)">v</span> ${esc(r.b)}` : ''}</span>
         ${r.kind === 'pairing' ? `<span class="chip next" title="Worked out by the same rule that will seat them">next</span>` : ''}
         ${r.deferred ? `<span class="chip">put back</span>` : ''}
         ${whenLabel(r) ? `<span class="chip when">${esc(whenLabel(r))}</span>` : ''}
@@ -486,7 +486,7 @@ function renderRecent() {
       const sc = m.games.map(g => `${g[0]}-${g[1]}`).join(', ');
       const w = m.winner === 'a' ? m.a : m.b, l = m.winner === 'a' ? m.b : m.a;
       return `<div class="row hoverable">
-        <span class="nm">${esc(w)} <span style="color:var(--dim)">beat</span> ${esc(l)}</span>
+        <span class="nm">${esc(w)} <span style="color:var(--muted)">beat</span> ${esc(l)}</span>
         <span class="meta">${esc(sc)}</span>
         ${canScore() ? `<button class="ghost tiny on-hover" data-act="edit" data-m="${m.id}">Edit result</button>` : ''}
       </div>`;

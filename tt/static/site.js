@@ -58,7 +58,7 @@ function render() {
   if (P.starts_at) facts.push(['When', fmtDate(P.starts_at)]);
   if (P.venue) facts.push(['Where', P.venue]);
   $('facts').innerHTML = facts.map(([k, v]) =>
-    `<div class="fact"><div class="k">${esc(k)}</div><div class="v">${esc(v)}</div></div>`).join('');
+    `<div class="fact${k === 'Where' ? ' venue' : ''}"><div class="k">${esc(k)}</div><div class="v">${esc(v)}</div></div>`).join('');
 
   const done = P.phase === 'done';
   $('cups-head').textContent = done ? 'How it finished' : "What's being played";
