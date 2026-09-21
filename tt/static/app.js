@@ -268,6 +268,7 @@ function renderBoard() {
       <div class="row hoverable ${r.blocked ? 'blocked' : ''} ${r.on_deck ? 'ondeck' : ''}">
         <span class="pos">${r.position}</span>
         <span class="nm">${esc(r.a)}${r.b ? ` <span style="color:var(--dim)">v</span> ${esc(r.b)}` : ''}</span>
+        ${r.kind === 'pairing' ? `<span class="chip next" title="Worked out by the same rule that will seat them">next</span>` : ''}
         ${r.deferred ? `<span class="chip">put back</span>` : ''}
         ${whenLabel(r) ? `<span class="chip when">${esc(whenLabel(r))}</span>` : ''}
         ${r.kind === 'fixture' && canScore()
@@ -275,7 +276,7 @@ function renderBoard() {
         ${r.kind === 'fixture' && isAdmin()
           ? `<button class="ghost tiny on-hover" data-act="jump" data-m="${r.id}">Seat now</button>` : ''}
         ${r.kind === 'waiting' && canScore()
-          ? `<button class="ghost tiny on-hover" data-act="leave" data-e="${r.id}">Sit out</button>` : ''}
+          ? `<button class="ghost tiny on-hover" data-act="rest" data-e="${r.id}">Sit out</button>` : ''}
       </div>`).join('');
     const more = b.total > b.up.length
       ? `<div class="blank" style="padding:10px 15px">and ${b.total - b.up.length} more after that</div>` : '';
@@ -355,15 +356,9 @@ function renderManual() {
   if (!canScore()) { el.innerHTML = ''; return; }
   const entrants = S.entrants.slice().sort((a, b) => a.name.localeCompare(b.name));
   if (entrants.length < 2) { el.innerHTML = ''; return; }
-  if (!manualOpen) {
-    el.innerHTML = `<div class="panel"><div class="panel-body">
-      <button class="ghost tiny" data-act="manual-open">Add a result by hand</button>
-      <p class="sub" style="margin-top:6px">For a game played off the queue — a walk-up
-        match, or one that happened before anyone was keeping track. Anything the console
-        arranged is scored on the match itself.</p>
-    </div></div>`;
-    return;
-  }
+  // closed, it lives as one button in the Results header (renderRecent) —
+  // it is for the game nobody arranged, which should not need its own panel
+  if (!manualOpen) { el.innerHTML = ''; return; }
   const runningFormats = S.formats.filter(f => f.status === 'running');
   const need = Math.floor(+manualDraft.bo / 2) + 1;
   let wa = 0, wb = 0;
@@ -480,10 +475,14 @@ function renderBrackets() {
 
 function renderRecent() {
   const r = S.recent.filter(m => inView(m.cup_id));
-  if (!r.length) { $('recent').innerHTML = ''; return; }
+  const canAdd = canScore() && !manualOpen && S.entrants.length >= 2;
+  if (!r.length && !canAdd) { $('recent').innerHTML = ''; return; }
   $('recent').innerHTML = `<div class="panel">
-    <div class="panel-head"><h2>Results</h2><span class="note">${r.length}</span></div>
-    <div class="panel-body flush">${r.map(m => {
+    <div class="panel-head"><h2>Results</h2>
+      <span class="note">${r.length || ''}</span>
+      ${canAdd ? `<button class="ghost tiny" data-act="manual-open"
+        title="For a game nobody arranged — a walk-up match, or one played before anyone was keeping track">Add a result</button>` : ''}</div>
+    <div class="panel-body flush">${r.length ? '' : '<div class="blank" style="padding:12px 15px">Nothing played yet.</div>'}${r.map(m => {
       const sc = m.games.map(g => `${g[0]}-${g[1]}`).join(', ');
       const w = m.winner === 'a' ? m.a : m.b, l = m.winner === 'a' ? m.b : m.a;
       return `<div class="row hoverable">
@@ -958,7 +957,6 @@ function formatBlock(f, cup) {
   const pfx = 'fe' + f.id + '_';
   const running = f.status === 'running';
   const canCut = f.kind === 'swiss' && running && f.phase !== 'ko';
-  const joinable = canCut ? S.entrants.filter(e => !f.entrant_ids.includes(e.id)) : [];
   const isIntake = cup && cup.format_id === f.id;
   const many = cup && fmtsOfCup(cup.id).length > 1;
   return `<div class="sumline">
@@ -976,10 +974,6 @@ function formatBlock(f, cup) {
     ${open ? drawSettings(f, pfx) : ''}
     <div class="acts">
       ${!running ? `<button class="primary tiny" data-act="start-format" data-i="${f.id}">Start</button>` : ''}
-      ${canCut && joinable.length ? `<select data-fadd="${f.id}" style="max-width:170px">
-        <option value="">+ add a team mid-draw…</option>
-        ${joinable.map(e => `<option value="${e.id}">${esc(e.name)}</option>`).join('')}
-      </select>` : ''}
       ${canCut ? `<button class="ghost tiny" data-act="cut-ko" data-i="${f.id}">Cut to knockout now</button>` : ''}
       ${f.status !== 'setup' ? `<button class="ghost tiny" data-act="reset-format" data-i="${f.id}">Reset</button>` : ''}
       <button class="ghost tiny" data-act="rm-format" data-i="${f.id}">Remove</button>
@@ -990,7 +984,6 @@ function formatBlock(f, cup) {
    almost every time, and a control you never change is still a control you
    have to read past. */
 function drawSettings(f, pfx) {
-  const ents = f.status === 'setup' ? S.entrants : [];
   return `<div class="card-sub muted">
     <div class="inline">
       <div class="field" style="max-width:190px"><label for="${pfx}name">Name</label>
@@ -1003,12 +996,7 @@ function drawSettings(f, pfx) {
           `<option value="${n}" ${+(form[pfx + 'f_pts'] ?? 11) === n ? 'selected' : ''}>${n}</option>`).join('')}</select></div>
     </div>
     ${(fieldsFor(pfx)[f.kind] || (() => ''))()}
-    ${ents.length ? `<div class="hr"></div>
-      <label style="font-size:12.5px;color:var(--muted)">Who is in it</label>
-      <div class="pickers">${ents.map(e => `
-        <label class="pick"><input type="checkbox" data-fent="${f.id}|${e.id}"
-          ${(form['fe_' + f.id] || {})[e.id] ? 'checked' : ''}> ${esc(e.name)}
-          <span style="color:var(--dim)">${e.strength}</span></label>`).join('')}</div>` : ''}
+    ${f.cup_id ? '' : `<p class="sub">Not in a cup, so nobody is sent here automatically.</p>`}
     <div class="inline">
       <button class="primary tiny" data-act="save-format" data-i="${f.id}">Save these settings</button>
     </div>
@@ -1309,25 +1297,70 @@ function regRow(r) {
 function tabDoor() {
   const regs = S.registrations || [];
   const pending = regs.filter(r => r.status === 'pending');
-  const inCups = S.cups.length ? S.cups : [{ id: '', name: 'This event' }];
-  const walkOpen = !!form.walk_open || !pending.length;
+  const walkOpen = !!form.walk_open || !S.entrants.length && !pending.length;
+  const cups = S.cups.length ? S.cups : [{ id: '', name: 'This event' }];
+  const known = new Set(cups.map(c => c.id));
+  // somebody whose cup was removed under them still has to be findable
+  const stray = S.entrants.filter(e => !known.has(e.cup_id || ''));
   return `<div class="form">
-    ${sec('At the door', pending.length
-      ? `<button class="${walkOpen ? 'ghost' : ''} tiny" data-act="walk-toggle">${
-          walkOpen ? 'Hide' : 'Somebody not on the list'}</button>` : '')}
+    ${sec('At the door', `<button class="${walkOpen ? 'ghost' : ''} tiny" data-act="walk-toggle">${
+      walkOpen ? 'Hide' : 'Add somebody'}</button>`)}
     ${walkOpen ? walkInForm() : ''}
+    ${!S.entrants.length && !pending.length
+      ? `<p class="blank">Nobody yet${regs.length ? '' : ` — entries arrive from ${location.origin}/join`}.</p>` : ''}
+    ${cups.map(c => cupPeople(c, pending, S.entrants.filter(e => (e.cup_id || '') === c.id))).join('')}
+    ${stray.length ? cupPeople({ id: '__none', name: 'Not in a cup' }, [], stray) : ''}
+  </div>`;
+}
 
-    ${pending.length ? inCups.map(c => {
-      const rows = pending.filter(r => r.cup_id === c.id);
-      if (!rows.length) return '';
-      return `${sec(c.name + ' · ' + rows.length + ' waiting',
-        `<button class="ghost tiny" data-act="admit-all" data-c="${c.id}">Confirm all ${rows.length}</button>`)}
-        <div class="rows">${rows.map(regRow).join('')}</div>`;
-    }).join('') : `<p class="blank">Nobody waiting${
-      regs.length ? '' : ` — entries arrive from ${location.origin}/join`}.</p>`}
+/* Everything about who is in one cup, in one place, in the order it happens:
+   entries waiting to be confirmed, then the pool they join. The pool is the
+   cup's only list — its draw is fed from it — so what this shows is also
+   what the draw will play, with nothing to put anywhere by hand. */
+const STATUS = {
+  playing: ['playing', 'hot', 'On a table now'],
+  waiting: ['waiting', 'state', 'In line for a table'],
+  resting: ['resting', 'dim', 'Sat out — nobody will pair them until they are back'],
+  entered: ['in the draw', 'state', 'In the draw, which has not started'],
+  drawn: ['in the draw', 'state', 'In the draw, between matches'],
+  outside: ['no draw', 'warn', 'In this cup, but there is no draw taking them: none set up yet, or it started without them'],
+};
 
-    ${rosterSection()}
-    ${queueSection()}
+function cupPeople(c, pending, ents) {
+  const rows = pending.filter(r => r.cup_id === c.id);
+  const count = k => ents.filter(e => e.status === k).length;
+  const bits = [
+    ents.length ? ents.length + (ents.length === 1 ? ' person' : ' people') : '',
+    count('playing') ? count('playing') + ' playing' : '',
+    count('waiting') ? count('waiting') + ' waiting' : '',
+    count('resting') ? count('resting') + ' resting' : '',
+    rows.length ? rows.length + ' to confirm' : '',
+  ].filter(Boolean).join(' · ');
+  return `${sec(c.name + (bits ? ' · ' + bits : ''), rows.length > 1
+      ? `<button class="ghost tiny" data-act="admit-all" data-c="${c.id}">Confirm all ${rows.length}</button>` : '')}
+    ${rows.length ? `<div class="rows">${rows.map(regRow).join('')}</div>` : ''}
+    ${ents.length ? `<div class="rows">${ents.map(e => personRow(e)).join('')}</div>`
+      : (rows.length ? '' : '<p class="blank">Nobody in this cup yet.</p>')}`;
+}
+
+function personRow(e) {
+  const solo = e.player_ids.length === 1
+    ? S.players.find(p => p.id === e.player_ids[0]) : null;
+  const [label, cls, tip] = STATUS[e.status] || [e.status, '', ''];
+  const many = S.cups.length > 1;
+  const cols = many ? '1fr 60px 92px 130px auto' : '1fr 60px 92px auto';
+  return `<div class="drow" style="--cols:${cols}"${e.resting ? ' data-dim="1"' : ''}>
+    ${solo ? auto('pn-' + solo.id, 'update_player:' + solo.id, 'name', solo.name)
+           : `<span>${esc(e.name)}</span>`}
+    ${solo ? auto('ps-' + solo.id, 'update_player:' + solo.id, 'strength', solo.strength,
+                  'inputmode="decimal"')
+           : `<span class="num">${e.strength}</span>`}
+    <span class="chip ${cls}" title="${esc(tip)}">${esc(label)}</span>
+    ${many ? pick('ec-' + e.id, 'update_entrant:' + e.id, 'cup_id', e.cup_id || '',
+        S.cups.map(c => [c.id, c.name]), 'title="Move to another cup"') : ''}
+    <span class="acts">${e.resting
+      ? `<button class="tiny" data-act="unrest" data-e="${e.id}">Back in</button>`
+      : `<button class="ghost tiny" data-act="rest" data-e="${e.id}">Sit out</button>`}</span>
   </div>`;
 }
 
@@ -1354,70 +1387,6 @@ function walkInForm() {
       `<option value="${esc(p.name)}">`).join('')}</datalist>
     ${knownFor(form.w_name) ? `<p class="sub">${esc(form.w_name)} is in the directory — last
       played at ${knownFor(form.w_name).strength}.</p>` : ''}`;
-}
-
-/* Tonight's roster. Names and strengths autosave, so the Save button that
-   used to sit on all forty rows is gone. */
-function rosterSection() {
-  const addOpen = !!form.roster_add;
-  return `${sec('Tonight', `<button class="ghost tiny" data-act="roster-add">${
-      addOpen ? 'Hide' : 'Add by hand'}</button>`)}
-    ${addOpen ? `<div class="card"><div class="card-body">
-      <div class="inline">
-        <div class="field"><label for="p-name">Player</label>
-          <input id="p-name" value="${esc(form.pname || '')}" data-f="pname" placeholder="Jana"></div>
-        <div class="field" style="max-width:105px"><label for="p-str">Strength</label>
-          <input id="p-str" value="${esc(form.pstr ?? 5)}" data-f="pstr" inputmode="decimal"></div>
-        <button class="primary" data-act="add-player">Add</button>
-      </div>
-      <div class="hr"></div>
-      <div class="inline">
-        <div class="field"><label for="t-n1">Pair — one</label>
-          <input id="t-n1" value="${esc(form.tn1 || '')}" data-f="tn1"></div>
-        <div class="field" style="max-width:85px"><label for="t-s1">Strength</label>
-          <input id="t-s1" value="${esc(form.ts1 ?? 5)}" data-f="ts1" inputmode="decimal"></div>
-        <div class="field"><label for="t-n2">and two</label>
-          <input id="t-n2" value="${esc(form.tn2 || '')}" data-f="tn2"></div>
-        <div class="field" style="max-width:85px"><label for="t-s2">Strength</label>
-          <input id="t-s2" value="${esc(form.ts2 ?? 5)}" data-f="ts2" inputmode="decimal"></div>
-      </div>
-      <div class="inline">
-        <div class="field"><label for="t-name">Team name (optional)</label>
-          <input id="t-name" value="${esc(form.tname || '')}" data-f="tname"></div>
-        <button class="primary" data-act="add-team">Add pair</button>
-      </div>
-      ${why('A single player can enter singles, or go in the scramble pool where partners ' +
-            'get drawn each round.')}
-    </div></div>` : ''}
-    ${S.players.length ? `<div class="rows">
-      <div class="hrow" style="--cols:1fr 76px auto"><span>Name</span><span>Strength</span><span></span></div>
-      ${S.players.map(p => `<div class="drow" style="--cols:1fr 76px auto"${
-        p.active ? '' : ' data-dim="1"'}>
-        ${auto('pn-' + p.id, 'update_player:' + p.id, 'name', p.name)}
-        ${auto('ps-' + p.id, 'update_player:' + p.id, 'strength', p.strength, 'inputmode="decimal"')}
-        <span class="acts"><button class="ghost tiny" data-act="toggle-player" data-p="${p.id}">${
-          p.active ? 'Sit out' : 'Bring back'}</button></span>
-      </div>`).join('')}
-    </div>` : '<p class="blank">Nobody yet.</p>'}
-    ${why('Strength is your estimate, not a rating. Nudge it after the first round; that ' +
-          'beats any rating system at this sample size. Edits save as you leave the box.')}`;
-}
-
-function queueSection() {
-  const qf = S.formats.filter(f => f.uses_queue && f.status === 'running');
-  if (!qf.length) return '';
-  return `${sec('Queue')}
-    ${qf.map(f => `<div class="card"><div class="card-body">
-      <div class="inline" style="align-items:center">
-        <span style="flex:1;font-weight:600">${esc(f.name || KIND_NAME_ALL[f.kind])}</span>
-        <button class="ghost tiny" data-act="join-all" data-i="${f.id}">Put everyone in</button>
-      </div>
-      <div class="pickers">${S.entrants.map(e => `
-        <label class="pick">${esc(e.name)}<span style="flex:1"></span>
-          ${e.queued ? `<button class="ghost tiny" data-act="leave" data-e="${e.id}">Out</button>`
-                     : `<button class="tiny" data-act="join" data-e="${e.id}" data-i="${f.id}">In</button>`}
-        </label>`).join('')}</div>
-    </div></div>`).join('')}`;
 }
 
 /* ------------------------------------------------------------- Links tab */
@@ -1678,14 +1647,6 @@ document.addEventListener('change', e => {
     renderSheet();
     return;
   }
-  const fent = e.target.dataset.fent;
-  if (fent) {
-    const [fid, eid] = fent.split('|');
-    form['fe_' + fid] = form['fe_' + fid] || {};
-    form['fe_' + fid][eid] = e.target.checked;
-  }
-  const fadd = e.target.dataset.fadd;
-  if (fadd && e.target.value) api('add_entrant', { id: fadd, entrant_id: e.target.value });
 });
 
 document.addEventListener('click', async e => {
@@ -1841,7 +1802,9 @@ document.addEventListener('click', async e => {
   if (a === 'manual-close') { manualOpen = false; renderManual(); return; }
   if (a === 'put-back') {
     const ok = await api('put_back', { match_id: b.dataset.m });
-    if (ok) toast('Table freed — that match goes to the back of the queue');
+    if (ok) toast(ok.reseated
+      ? 'Nobody else could take the table, so the same pair went straight back on'
+      : 'Table freed — that pair goes to the back of the line');
     return;
   }
   if (a === 'jump') {
@@ -1851,13 +1814,8 @@ document.addEventListener('click', async e => {
     if (!free) return toast('No table free that this match can use');
     return void api('assign', { match_id: b.dataset.m, table: free.number });
   }
-  if (a === 'join') return void api('join_queue', { entrant_id: b.dataset.e, format_id: b.dataset.i });
-  if (a === 'leave') return void api('leave_queue', { entrant_id: b.dataset.e });
-  if (a === 'join-all') {
-    for (const en of S.entrants) if (!en.queued)
-      await api('join_queue', { entrant_id: en.id, format_id: b.dataset.i });
-    return;
-  }
+  if (a === 'rest') return void api('set_resting', { entrant_id: b.dataset.e, resting: true });
+  if (a === 'unrest') return void api('set_resting', { entrant_id: b.dataset.e, resting: false });
   if (a === 'pause') {
     const t = S.tables.find(x => x.number == b.dataset.t);
     return void api('set_table', { number: +b.dataset.t, paused: !t.paused });
@@ -1895,36 +1853,15 @@ document.addEventListener('click', async e => {
       const f = S.formats.find(x => x.id === b.dataset.i);
       seedFormat('fe' + f.id + '_', f.kind, f.config);
       form['fe' + f.id + '_name'] = f.name;
-      form['fe_' + f.id] = Object.fromEntries((f.entrant_ids || []).map(i => [i, true]));
     }
     return renderSheet();
   }
   if (a === 'walk-toggle') { form.walk_open = !form.walk_open; return renderSheet(); }
-  if (a === 'roster-add') { form.roster_add = !form.roster_add; return renderSheet(); }
   if (a === 'rm-cup') {
     if (!confirm('Remove this cup? Its tables and formats stay, just ungrouped.')) return;
     return void api('remove_cup', { id: b.dataset.c });
   }
 
-  if (a === 'add-player') {
-    if (!form.pname) return toast('Give the player a name');
-    await api('add_player', { name: form.pname, strength: num(form.pstr ?? 5) });
-    form.pname = ''; renderSheet(); $('p-name') && $('p-name').focus();
-    return;
-  }
-  if (a === 'add-team') {
-    if (!form.tn1 || !form.tn2) return toast('Both players need a name');
-    await api('add_team', {
-      name: form.tname || '',
-      members: [[form.tn1, num(form.ts1 ?? 5)], [form.tn2, num(form.ts2 ?? 5)]],
-    });
-    form.tn1 = form.tn2 = form.tname = ''; renderSheet();
-    return;
-  }
-  if (a === 'toggle-player') {
-    const p = S.players.find(x => x.id === b.dataset.p);
-    return void api('update_player', { id: p.id, active: !p.active });
-  }
 
   /* Creating a draw inside a cup writes both edges at once: the format's
      cup_id, and — if the cup has nowhere for the door to send people yet —
@@ -1938,7 +1875,7 @@ document.addEventListener('click', async e => {
     const cfg = formatConfig('nf' + cid + '_', kind);
     cfg.cup_id = cid;
     const out = await api('add_format', {
-      kind, name: cup.name || '', config: cfg, entrant_ids: [] });
+      kind, name: cup.name || '', config: cfg });
     if (!out) return;
     if (!cup.format_id) await api('update_cup', { id: cid, format_id: out.format_id });
     form['nk_' + cid] = '';
@@ -1953,13 +1890,6 @@ document.addEventListener('click', async e => {
     const cfg = formatConfig(pfx, f.kind);
     cfg.cup_id = f.cup_id || '';
     const data = { id: fid, name: form[pfx + 'name'] ?? f.name, config: cfg };
-    if (f.status === 'setup') {
-      const ents = Object.entries(form['fe_' + fid] || {})
-        .filter(([, v]) => v).map(([k]) => k);
-      if (f.kind !== 'open_play' && ents.length && ents.length < 2)
-        return toast('A draw needs at least two entrants, or none yet');
-      data.entrant_ids = ents;
-    }
     await api('update_format', data);
     form['fx_' + fid] = false;
     renderSheet();

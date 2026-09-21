@@ -29,6 +29,66 @@ up.
 MAX_SEATS_PER_TICK = 96
 
 
+def sync_pools(store):
+    """A cup has one list of people, and its draws read it.
+
+    Everything that admits somebody — the door, a registration, a walk-in,
+    the directory — only says which cup they are in. Getting them into the
+    draw is done here, from that one fact, on every tick, so it cannot be
+    forgotten by one of the paths in. That is the failure this replaces:
+    each path used to reach into the format itself, and the ones that did
+    not left people sitting on a roster the draw never saw.
+
+    Before a draw starts its members are exactly the pool. Once it is under
+    way they can only grow, and only if the format can still take somebody.
+    A draw with no cup keeps whatever it was given."""
+    for fid in list(store.format_order):
+        f = store.formats.get(fid)
+        cup = store.cup_of_format(f) if f else None
+        if not f or cup is None:
+            continue
+        pool = store.cup_pool(cup)
+        if f.status == "setup":
+            want = pool
+        elif f.takes_new_entrants():
+            want = f.entrant_ids + [e for e in pool if e not in f.entrant_ids]
+        else:
+            continue
+        if want != f.entrant_ids:
+            f.entrant_ids = want
+            store.append("format_update", {"id": f.id, "entrant_ids": want})
+
+
+def sync_queues(store):
+    """Who is waiting is a fact about the pool, not a list somebody keeps.
+
+    Everyone in a running draw that pairs on demand is waiting unless they
+    are on a table or sitting out. Finishing a match, being put back, and
+    being admitted mid-evening all therefore end the same way, with nobody
+    to remember to queue them. Adds only: the events that take somebody out
+    (a match seating them, resting, leaving the cup) already do it."""
+    busy = store.busy_players()
+    queued = {q.entrant_id for q in store.queue}
+    for fid in list(store.format_order):
+        f = store.formats.get(fid)
+        if not f or f.status != "running" or not f.uses_queue():
+            continue
+        cands = f.queue_candidates(store)
+        if store.cup_of_format(f) is None:
+            # a draw outside any cup has no pool to read, so it is whoever
+            # was put in its queue by hand — and they go back where they came
+            # from, as they always did
+            cands += [e for e, fmt in store.came_from.items()
+                      if fmt == f.id and e not in cands and e in store.entrants]
+        for eid in cands:
+            if eid in queued or eid in store.opted_out:
+                continue
+            if not store.entrant_available(eid, busy):
+                continue
+            store.append("queue_join", {"entrant_id": eid, "format_id": f.id})
+            queued.add(eid)
+
+
 def _offers(store, busy, force):
     """What each cup wants to put on a table. Nothing is committed here."""
     out = {}
@@ -81,10 +141,12 @@ def _rank(store, running):
 def tick(store):
     """Advance phases, then fill every free table. Safe to call on any request."""
     with store.lock:
+        sync_pools(store)
         for fid in list(store.format_order):
             f = store.formats.get(fid)
             if f and f.status == "running":
                 f.tick(store)
+        sync_queues(store)
 
         for _ in range(MAX_SEATS_PER_TICK):       # bounded, one seat per pass
             free = [n for n, t in sorted(store.tables.items())

@@ -155,6 +155,8 @@ button:disabled{opacity:.4;cursor:default}
 .chip.where{color:var(--muted)}
 /* a state, not an action — orange is reserved for things you can press */
 .chip.state{color:var(--chalk);background:var(--raised)}
+.chip.dim{color:var(--dim)}
+.chip.warn{color:var(--signal);border-color:var(--signal-dim)}
 .chip.when{color:var(--chalk)}
 /* whoever should be putting their shoes on */
 .row.ondeck{background:rgba(214,106,42,.09)}

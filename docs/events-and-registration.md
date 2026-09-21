@@ -42,8 +42,18 @@ just a confirmation with no registration behind it.
 **The cup is the unit of entry.**
 
 A registration names exactly one cup. Confirming it puts the entrant in that
-cup's roster and in the format that cup nominates. The roster splitting by
-cup arrives as a by-product rather than as its own project.
+cup's **pool**: the one list a cup has. Every way in — a registration, a
+walk-in, the directory — says only which cup somebody is in (`entrant.cup_id`),
+and asking "which cup?" is mandatory when there is more than one.
+
+The draw is fed from the pool, not the other way round. Each tick
+(`dispatch.sync_pools`) makes a cup's draw read its pool: before it starts the
+draw's members are exactly the pool; once it is under way they can only grow,
+and only if the format can still take somebody. Nothing reaches into a format
+by hand, so no path in can forget to. Who is *waiting* is likewise worked out
+(`dispatch.sync_queues`): everybody in a running pairing-on-demand draw who is
+not on a table and not resting. Sitting somebody out (`rest_set`) is the only
+thing an organiser says about the queue.
 
 **The club's directory outlives the event.**
 
@@ -116,9 +126,11 @@ current span of the log.
 | `person_*` | admin | The club directory. Venue-level: `event_new` leaves it alone. |
 | `registration_update` | admin | Revise a claimed strength or name; drop an entry. |
 
-Confirmation is not a new event. It appends `player_add`, `entrant_add`, a
-`format_update` adding the entrant, and a `registration_update` recording the
-resulting `entrant_id`. Existing machinery, composed.
+Confirmation is not a new event. It appends `player_add`, `entrant_add`
+(carrying `cup_id`) and a `registration_update` recording the resulting
+`entrant_id`. The draw picks the entrant up from the pool on the next tick
+(a logged `format_update` when its member list changes). `rest_set` sits an
+entrant out or brings them back.
 
 `event_new` replaces both `players_reset` and `reset_event`. The log is never
 truncated, so rewind still crosses the boundary, and because each event is a
@@ -200,8 +212,13 @@ Later, deliberately not now: waitlists and caps, entry codes, pairing up the
 - Registration is auto-accepted; there is no approval step, because
   confirmation at the door already is one.
 - Confirming into a format that has already started works only where the
-  format allows it (Swiss); otherwise the entrant lands in the roster and the
-  Entries list says why it stopped there.
+  format allows it (Swiss, open play); otherwise the entrant stays in the cup's
+  pool with status "no draw" and the door says why.
+- A second draw in the same cup (a consolation bracket, say) reads the same
+  pool. There is no per-draw entrant picker any more; that was a second source
+  of truth.
+- Draws outside any cup keep an explicit `entrant_ids` and are queued only
+  from it (and from whichever queue somebody came out of).
 - A second registration from the same phone is allowed, not blocked — the
   notes box is the correction channel, and you resolve it at the door.
 - `event_new` keeps tables and cup definitions, drops format instances.

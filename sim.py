@@ -14,13 +14,15 @@ def fresh():
     return App(d), d
 
 
-def add_player(app, name, s):
-    return app.act("admin", "add_player", {"name": name, "strength": s, "solo": True})["player_id"]
+def add_player(app, name, s, cup=None):
+    return app.act("admin", "add_player", {"name": name, "strength": s, "solo": True,
+                                           "cup_id": cup})["player_id"]
 
 
-def add_pair(app, n1, s1, n2, s2, label=None):
+def add_pair(app, n1, s1, n2, s2, label=None, cup=None):
     return app.act("admin", "add_team",
-                   {"name": label, "members": [[n1, s1], [n2, s2]]})["entrant_id"]
+                   {"name": label, "members": [[n1, s1], [n2, s2]],
+                    "cup_id": cup})["entrant_id"]
 
 
 def play_one(app, table_no, upset=0.15):
@@ -304,8 +306,8 @@ def test_cups_and_tables():
     for n in (4, 5):
         app.act("admin", "set_table", {"number": n, "cup_id": cup_b})
 
-    a_ents = [add_pair(app, f"A{i}a", 5, f"A{i}b", 5, f"A{i}") for i in range(6)]
-    b_ents = [add_pair(app, f"B{i}a", 5, f"B{i}b", 5, f"B{i}") for i in range(6)]
+    a_ents = [add_pair(app, f"A{i}a", 5, f"A{i}b", 5, f"A{i}", cup=cup_a) for i in range(6)]
+    b_ents = [add_pair(app, f"B{i}a", 5, f"B{i}b", 5, f"B{i}", cup=cup_b) for i in range(6)]
     fa = app.act("admin", "add_format", {
         "kind": "open_play", "name": "Cup A open",
         "config": {"mode": "pairs", "cup_id": cup_a,
@@ -470,13 +472,22 @@ def entrant_ids(app):
     return [e.id for e in app.store.entrants.values()]
 
 
+def into_cups(app, mapping):
+    """Put already-admitted entrants into cups, the way the console does: by
+    saying which cup they are in, and nothing else."""
+    for cid, eids in mapping.items():
+        for e in eids:
+            app.act("admin", "update_entrant", {"id": e, "cup_id": cid})
+
+
 def test_fair_cup_share():
     print("\n[two cups sharing tables get served fairly]")
     app, d = fresh()
+    solo_field(app, 16)
     ca = app.act("admin", "add_cup", {"name": "Cup A"})["cup_id"]
     cb = app.act("admin", "add_cup", {"name": "Cup B"})["cup_id"]
-    solo_field(app, 16)
     es = entrant_ids(app)
+    into_cups(app, {ca: es[:8], cb: es[8:]})
     fa = app.act("admin", "add_format", {"kind": "groups", "name": "A",
          "config": {"n_groups": 1, "then_ko": False, "cup_id": ca},
          "entrant_ids": es[:8]})["format_id"]
@@ -508,10 +519,11 @@ def test_fair_cup_share():
 def test_swiss_does_not_outrun_a_bigger_cup():
     print("\n[a small cup cannot reach its knockout while a big one is in round one]")
     app, d = fresh()
+    solo_field(app, 20)
     big = app.act("admin", "add_cup", {"name": "Big"})["cup_id"]
     small = app.act("admin", "add_cup", {"name": "Small"})["cup_id"]
-    solo_field(app, 20)
     es = entrant_ids(app)
+    into_cups(app, {big: es[:16], small: es[16:]})
     fbig = app.act("admin", "add_format", {"kind": "swiss", "name": "Big draw",
            "config": {"continuous": True, "paced": True, "rounds": 4,
                       "cup_id": big}, "entrant_ids": es[:16]})["format_id"]
@@ -741,8 +753,8 @@ def test_housekeeping():
             {"id": s.entrants[waiting].player_ids[0], "active": False})
     check(not any(q.entrant_id == waiting for q in s.queue),
           "sitting a waiting player out takes them out of the queue")
-    check(not [e for q in app.state("admin")["queues"]
-               for e in q["entries"] if e["blocked"]],
+    busy = s.busy_players()
+    check(not [q for q in s.queue if not s.entrant_available(q.entrant_id, busy)],
           "no permanently blocked ghost rows are left in the queue")
 
     mid = s.tables[1].match_id
@@ -1352,6 +1364,177 @@ def test_a_failed_cascade_is_all_or_nothing():
     shutil.rmtree(d)
 
 
+
+def pool_event(app, cups=1, kind="swiss", config=None):
+    app.act("admin", "create_event", {
+        "name": "Pool night", "starts_at": "2099-10-04T19:00",
+        "cups": [{"name": f"Cup {chr(65 + i)}", "entry": "single", "registration": "open",
+                  "kind": kind, "config": config or {"continuous": True, "paced": True,
+                                                     "rounds": 3}}
+                 for i in range(cups)],
+        "tables": [{"name": "T1", "cup": -1}, {"name": "T2", "cup": -1}]})
+    return list(app.store.cup_order)
+
+
+def admit(app, name, cup=None, **kw):
+    return app.act("admin", "admit", {"name": name, "cup_id": cup, "kind": "single",
+                                      "strength": 5, **kw})
+
+
+def test_the_pool():
+    print("\n[a cup has one list of people, and the draw is fed from it]")
+    app, d = fresh()
+    s = app.store
+    (cup,) = pool_event(app)
+    f = s.formats[s.cups[cup].format_id]
+
+    # people arrive by every route before the draw starts: the door (a
+    # registration), a walk-in, the directory, and add-by-hand
+    reg = app.act("public", "register", {"cup_id": cup, "name": "Reg Ina", "strength": 5,
+                                         "kind": "single"})["registration_id"]
+    admit(app, "", cup, registration_id=reg)
+    admit(app, "Walk Ulf", cup)
+    app.act("admin", "add_player", {"name": "Hand Hedda", "strength": 5, "cup_id": cup})
+    check(len(s.cup_pool(cup)) == 3, "every way in lands in the cup's pool")
+    check(f.entrant_ids == s.cup_pool(cup), "and the draw reads the same list")
+
+    app.act("admin", "start_format", {"id": f.id})
+    check(sum(1 for t in s.tables.values() if t.match_id) == 1,
+          "starting it seats a match straight away")
+    playing = {x for t in s.tables.values() if t.match_id
+               for x in (s.matches[t.match_id].entrant_a, s.matches[t.match_id].entrant_b)}
+    waiting = {q.entrant_id for q in s.queue}
+    check(playing | waiting == set(s.cup_pool(cup)),
+          "everybody is either playing or waiting — nobody was left off the queue")
+
+    admit(app, "Late Lena", cup)
+    late = s.cup_pool(cup)[-1]
+    on_a_table = {x for t in s.tables.values() if t.match_id
+                  for x in (s.matches[t.match_id].entrant_a, s.matches[t.match_id].entrant_b)}
+    check(late in f.entrant_ids and (late in {q.entrant_id for q in s.queue}
+                                     or late in on_a_table),
+          "somebody admitted mid-evening goes straight into the pairing pool")
+    check(len(on_a_table) == 4, "and with a second free table they are paired at once")
+
+    # finishing a match puts both back without anyone doing anything
+    m = s.matches[[t.match_id for t in s.tables.values() if t.match_id][0]]
+    app.act("referee", "report", {"match_id": m.id, "games": [[11, 5], [11, 5]]})
+    back = {q.entrant_id for q in s.queue} | {
+        x for t in s.tables.values() if t.match_id
+        for x in (s.matches[t.match_id].entrant_a, s.matches[t.match_id].entrant_b)}
+    check({m.entrant_a, m.entrant_b} <= back, "finishing a match returns both players to the pool")
+    shutil.rmtree(d)
+
+
+def test_the_pool_rules():
+    print("\n[which cup — the one thing every way in has to say]")
+    app, d = fresh()
+    s = app.store
+    a, b = pool_event(app, cups=2)
+    for op, body in (("add_player", {"name": "X", "strength": 5}),
+                     ("admit", {"name": "X", "kind": "single"})):
+        try:
+            app.act("admin", op, body)
+            ok = False
+        except ValueError:
+            ok = True
+        check(ok, f"{op} with two cups and no cup named is refused, not guessed")
+    check(not s.players and not s.entrants,
+          "and the refusal leaves nothing half-written behind")
+    admit(app, "Ana", a)
+    e = s.cup_pool(a)[0]
+    fa, fb = (s.formats[s.cups[c].format_id] for c in (a, b))
+    check(fa.entrant_ids == [e] and fb.entrant_ids == [], "each draw sees only its own cup")
+    app.act("admin", "update_entrant", {"id": e, "cup_id": b})
+    check(fa.entrant_ids == [] and fb.entrant_ids == [e],
+          "moving somebody to the other cup moves them between the draws")
+    shutil.rmtree(d)
+
+    app, d = fresh()
+    (only,) = pool_event(app)
+    app.act("admin", "add_player", {"name": "Solo", "strength": 5})
+    check(app.store.entrants["E1"].cup_id == only,
+          "with exactly one cup there is nothing to ask")
+    shutil.rmtree(d)
+
+
+def test_resting_and_put_back():
+    print("\n[resting, and putting a match back]")
+    app, d = fresh()
+    s = app.store
+    (cup,) = pool_event(app, config={"continuous": True, "paced": False})
+    for n in "ABCDEF":
+        admit(app, n, cup)
+    f = s.formats[s.cups[cup].format_id]
+    app.act("admin", "start_format", {"id": f.id})
+    waiting = [q.entrant_id for q in s.queue][0]
+    app.act("referee", "set_resting", {"entrant_id": waiting})
+    check(waiting not in {q.entrant_id for q in s.queue}, "resting takes somebody out of the queue")
+    for _ in range(4):
+        for n in sorted(s.tables):
+            play_one(app, n)
+    check(waiting not in {q.entrant_id for q in s.queue}
+          and not any(waiting in (s.matches[t.match_id].entrant_a, s.matches[t.match_id].entrant_b)
+                      for t in s.tables.values() if t.match_id),
+          "and they stay out however many matches finish around them")
+    app.act("referee", "set_resting", {"entrant_id": waiting, "resting": False})
+    check(waiting in {q.entrant_id for q in s.queue} or any(
+        waiting in (s.matches[t.match_id].entrant_a, s.matches[t.match_id].entrant_b)
+        for t in s.tables.values() if t.match_id), "bringing them back puts them in the pool")
+
+    old = s.tables[1].match_id
+    out = app.act("admin", "put_back", {"match_id": old})
+    check(out["reseated"] is False and s.tables[1].match_id != old,
+          "putting a match back gives the table to somebody else when there is somebody")
+    shutil.rmtree(d)
+
+    app, d = fresh()
+    s = app.store
+    (cup,) = pool_event(app)
+    admit(app, "P", cup); admit(app, "Q", cup)
+    app.act("admin", "start_format", {"id": s.cups[cup].format_id})
+    out = app.act("admin", "put_back", {"match_id": s.tables[1].match_id})
+    check(out["reseated"] is True,
+          "and says so when nobody else can play, instead of pretending they went away")
+    shutil.rmtree(d)
+
+
+def test_a_reset_draw_leaves_no_old_bracket():
+    print("\n[a draw that was reset does not show its old bracket]")
+    from tt.formats import bracket_view
+    app, d = fresh()
+    s = app.store
+    (cup,) = pool_event(app, config={"continuous": True, "paced": True, "rounds": 3,
+                                     "then_ko": True, "advance": 4})
+    for n in "ABCDEF":
+        admit(app, n, cup)
+    f = s.formats[s.cups[cup].format_id]
+    app.act("admin", "start_format", {"id": f.id})
+    app.act("admin", "swiss_cut_ko", {"id": f.id})
+    check(bracket_view(s, f.id) is not None, "a real bracket is shown")
+    app.act("admin", "reset_format", {"id": f.id})
+    check(bracket_view(s, f.id) is None, "a reset draw shows none")
+    shutil.rmtree(d)
+
+
+def test_the_board_shows_the_next_pairing():
+    print("\n[coming up shows a pairing, not a list of strangers]")
+    app, d = fresh()
+    s = app.store
+    (cup,) = pool_event(app)
+    for n in "ABCDEF":
+        admit(app, n, cup)
+    app.act("admin", "start_format", {"id": s.cups[cup].format_id})
+    rows = app.state("admin")["board"][0]["up"]
+    check(rows and rows[0]["kind"] == "pairing" and rows[0]["b"],
+          "the head of the list is the pair that will play next")
+    check(all(r["kind"] != "waiting" or r["a"] not in (rows[0]["a"], rows[0]["b"]) for r in rows),
+          "and nobody appears twice")
+    seated = s.tables[1].match_id
+    check(seated is not None, "sanity: a match is on a table")
+    shutil.rmtree(d)
+
+
 if __name__ == "__main__":
     test_open_play()
     test_scramble()
@@ -1394,4 +1577,9 @@ if __name__ == "__main__":
     test_routing()
     test_a_bad_event_never_reaches_the_log()
     test_a_failed_cascade_is_all_or_nothing()
+    test_the_pool()
+    test_the_pool_rules()
+    test_resting_and_put_back()
+    test_a_reset_draw_leaves_no_old_bracket()
+    test_the_board_shows_the_next_pairing()
     print("\nall good\n")
