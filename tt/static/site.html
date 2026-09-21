@@ -13,67 +13,85 @@
 <style>
 /* The public face of the club. Same language as the console — white paper,
    black ink, one red — but where the console packs data tight, this spreads
-   a few big flat fields. Red is a surface here, not just a signal. */
+   a few big flat fields. Red is a surface here, not just a signal.
+
+   Written against what site.js actually renders: two facts (When / Where,
+   both long strings), a countdown, a CTA link to /join, and cup cards. The
+   entry form is its own page at /join — not on this one. */
+
+/* site.js toggles the hidden attribute on #blurb #count #join #cups-section
+   #cups-note, so nothing below may set display on them unconditionally */
+[hidden]{display:none!important}
+
 body{padding-bottom:0}
 .site{max-width:1240px;margin:0 auto;padding:0 0 40px}
 
 /* ------------------------------------------------------------------ hero */
 .hero{
-  display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));
-  gap:2px;min-height:88vh;padding:0;border-bottom:none;
+  display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));
+  gap:2px;padding:0;border-bottom:none;
 }
 .hero-panel{
   position:relative;display:flex;flex-direction:column;justify-content:space-between;
-  gap:40px;padding:clamp(24px,4vw,52px);border-radius:10px;overflow:hidden;
-  background-image:url('/static/poster.jpg');background-size:cover;background-position:center;
+  gap:clamp(28px,4vw,48px);padding:clamp(24px,4vw,52px);
+  border-radius:10px;overflow:hidden;min-height:clamp(420px,58vh,660px);
+  background-image:url('/static/texture.jpg');background-size:cover;background-position:center;
 }
-/* the poster reads through as texture, not as an image you look at */
+/* two images: texture.jpg (the balls) sits behind the text as a wash, and
+   poster.jpg (the table) fills the panel beside it. if texture.jpg is missing
+   the text panel is simply white, which is fine */
 .hero-panel::before{content:"";position:absolute;inset:0;background:rgba(255,255,255,.86)}
 .hero-panel > *{position:relative}
 .lockup{display:inline-block;line-height:.8;align-self:flex-start}
 .lockup .shadow{position:absolute;top:4px;left:5px;color:var(--signal)}
-.lockup span{font-size:clamp(64px,11vw,150px);font-weight:800;letter-spacing:-.03em}
-.hero-foot{display:flex;align-items:flex-end;justify-content:space-between;gap:24px;flex-wrap:wrap}
+.lockup span{font-size:clamp(56px,10vw,132px);font-weight:800;letter-spacing:-.03em}
 
-.kicker{display:flex;align-items:center;gap:10px;color:var(--muted);
-        font-size:13px;font-weight:600;letter-spacing:.1em;text-transform:uppercase}
-.hero h1{font-size:clamp(26px,3.2vw,42px);font-weight:800;letter-spacing:-.03em;line-height:1.04;margin:0}
+.hero-foot{display:flex;flex-direction:column;gap:clamp(18px,2.4vw,26px)}
+.kicker{display:flex;align-items:center;gap:10px;color:var(--signal);
+        font-size:13px;font-weight:700;letter-spacing:.1em;text-transform:uppercase}
+.hero h1{font-size:clamp(30px,4.6vw,58px);font-weight:800;letter-spacing:-.03em;
+         line-height:1.02;margin:0;max-width:20ch;text-wrap:pretty}
+.blurb{color:var(--muted);font-size:17px;font-weight:400;line-height:1.5;
+       margin:0;max-width:52ch}
 
-/* date / venue / time as one block, the venue in red */
-.facts{display:flex;flex-direction:column;gap:0;
-       font-size:clamp(26px,3.2vw,42px);font-weight:800;letter-spacing:-.03em;line-height:1.04}
+/* The agreed look: date and venue as one display-scale stack, venue in red,
+   labels hidden — at this size "When" over a date is noise. site.js formats
+   When as a long string ("Thursday, 24 September, 19:00"), so the line-height
+   is set tight for a value that may wrap to two lines. */
+.facts{display:flex;flex-direction:column;gap:0;margin:0}
 .fact .k{display:none}
-.fact .v{font-size:inherit;font-weight:inherit;margin:0}
+.fact .v{font-size:clamp(24px,3vw,40px);font-weight:800;letter-spacing:-.03em;
+         line-height:1.06;max-width:22ch;text-wrap:pretty}
 .fact.venue .v{color:var(--signal)}
 
 .poster{position:relative;background:var(--signal);min-height:320px;overflow:hidden;border-radius:10px}
-/* until a real poster.jpg is dropped in, the panel carries a ball instead of
-   sitting empty; the image, when it loads, covers this entirely */
-.poster::before{content:"";position:absolute;left:50%;top:50%;width:46%;aspect-ratio:1;
-  transform:translate(-50%,-50%);border-radius:50%;background:#fff;
-  box-shadow:0 0 0 clamp(10px,2.4vw,26px) rgba(255,255,255,.14),0 0 0 clamp(22px,5vw,54px) rgba(255,255,255,.07)}
 .poster img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;display:block}
 
-.count{margin-top:0;display:flex;align-items:baseline;gap:clamp(28px,5vw,64px);flex-wrap:wrap;
-       padding:clamp(22px,3vw,34px) clamp(24px,4vw,52px);background:var(--surface);border-radius:10px}
+/* the countdown, one quiet strip */
+.count{margin:2px 0 0;display:flex;align-items:baseline;gap:clamp(28px,5vw,64px);
+       flex-wrap:wrap;padding:clamp(22px,3vw,34px) clamp(24px,4vw,52px);
+       background:var(--surface);border-radius:10px}
 .count div{text-align:left;min-width:0;display:flex;align-items:baseline;gap:9px}
 .count .n{font-size:clamp(30px,3.4vw,44px);font-weight:700;letter-spacing:-.03em;line-height:1}
-.count .l{font-size:12px;font-weight:600;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);margin:0}
+.count .l{font-size:12px;font-weight:600;letter-spacing:.12em;
+          text-transform:uppercase;color:var(--muted);margin:0}
 
 /* --------------------------------------------------------------- sections */
 .section{padding:clamp(28px,4vw,52px) clamp(24px,4vw,52px)}
-.section h2{font-size:13px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;
-            color:var(--muted);margin-bottom:16px}
+/* the small uppercase label is for the cups heading only — #join's h2 is a
+   real page heading and must not be shrunk to a label */
+#cups-head{font-size:13px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;
+           color:var(--muted);margin-bottom:16px}
 
 .cup{border:none;border-radius:10px;padding:clamp(22px,3vw,34px);margin-bottom:2px;
      background:var(--surface);display:flex;gap:16px;align-items:flex-start}
 .cup .body{flex:1;min-width:0}
-.cup .name{font-size:clamp(26px,3vw,38px);font-weight:800;letter-spacing:-.03em;line-height:.95}
-.cup .meta{color:var(--muted);font-size:17px;font-weight:600;margin-top:8px}
-.cup .line{color:var(--muted);font-size:15px;margin-top:8px}
+.cup .name{font-size:clamp(24px,2.8vw,34px);font-weight:800;letter-spacing:-.03em;line-height:1}
+.cup .meta{color:var(--chalk);font-size:17px;font-weight:600;margin-top:10px}
+.cup .line{color:var(--muted);font-size:15px;font-weight:400;line-height:1.5;margin-top:8px}
 .podium{margin-top:14px;display:flex;flex-direction:column;gap:6px}
 .podium div{display:flex;gap:12px;align-items:baseline;font-size:16px}
-.podium .pl{color:var(--dim);font-size:13px;font-weight:700;width:22px;flex:none}
+.podium .pl{color:var(--muted);font-size:13px;font-weight:700;width:26px;flex:none}
 .podium .who{font-weight:600}
 .podium .rec{color:var(--muted);font-size:14px}
 .podium .win .who{color:var(--signal);font-weight:700}
@@ -82,29 +100,35 @@ body{padding-bottom:0}
 .tag.open{background:var(--signal);color:#fff}
 
 .foot{border-top:none;padding:clamp(20px,3vw,32px) clamp(24px,4vw,52px);
-      color:var(--dim);font-size:15px;display:flex;justify-content:space-between;
+      color:var(--muted);font-size:15px;display:flex;justify-content:space-between;
       gap:20px;flex-wrap:wrap;align-items:center}
 .foot a{color:var(--signal);font-weight:500}
 .foot a:hover{color:var(--chalk)}
-.blank{color:var(--dim)}
+.blank{color:var(--muted);font-size:17px;line-height:1.5}
 
-/* ------------------------------------------------------------------ form */
-.cta{display:inline-block;width:auto;text-align:center;background:var(--signal);color:#fff;
+/* ------------------------------------------------- the form, at /join
+   site.js renders #join as a single column: h2, .form-field blocks, a .cta
+   and a .back link. It is its own page, so it gets a page heading. */
+#join{max-width:620px}
+#join > h2{font-size:clamp(30px,4.2vw,50px);font-weight:800;letter-spacing:-.02em;
+           line-height:1;margin:0 0 clamp(20px,3vw,28px);text-transform:none;color:var(--chalk)}
+
+.cta{display:inline-block;text-align:center;background:var(--signal);color:#fff;
      border:0;border-radius:8px;padding:15px 28px;font-size:16px;font-weight:600;
-     margin-top:0;cursor:pointer;text-decoration:none;
+     cursor:pointer;text-decoration:none;
      transition:background .09s,transform .09s}
 .cta:hover{background:var(--chalk);color:#fff;filter:none}
 .cta:active{transform:translateY(2px)}
-.cta.block{display:block;width:100%;margin-top:18px}
 .cta.ghost{background:var(--chalk);color:#fff;border:none;font-weight:600}
 .cta.ghost:hover{background:var(--signal)}
+#join .cta{margin-top:22px}
 
 .form-field{margin-top:18px}
-.form-field:first-child{margin-top:0}
+.form-field:first-of-type{margin-top:0}
 .form-field label{display:block;font-size:12px;font-weight:600;letter-spacing:.06em;
                   text-transform:uppercase;color:var(--muted);margin-bottom:7px}
 .form-field input,.form-field select,.form-field textarea{
-  width:100%;background:#fff;color:var(--chalk);border:none;
+  width:100%;background:var(--surface);color:var(--chalk);border:none;
   border-bottom:2px solid transparent;
   border-radius:6px;padding:16px 18px;font-size:17px;font-weight:500;
   transition:border-color .11s}
@@ -112,52 +136,41 @@ body{padding-bottom:0}
   outline:none;border-bottom-color:var(--signal)}
 .form-field textarea{min-height:92px;resize:vertical;line-height:1.45}
 .form-field .hint{color:var(--muted);font-size:13.5px;margin-top:8px;line-height:1.45}
-/* the partner block only exists once a doubles cup is chosen */
-.form-field.partner input{border-bottom-color:var(--signal)}
-.form-field[hidden]{display:none}
+/* the partner and team fields only exist when a pair cup is chosen — site.js
+   already decides that; this just marks them as belonging together */
+#j-pname,#j-pstr,#j-team{border-bottom-color:var(--signal)}
 
 .choice{display:flex;gap:2px;flex-wrap:wrap;margin-top:4px}
 .choice button{flex:1;min-width:150px;background:var(--surface);color:var(--chalk);
                border:none;border-radius:8px;padding:15px 17px;
                font-size:15px;cursor:pointer;text-align:left;font-weight:600}
-.choice button:hover{background:var(--edge);color:var(--chalk)}
-.choice button.on{background:var(--chalk);color:#fff;border:none}
+.choice button:hover{background:var(--edge)}
+.choice button.on{background:var(--chalk);color:#fff}
 .choice .t{display:block;font-weight:700;font-size:17px;letter-spacing:-.01em}
 .choice .s{display:block;color:var(--muted);font-size:13px;margin-top:3px}
-.choice button.on .s{color:rgba(255,255,255,.7)}
+.choice button.on .s{color:rgba(255,255,255,.75)}
 
 .err{color:var(--signal);font-size:15px;font-weight:600;margin-top:14px}
 .done-card{border:none;background:var(--surface);border-radius:10px;
-           padding:clamp(24px,3.5vw,44px);margin-top:8px}
+           padding:clamp(24px,3.5vw,44px);margin-top:0}
 .done-card h2{font-size:clamp(26px,3vw,36px);font-weight:800;letter-spacing:-.02em;
-              line-height:1;margin-bottom:12px;color:var(--chalk);
-              text-transform:none;letter-spacing:-.02em}
-.done-card p{color:var(--muted);margin:0 0 6px;font-size:17px}
+              line-height:1;margin:0 0 12px;text-transform:none;color:var(--chalk)}
+.done-card p{color:var(--muted);margin:0 0 6px;font-size:17px;line-height:1.5}
 .back{display:inline-block;margin-top:26px;color:var(--muted);font-size:15px}
-
-/* the cup list, spelled out, in the dark tile beside the form */
-.join-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:2px}
-.join-note{background:var(--chalk);color:#fff;border-radius:10px;
-           padding:clamp(28px,4vw,52px);display:flex;flex-direction:column;
-           justify-content:center;gap:14px;min-height:260px}
-.join-note h2{margin:0;font-size:clamp(30px,4.2vw,54px);font-weight:800;
-              letter-spacing:-.02em;line-height:1;color:#fff;text-transform:none}
-.join-note .cups-list{display:flex;flex-direction:column;gap:7px;text-align:center;
-                      font-size:18px;line-height:1.3}
-.join-note .cups-list b{font-weight:700;letter-spacing:.02em}
-.join-note .cups-list i{font-style:normal;color:var(--signal);font-weight:700}
-.join-form{background:var(--surface);border-radius:10px;
-           padding:clamp(24px,3.5vw,44px);display:flex;align-items:center}
-.join-form > *{width:100%}
+.back:hover{color:var(--signal)}
 
 @media (max-width:720px){
-  .hero{grid-template-columns:1fr;min-height:auto}
-  .hero-panel{gap:30px;padding:30px 22px 34px}
-  .poster{min-height:230px}
-  .join-note{padding:32px 22px;min-height:auto}
-  .join-form{padding:24px 22px 28px}
+  .hero{grid-template-columns:1fr}
+  .hero-panel{gap:28px;padding:30px 22px 34px;min-height:0}
+  .lockup span{font-size:clamp(56px,17vw,96px)}
+  /* edge to edge on a phone — a 10px radius on a full-width block just
+     reads as a mistake */
+  .poster{min-height:230px;border-radius:0}
+  .count{border-radius:0}
   .section{padding:28px 22px}
   .foot{padding:22px}
+  .cta{display:block;width:100%}
+  .fact .v{font-size:clamp(24px,7vw,32px)}
 }
 </style>
 </head>
@@ -169,12 +182,10 @@ body{padding-bottom:0}
         <span class="shadow">TTT</span><span>TTT</span>
       </span>
       <div class="hero-foot">
-        <div>
-          <div class="kicker"><span id="kicker">Upcoming</span></div>
-          <h1 id="name">…</h1>
-          <p class="blurb" id="blurb" hidden></p>
-          <div class="facts" id="facts"></div>
-        </div>
+        <div class="kicker"><span id="kicker">Upcoming</span></div>
+        <h1 id="name">…</h1>
+        <p class="blurb" id="blurb" hidden></p>
+        <div class="facts" id="facts"></div>
         <div id="cta-slot"></div>
       </div>
     </div>
