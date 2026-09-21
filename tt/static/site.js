@@ -71,7 +71,8 @@ function render() {
 
   const facts = [];
   if (P.starts_at) facts.push(['When', fmtDate(P.starts_at)]);
-  if (P.venue) facts.push(['Where', P.venue]);
+  // only the place, not the street address: "Funkhaus, Argentinierstraße" shows as "Funkhaus"
+  if (P.venue) facts.push(['Where', P.venue.split(',')[0].trim()]);
   if (fmtTime(P.starts_at, P.ends_at)) facts.push(['Time', fmtTime(P.starts_at, P.ends_at)]);
   $('facts').innerHTML = facts.map(([k, v]) =>
     `<div class="fact${k === 'Where' ? ' venue' : ''}"><div class="k">${esc(k)}</div><div class="v">${esc(v)}</div></div>`).join('');
