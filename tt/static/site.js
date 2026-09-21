@@ -33,14 +33,18 @@ function remember(v) {
   try { localStorage.setItem('tt_reg', JSON.stringify(v)); } catch (e) { }
 }
 
+/* dd/mm/yy, and the time on its own, so the date fits one display-scale line */
 function fmtDate(iso) {
   if (!iso) return '';
   const d = new Date(iso);
   if (isNaN(d)) return iso;
-  return d.toLocaleString(undefined, {
-    weekday: 'long', day: 'numeric', month: 'long',
-    hour: '2-digit', minute: '2-digit',
-  });
+  const p = n => String(n).padStart(2, '0');
+  return `${p(d.getDate())}/${p(d.getMonth() + 1)}/${p(d.getFullYear() % 100)}`;
+}
+
+function fmtTime(iso) {
+  const d = new Date(iso);
+  return isNaN(d) || !/T\d/.test(iso || '') ? '' : d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 }
 
 function render() {
@@ -57,6 +61,7 @@ function render() {
   const facts = [];
   if (P.starts_at) facts.push(['When', fmtDate(P.starts_at)]);
   if (P.venue) facts.push(['Where', P.venue]);
+  if (fmtTime(P.starts_at)) facts.push(['Time', fmtTime(P.starts_at)]);
   $('facts').innerHTML = facts.map(([k, v]) =>
     `<div class="fact${k === 'Where' ? ' venue' : ''}"><div class="k">${esc(k)}</div><div class="v">${esc(v)}</div></div>`).join('');
 
