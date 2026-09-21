@@ -155,6 +155,7 @@ class App:
                 "blurb": s.event.get("blurb") or "",
                 "venue": s.event.get("venue") or "",
                 "starts_at": s.event.get("starts_at") or "",
+                "ends_at": s.event.get("ends_at") or "",
                 "starts_ts": s.starts_at_ts(),
                 "open": phase == "registration",
                 "cups": [self._public_cup(c, phase)

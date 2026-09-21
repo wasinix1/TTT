@@ -90,33 +90,47 @@ body{overflow:hidden;padding-bottom:0}
   .q.ondeck .e.when{padding:.4vmin .8vw}
   .foot{display:none}
 }
-/* The wall is dark by default: a hall is dim and a lit white screen washes it
-   out. The red is unchanged, because it has to mean the same in both.
-   Add ?light to the address for a bright room. */
-:root{
-  --ground:#0a0a0a;
-  --surface:#161616;
-  --raised:#222222;
-  --edge:#2a2a2a;
-  --hair:rgba(255,255,255,.09);
-  --chalk:#f4f4f2;
-  --muted:#b4b4ae;
-  --dim:#6e6e68;
-  --signal-wash:rgba(216,36,26,.16);
-}
-:root.light{
-  --ground:#ffffff;--surface:#f2f2f0;--raised:#ffffff;--edge:#e4e4e0;
-  --hair:rgba(10,10,10,.06);--chalk:#0a0a0a;--muted:#5f5f5f;--dim:#767671;
-  --signal-wash:rgba(216,36,26,.07);
-}
+/* A dark hall. Same layout, inverted ground — the red is unchanged, because
+   it is the one thing that has to mean the same in both. */
+/* Bright by default. The TTT mark in the corner is a hidden switch to the dark
+   hall look (remembered on this screen); ?dark and ?light also work. */
+:root.dark{
+    --ground:#0a0a0a;
+    --surface:#161616;
+    --raised:#222222;
+    --edge:#2a2a2a;
+    --hair:rgba(255,255,255,.09);
+    --chalk:#f4f4f2;
+    --muted:#b4b4ae;   /* 7.4:1 on the dark ground */
+    --dim:#8e8e88;
+    --signal-wash:rgba(216,36,26,.16);
+  }
+
+/* the mark doubles as the theme switch, and looks like nothing but a logo */
+button.mark{background:none;border:none;padding:0;margin:0;cursor:default;font:inherit}
+button.mark:hover{background:none}
+button.mark:focus-visible{outline:2px solid var(--signal);outline-offset:4px}
 </style>
-<script>if(/[?&]light\b/.test(location.search))document.documentElement.classList.add('light')</script>
+<script>
+/* dark is opt-in: ?dark, ?light, or a tap on the mark (remembered) */
+(function(){var d=null,q=location.search;
+  try{d=localStorage.getItem('tt-board-dark')}catch(e){}
+  if(/[?&]dark\b/.test(q))d='1'; if(/[?&]light\b/.test(q))d='0';
+  if(d==='1')document.documentElement.classList.add('dark');
+  addEventListener('DOMContentLoaded',function(){
+    document.getElementById('theme-toggle').addEventListener('click',function(){
+      var on=document.documentElement.classList.toggle('dark');
+      try{localStorage.setItem('tt-board-dark',on?'1':'0')}catch(e){}
+    });
+  });
+})();
+</script>
 </head>
 <body>
 <div class="screen">
   <div class="head">
     <div class="head-left">
-      <span class="mark" aria-hidden="true">TTT</span>
+      <button class="mark" id="theme-toggle" type="button" aria-label="Switch between bright and dark">TTT</button>
       <h1 id="title">Coming up</h1>
     </div>
     <p class="sub" id="sub"></p>

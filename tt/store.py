@@ -31,6 +31,7 @@ BLANK_EVENT = {
     "blurb": "",            # what the landing page says about the event
     "venue": "",
     "starts_at": "",        # naive local "YYYY-MM-DDTHH:MM", "" = unscheduled
+    "ends_at": "",          # optional "HH:MM", shown as a range on the landing
     "phase_pin": "",        # admin override; "" = derive from the clock
 }
 
@@ -366,7 +367,7 @@ class Store:
             self.cup_order = []
         self.event = dict(BLANK_EVENT)
         self.event["id"] = p.get("id") or f"EV{seq}"
-        for k in ("name", "note", "blurb", "venue", "starts_at", "phase_pin"):
+        for k in ("name", "note", "blurb", "venue", "starts_at", "ends_at", "phase_pin"):
             if k in p:
                 self.event[k] = p[k]
 
