@@ -158,6 +158,7 @@ class App:
                 "ends_at": s.event.get("ends_at") or "",
                 "starts_ts": s.starts_at_ts(),
                 "open": phase == "registration",
+                "self_reg": s.self_reg_window(),
                 "cups": [self._public_cup(c, phase)
                          for c in (s.cups[i] for i in s.cup_order if i in s.cups)],
             }
@@ -631,18 +632,49 @@ class App:
         Everything here is a claim, including the strength: it creates a
         Registration and nothing else, so no amount of nonsense arriving on
         this path can reach the dispatcher. It becomes a player when somebody
-        confirms it at the door.
+        confirms it at the door — unless self-registration-at-the-venue is
+        on and it is close enough to the start that "Voranmelden" has become
+        "Anmelden", in which case this confirms it on the spot (see
+        _self_admit) rather than waiting for the door.
 
         Duplicates are deliberately allowed here. Two phones, or one phone
         twice, is normal, and the notes box is the correction channel; the
         person who can tell two Jana Bergers apart is at the door, so that is
-        where the check lives (op_admit)."""
+        where the check lives (op_admit) — including for a self-registered
+        entry, which still goes through that same check before it is seated."""
         cup = self.store.cups.get(p.get("cup_id") or "")
         if not cup:
             raise ValueError("pick which cup you are entering")
         if cup.registration != "open" or self.store.shows_console():
             raise ValueError("that cup is not taking entries")
-        return self._take_registration(cup, p)
+        result = self._take_registration(cup, p)
+        if self.store.self_reg_window():
+            self._self_admit(result)
+        return result
+
+    def _self_admit(self, result):
+        """Try to seat a just-taken registration immediately, for Anmelden.
+
+        A lone "seeking a partner" entry has nobody to be seated with yet —
+        that is true at a manned door too — so it is left pending exactly as
+        it would be otherwise, until a partner turns up and completes the
+        match. Anything op_admit itself refuses (a duplicate name, most
+        likely) is left pending as well: the door still exists for exactly
+        this, so a self check-in that cannot be resolved automatically just
+        falls back to needing a person, the way it always did."""
+        s = self.store
+        reg = s.registrations.get(result.get("registration_id") or "")
+        if not reg or reg.status != "pending":
+            return
+        if reg.kind == "seeking" and not reg.matched_with:
+            return
+        try:
+            admitted = self.op_admit({"registration_id": reg.id})
+        except ValueError:
+            return
+        result["self_registered"] = True
+        result["where"] = admitted["where"]
+        result["why"] = admitted["why"]
 
     def op_add_registration(self, p):
         """The door putting somebody down as looking for a partner: the same

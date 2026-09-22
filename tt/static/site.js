@@ -97,7 +97,7 @@ function render() {
     cta.innerHTML = (!joining() && open.length && !done)
       ? (already
           ? `<a class="cta" href="#join">Noch jemanden anmelden</a>`
-          : `<a class="cta" href="#join">Voranmelden</a>`)
+          : `<a class="cta" href="#join">${P.self_reg ? 'Anmelden' : 'Voranmelden'}</a>`)
       : '';
   }
 
@@ -120,11 +120,13 @@ const STRENGTHS = [
   [8, '8'], [9, '9'], [10, '10 — league player'],
 ];
 
-/* the dark tile names the cups; the form sits beside it */
+/* the dark tile names the cups; the form sits beside it. Once self check-in
+   opens, "Voranmelden" becomes "Anmelden" here too — same form, but the
+   submit no longer just puts a name down; see the done-card copy below. */
 function joinShell(inner, open) {
   const list = open.map(c => `<div><b>${esc(c.name)}</b>${ENTRY[c.entry] ? ' <i>·</i> ' + ENTRY[c.entry] : ''}</div>`).join('');
   return `<div class="join-grid">
-    <div class="join-note"><h2>Voranmelden</h2><div class="cups-list">${list}</div></div>
+    <div class="join-note"><h2>${P.self_reg ? 'Anmelden' : 'Voranmelden'}</h2><div class="cups-list">${list}</div></div>
     <div class="join-form"><div class="jf">${inner}</div></div>
   </div>`;
 }
@@ -149,10 +151,13 @@ function renderJoin() {
     return;
   }
   if (draft.done) {
+    const in_ = draft.done.self_registered;
     box.innerHTML = joinShell(`<div class="done-card">
-        <h2>Du stehst auf der Liste</h2>
+        <h2>${in_ ? 'Du bist angemeldet' : 'Du stehst auf der Liste'}</h2>
         <p>${esc(draft.done.name)} — ${esc(draft.done.cup)}</p>
-        <p>Mehr ist nicht nötig. Wir bestätigen alle am Abend selbst — komm einfach vorbei.</p>
+        <p>${in_
+          ? 'Du bist startklar — keine weitere Bestätigung nötig.'
+          : 'Mehr ist nicht nötig. Wir bestätigen alle am Abend selbst — komm einfach vorbei.'}</p>
       </div>
       <button class="cta ghost" data-act="again">Noch jemanden anmelden</button>
       ${backLink()}`, open);
@@ -208,7 +213,7 @@ async function send() {
     const j = await r.json().catch(() => ({ error: 'Da ist etwas schiefgegangen.' }));
     if (!r.ok) { error = j.error || 'Da ist etwas schiefgegangen.'; }
     else {
-      draft.done = { name: draft.name, cup: j.cup };
+      draft.done = { name: draft.name, cup: j.cup, self_registered: !!j.self_registered };
       remember({ id: j.registration_id, name: draft.name, cup: j.cup });
     }
   } catch (e) {

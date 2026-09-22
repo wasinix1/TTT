@@ -33,6 +33,8 @@ BLANK_EVENT = {
     "starts_at": "",        # naive local "YYYY-MM-DDTHH:MM", "" = unscheduled
     "ends_at": "",          # optional "HH:MM", shown as a range on the landing
     "phase_pin": "",        # admin override; "" = derive from the clock
+    "self_reg_enabled": False,   # let people check themselves in near the door
+    "self_reg_minutes": 60,      # how long before the start that window opens
 }
 
 
@@ -658,6 +660,25 @@ class Store:
 
     def shows_console(self) -> bool:
         return self.phase() in CONSOLE_PHASES
+
+    def self_reg_window(self) -> bool:
+        """Whether "Anmelden" (self check-in) is live rather than
+        "Voranmelden" (pre-registration): the admin turned it on, there is a
+        start time to count down from, and the clock is somewhere in the
+        arrival window before it. It always closes at the start time itself
+        — from then on the console is the one confirming who showed up, the
+        same as when the option is off."""
+        if not self.event.get("self_reg_enabled"):
+            return False
+        start = self.starts_at_ts()
+        if start is None:
+            return False
+        try:
+            minutes = float(self.event.get("self_reg_minutes") or 0)
+        except (TypeError, ValueError):
+            minutes = 0
+        now = time.time()
+        return (start - minutes * 60) <= now < start
 
     # ------------------------------------------------------------- helpers
 

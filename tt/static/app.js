@@ -883,6 +883,23 @@ function tabEvent() {
           'Pin the phase to open the doors early, hold them, or put the landing page back up ' +
           'afterwards. Your admin and referee links always show the console, whatever the phase.')}
 
+    <div class="inline" style="align-items:center">
+      <label class="pick"><input type="checkbox" id="ev-selfreg" data-save="event_meta"
+        data-key="self_reg_enabled" data-was="${ev.self_reg_enabled ? '1' : ''}"
+        ${ev.self_reg_enabled ? 'checked' : ''}> Self-registration at the venue</label>
+      <div class="field" style="max-width:110px">
+        <label for="ev-selfregmin">Minutes before start</label>
+        ${auto('ev-selfregmin', 'event_meta', 'self_reg_minutes', ev.self_reg_minutes ?? 60,
+               'type="number" min="0" step="5"')}</div>
+    </div>
+    ${why('Turns "Voranmelden" into "Anmelden" on the landing page starting this many minutes ' +
+          'before the start time. In that window, submitting the form seats somebody straight ' +
+          'into the draw — the same as a confirmed walk-in — instead of leaving them pending ' +
+          'for the door. The window always closes at the start time itself: from then on the ' +
+          'console is what confirms who showed up, exactly like today.',
+          'A duplicate name, or a doubles entry still waiting on a partner, is left pending ' +
+          'either way — those still need the door, self-registration or not.')}
+
     ${sec('Cups')}
     ${S.cups.map(cupCard).join('')}
     ${!S.cups.length ? `<p class="blank">No cups yet. Everything runs in one view until you add one.</p>` : ''}
@@ -1766,10 +1783,13 @@ function wizInput(e) {
    "update_player:P3" — and `data-key` the field it sets. */
 function autoSave(el) {
   const spec = el.dataset.save;
-  if (!spec || el.value === el.dataset.was) return false;
+  if (!spec) return false;
+  const isCheck = el.type === 'checkbox';
+  let val = isCheck ? el.checked : el.value;
+  const cmp = isCheck ? (val ? '1' : '') : val;
+  if (cmp === el.dataset.was) return false;
   const [op, id] = spec.split(':');
   const key = el.dataset.key;
-  let val = el.value;
 
   // a number that is not one goes back to what it was rather than being
   // clamped into something you did not ask for
@@ -1778,6 +1798,15 @@ function autoSave(el) {
     if (isNaN(n) || n < 1 || n > 10) {
       el.value = el.dataset.was;
       toast('Strength is a number from 1 to 10');
+      return false;
+    }
+    val = n;
+  }
+  if (key === 'self_reg_minutes') {
+    const n = parseInt(val, 10);
+    if (isNaN(n) || n < 0) {
+      el.value = el.dataset.was;
+      toast('Minutes should be 0 or more');
       return false;
     }
     val = n;
@@ -1807,7 +1836,7 @@ function autoSave(el) {
     data.id = id;
   }
 
-  el.dataset.was = el.value;               // so a re-render does not re-fire
+  el.dataset.was = cmp;                    // so a re-render does not re-fire
   api(op, data);
   flashSaved(el);
   return true;
