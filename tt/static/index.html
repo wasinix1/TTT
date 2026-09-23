@@ -26,6 +26,13 @@
 
 <nav id="cup-tabs" class="cup-tabs" hidden></nav>
 
+<nav id="jump" class="jump" aria-label="Sections">
+  <a href="#tables" data-to="tables">Tables</a>
+  <a href="#board" data-to="board">Up next<span class="count"></span></a>
+  <a href="#standings" data-to="standings">Standings</a>
+  <a href="#recent" data-to="recent">Results</a>
+</nav>
+
 <main>
   <div id="warn"></div>
   <section id="tables"></section>
@@ -33,12 +40,14 @@
   <div class="cols">
     <div class="col">
       <div id="board"></div>
-      <div id="manual-entry"></div>
-      <div id="recent"></div>
     </div>
     <div class="col">
       <div id="standings"></div>
       <div id="brackets"></div>
+    </div>
+    <div class="col">
+      <div id="manual-entry"></div>
+      <div id="recent"></div>
     </div>
   </div>
 </main>
