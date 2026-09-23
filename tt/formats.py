@@ -189,10 +189,73 @@ class Format:
     def on_result(self, store, match):
         return
 
+    # -- the cut into a knockout, and keeping it honest afterwards
+    def _qualifiers(self, store):
+        """Who the bracket would be drawn from if it were drawn right now,
+        in seed order. None for a format that has no cut."""
+        return None
+
+    def _build_ko(self, store, seeded):
+        """Draw the bracket and remember what it was drawn from, so a later
+        correction can be noticed rather than silently disagreed with."""
+        ko_sc = Scoring.from_dict(self.config.get("ko_scoring")
+                                  or self.config.get("scoring"))
+        build_bracket(store, self.id, seeded, ko_sc,
+                      third_place=bool(self.config.get("third_place")))
+        self.phase = "ko"
+        self.config["ko_seeds"] = list(seeded)
+        store.append("format_update", {"id": self.id, "phase": "ko",
+                                       "config": {"ko_seeds": list(seeded)}})
+
+    def _ko_matches(self, store):
+        return [m for m in store.matches.values()
+                if m.format_id == self.id and m.meta.get("phase") == "ko"
+                and m.status != "void"]
+
+    def bracket_stale(self, store) -> bool:
+        """True when the standings no longer agree with who is in the draw.
+
+        A group score entered backwards and put right an hour later changes
+        who should have qualified, and nothing downstream noticed: group and
+        Swiss matches carry no bracket wiring, so there is nothing for an
+        undo to unwind. The table and the bracket just quietly disagreed."""
+        if self.phase != "ko":
+            return False
+        want = self._qualifiers(store)
+        if want is None:
+            return False
+        have = self.config.get("ko_seeds")
+        if have is None:
+            return False            # drawn before this was recorded
+        return list(want) != list(have)
+
+    def _maybe_redraw(self, store):
+        """Redraw the bracket after a correction — but only while nobody has
+        played in it. Once a knockout match is under way, a wrong seed is a
+        far smaller problem than wiping a round people already played, so it
+        is reported to the organiser instead and left for them to decide."""
+        if not self.bracket_stale(store):
+            return
+        if any(m.status in ("done", "live") for m in self._ko_matches(store)):
+            return
+        want = self._qualifiers(store)
+        if len(want) < 2:
+            return
+        for m in self._ko_matches(store):
+            store.append("match_void", {"match_id": m.id})
+        self._build_ko(store, want)
+
     def is_complete(self, store) -> bool:
         ms = [m for m in store.matches.values()
               if m.format_id == self.id and m.status != "void"]
         return bool(ms) and all(m.status == "done" for m in ms)
+
+    def warnings(self, store):
+        """Things about this draw an organiser would want to know before
+        they bite, in plain words. Information only — nothing here changes
+        what the draw does, because the shape of somebody's tournament is
+        not a decision this should be making on its own at ten past seven."""
+        return []
 
     # -- reporting
     def standings(self, store):
@@ -211,6 +274,8 @@ class Format:
             "standings": self.standings(store),
             "view": self.view(store),
             "complete": self.is_complete(store),
+            "bracket_stale": self.bracket_stale(store),
+            "warnings": self.warnings(store),
         }
 
     def order_key(self, m):
@@ -293,6 +358,7 @@ def _table(store, rec, eids, extra=None):
             "games": f"{r['gw']}:{r['gl']}", "game_diff": r["gw"] - r["gl"],
             "points": f"{r['pw']}:{r['pl']}", "point_diff": r["pw"] - r["pl"],
         }
+        row["withdrawn"] = store.withdrawn(eid)
         if extra:
             row.update(extra(eid, r))
         rows.append(row)
@@ -313,6 +379,11 @@ def build_bracket(store, fid, seeded, scoring, third_place=False, prefix="ko"):
     placed = [slots[p] for p in order]
 
     rounds = int(math.log2(size))
+    # A semi-final that is a bye is not a match, so it has no loser to send
+    # to the third-place play-off — which then sits half-filled for ever,
+    # keeps the draw from ever reading as complete, and shows a permanent
+    # "to be decided" on the wall. Only offer it when both semis are real.
+    third_place = bool(third_place) and rounds >= 2 and (rounds > 2 or n == size)
     # wire from the final backwards so ids are deterministic
     ids = {(r, i): f"{fid}_{prefix}r{r}m{i}"
            for r in range(rounds) for i in range(size // 2 ** (r + 1))}
@@ -547,7 +618,7 @@ class GroupStage(Format):
     def start(self, store):
         self.status = "running"
         self.phase = "groups"
-        ids = list(self.entrant_ids)
+        ids = [e for e in self.entrant_ids if not store.withdrawn(e)]
         ids.sort(key=lambda e: -store.entrant_strength(e))
         n = max(1, int(self.config.get("n_groups", 1)))
         groups = [[] for _ in range(n)]
@@ -566,34 +637,61 @@ class GroupStage(Format):
                     scoring=sc,
                 )
 
+    def warnings(self, store):
+        n = max(1, int(self.config.get("n_groups", 1)))
+        field = len([e for e in self.entrant_ids if not store.withdrawn(e)])
+        out = []
+        if field and field < 2 * n:
+            short = n - field // 2
+            out.append(
+                f"{field} in {n} groups leaves {short} group"
+                f"{'' if short == 1 else 's'} with one entrant and nobody to "
+                f"play — they get no matches at all and cannot qualify. "
+                f"{max(1, field // 2)} groups or fewer fits this field.")
+        return out
+
     def _group_names(self, store):
         return sorted({m.meta.get("group") for m in store.matches.values()
                        if m.format_id == self.id and m.meta.get("phase") == "groups"}
                       - {None})
 
-    def tick(self, store):
-        if self.phase != "groups" or not self.config.get("then_ko"):
-            return
-        gm = [m for m in store.matches.values()
-              if m.format_id == self.id and m.meta.get("phase") == "groups"]
-        if not gm or any(m.status != "done" for m in gm):
-            return
+    def _qualifiers(self, store):
         adv = max(1, int(self.config.get("advance_per_group", 2)))
+        blocks = self.standings(store)
         qualified = []
         for gname in self._group_names(store):
-            rows = self.standings(store)
-            table = next(g["rows"] for g in rows if g["group"] == f"Group {gname}")
-            qualified.append([r["entrant_id"] for r in table[:adv]])
+            rows = next((g["rows"] for g in blocks
+                         if g["group"] == f"Group {gname}"), [])
+            # somebody who went home does not take a place in the bracket
+            # with them, or the first thing the knockout does is walk them over
+            live = [r["entrant_id"] for r in rows
+                    if not store.withdrawn(r["entrant_id"])]
+            qualified.append(live[:adv])
         # cross-seed: all group winners first, then all runners-up reversed
         seeded = []
         for place in range(adv):
             tier = [g[place] for g in qualified if len(g) > place]
             seeded.extend(tier if place % 2 == 0 else list(reversed(tier)))
-        ko_sc = Scoring.from_dict(self.config.get("ko_scoring") or self.config.get("scoring"))
-        build_bracket(store, self.id, seeded, ko_sc,
-                      third_place=bool(self.config.get("third_place")))
-        self.phase = "ko"
-        store.append("format_update", {"id": self.id, "phase": "ko"})
+        return seeded
+
+    def tick(self, store):
+        if not self.config.get("then_ko"):
+            return
+        if self.phase == "ko":
+            self._maybe_redraw(store)
+            return
+        if self.phase != "groups":
+            return
+        gm = [m for m in store.matches.values()
+              if m.format_id == self.id and m.meta.get("phase") == "groups"]
+        # a voided group match is one that was thrown away, not one still to
+        # be played; treating it as outstanding held the knockout for ever
+        if not gm or any(m.status not in ("done", "void") for m in gm):
+            return
+        seeded = self._qualifiers(store)
+        if len(seeded) < 2:
+            return
+        self._build_ko(store, seeded)
 
     def order_key(self, m):
         return (m.meta.get("deferred", 0),
@@ -639,7 +737,7 @@ class SingleElim(Format):
     def start(self, store):
         self.status = "running"
         self.phase = "ko"
-        ids = list(self.entrant_ids)
+        ids = [e for e in self.entrant_ids if not store.withdrawn(e)]
         ids.sort(key=lambda e: -store.entrant_strength(e))
         build_bracket(store, self.id, ids, self.scoring(),
                       third_place=bool(self.config.get("third_place")))
@@ -702,8 +800,27 @@ class Swiss(Format):
             int(self.config.get("rounds", 0) or 0) > 0
 
     def _played(self, store):
-        rec = _record(store, self.id)
-        return {e: rec.get(e, {"played": 0})["played"] for e in self.entrant_ids}
+        """Swiss games played, which is what the round count is counting.
+
+        Only the Swiss phase: once the bracket is up, knockout matches would
+        otherwise push everybody past their round budget and make it look
+        like nobody ever finished short. A friendly entered by hand against
+        this draw does not eat somebody's round either."""
+        n = {e: 0 for e in self.entrant_ids}
+        for m in store.matches.values():
+            if m.format_id != self.id or m.status != "done":
+                continue
+            if m.meta.get("phase") != "swiss":
+                continue
+            bye = m.meta.get("bye")
+            if bye:
+                if bye in n:
+                    n[bye] += 1
+                continue
+            for e in (m.entrant_a, m.entrant_b):
+                if e in n:
+                    n[e] += 1
+        return n
 
     def start(self, store):
         self.status = "running"
@@ -776,7 +893,10 @@ class Swiss(Format):
             )
 
     def tick(self, store):
-        if self.status != "running" or self.phase == "ko":
+        if self.status != "running":
+            return
+        if self.phase == "ko":
+            self._maybe_redraw(store)
             return
         if self.config.get("continuous"):
             if self._budget_spent(store) and self.config.get("then_ko"):
@@ -802,7 +922,19 @@ class Swiss(Format):
 
     def _budget_spent(self, store):
         """Paced Swiss is over when everyone has had their rounds and no
-        match is still out on a table."""
+        match is still out on a table — or when it cannot give anybody
+        another one.
+
+        That second clause is arithmetic, not indulgence. Every match is
+        worth two games played, so a field can only all reach the round
+        count when entrants times rounds is even. An odd pair of numbers
+        leaves exactly one person a game short, and a withdrawal part-way
+        through can flip the parity of a field that was going to come out
+        fine. Without this the draw simply stopped: one person waiting for
+        an opponent who cannot exist, every table idle, and no knockout —
+        silently, at the one moment you wanted it. Ending when there is
+        nothing left to give anybody is the honest reading of "everyone has
+        had their rounds", and the console says who finished short."""
         budget = self._round_budget()
         if not budget:
             return False
@@ -811,7 +943,32 @@ class Swiss(Format):
             return False
         played = self._played(store)
         field = [e for e in self.entrant_ids if self._eligible(store, e)]
-        return bool(field) and all(played.get(e, 0) >= budget for e in field)
+        if not field:
+            return False
+        under = [e for e in field if played.get(e, 0) < budget]
+        # Fewer than two still owed a game means there is nobody to play
+        # whoever is left. Counted off the field rather than off the queue:
+        # the queue is rebuilt after this runs, so reading it here sees an
+        # empty one between a result and the next seating and ends the draw
+        # in its first five minutes.
+        return len(under) < 2
+
+    def short_of_budget(self, store):
+        """Who ended up a game or more short, once it is over."""
+        budget = self._round_budget()
+        if not budget:
+            return []
+        played = self._played(store)
+        return [e for e in self.entrant_ids
+                if self._eligible(store, e) and played.get(e, 0) < budget]
+
+    def _qualifiers(self, store):
+        blocks = self.standings(store)
+        rows = blocks[0]["rows"] if blocks else []
+        adv = max(2, int(self.config.get("advance", 4)))
+        # somebody who went home does not take a bracket place with them
+        return [r["entrant_id"] for r in rows
+                if not store.withdrawn(r["entrant_id"])][:adv]
 
     def _start_ko(self, store):
         """Cross into the knockout stage: top N by standings, seeded bracket.
@@ -823,10 +980,7 @@ class Swiss(Format):
         that already."""
         if self.phase == "ko":
             return
-        blocks = self.standings(store)
-        rows = blocks[0]["rows"] if blocks else []
-        adv = max(2, int(self.config.get("advance", 4)))
-        seeded = [r["entrant_id"] for r in rows[:adv]]
+        seeded = self._qualifiers(store) or []
         if len(seeded) < 2:
             # bail out before scrapping anything: voiding first and then
             # returning left the format mid-Swiss with its fixtures gone,
@@ -838,11 +992,7 @@ class Swiss(Format):
             store.append("match_void", {"match_id": m.id})
         for q in [q.entrant_id for q in store.queue if q.format_id == self.id]:
             store.append("queue_leave", {"entrant_id": q, "opt_out": False})
-        ko_sc = Scoring.from_dict(self.config.get("ko_scoring") or self.config.get("scoring"))
-        build_bracket(store, self.id, seeded, ko_sc,
-                      third_place=bool(self.config.get("third_place")))
-        self.phase = "ko"
-        store.append("format_update", {"id": self.id, "phase": "ko"})
+        self._build_ko(store, seeded)
 
     def cut_to_ko(self, store):
         """Admin override: stop the Swiss short of its planned rounds (or end
@@ -860,6 +1010,16 @@ class Swiss(Format):
     def propose(self, store, busy, force=False):
         if self.phase == "ko" or not self.config.get("continuous"):
             return self._pending(store, busy)
+        # A fixture left pending while this draw pairs on demand is an
+        # orphan: nothing here ever looks at pending matches, so it would
+        # sit there for the rest of the evening — and in a paced draw it
+        # also holds back the cut to the knockout, because that waits for
+        # nothing to be outstanding. Undoing a result and removing a table
+        # from under a live match both produce one. Re-seat it before
+        # inventing a new pairing: two people were told they were playing.
+        orphan = self._pending(store, busy)
+        if orphan:
+            return orphan
         entries = [q for q in store.queue
                    if q.format_id == self.id
                    and store.entrant_available(q.entrant_id, busy)]
@@ -900,6 +1060,35 @@ class Swiss(Format):
             label="Swiss", meta={"phase": "swiss", "round": self._rounds_done(store)},
             scoring=self.scoring().to_dict(),
         ), entrants=[a.entrant_id, b.entrant_id])
+
+    def warnings(self, store):
+        """The paced draw has one arithmetic trap and one way of getting
+        stuck in it, and both are silent — which is the worst part, because
+        they only show up at the moment you want the knockout."""
+        if not self.paced():
+            return []
+        out = []
+        field = [e for e in self.entrant_ids if self._eligible(store, e)]
+        rounds = int(self.config.get("rounds", 0) or 0)
+        n = len(field)
+        # every match adds two to the total games played, so the field can
+        # only all reach the round count if n * rounds is even
+        if n and rounds and (n * rounds) % 2:
+            out.append(
+                f"{n} entrants over {rounds} rounds cannot come out even — "
+                f"every match is worth two games played, so one of them will "
+                f"finish a game short. Nothing stops: the knockout is drawn "
+                f"when there is nobody left to pair, and you are told who it "
+                f"was. An even number of rounds avoids it altogether; so does "
+                f"strict rounds, which hands out a bye instead.")
+        short = self.short_of_budget(store) if self.phase == "ko" else []
+        if short:
+            who = " and ".join(store.entrant_name(e) for e in short)
+            out.append(
+                f"{who} finished a game short — the field could not come out "
+                f"even, so there was nobody left to play. Everything else ran "
+                f"to its round count.")
+        return out
 
     def _round_budget(self):
         if not self.config.get("continuous"):

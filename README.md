@@ -144,6 +144,30 @@ immediately, and the console says so instead of pretending. Nobody is put in
 the queue by hand: everyone in a running cup who is not on a table and not
 sitting out is waiting.
 
+*Gone home* takes somebody out for good. Every match they still owed is
+recorded as a walkover to whoever was waiting on them, which frees the table
+they were standing at, lets the round close and lets the bracket resolve, and
+they carry no place into the knockout. What they already played still counts
+for the people they played — an opponent's evening should not change because
+somebody else left. It is reversible.
+
+A partner dropping out of a pair is a different thing, and the answer is to
+type the substitute's name over theirs. Both halves of a pair are editable, on
+a doubles night as much as anywhere, and the team name follows along unless
+you gave it one of your own. The club directory is not rewritten underneath
+you: the player is re-pointed at whoever the new name is, so nobody's stored
+strength gets somebody else's identity.
+
+*Sit out* is the lighter one — not this match, rather than not tonight. It now
+holds a scheduled fixture rather than being quietly ignored by it, and the
+board says which fixtures are waiting on whom.
+
+Correcting a group or Swiss result after the cut re-draws the bracket around
+whoever qualifies now — as long as nobody has played in it yet. Once a
+knockout match is under way the draw is left alone and the console says the
+two no longer agree, because tearing up a round people have already played is
+worse than a wrong seed.
+
 Hover any result and *Edit result* reopens the same pad it was entered on.
 Saving a different score puts it right and re-resolves whatever it decided
 in later rounds — a first-round score entered backwards fixes the bracket
@@ -233,8 +257,17 @@ sim.py           plays full events through every format
 `python3 sim.py` runs the lot: starvation, rematch bounds, byes, bracket
 byes, Swiss byes scoring a point, two formats sharing tables, replay
 determinism, correcting a result mid-bracket, fair table share between cups,
-a small draw not outrunning a big one, and paced Swiss holding the field to
-within one game of itself.
+a small draw not outrunning a big one, paced Swiss holding the field to
+within one game of itself, somebody walking out mid-match, one person entered
+in two cups never being called to two tables at once, and a corrected group
+score redrawing a bracket nobody has played in yet.
+
+A paced Swiss can only bring a field out even when entrants times rounds is
+even, because every match is worth two games played. Nine people over five
+rounds leaves one of them a game short and no knockout; nine over four is
+fine. The console says so when you set it up rather than when it bites, and
+offers the cut if it happens anyway. Strict rounds hands out a bye instead
+and has no such constraint.
 
 Adding a format means implementing `propose`, `on_result` and `standings`,
 then adding it to `KINDS`. The dispatcher does not need to know it exists.

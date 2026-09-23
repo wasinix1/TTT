@@ -83,8 +83,12 @@ class App:
                   now — between the fixtures a group stage or bracket set
         entered   in a draw that has not started yet
         outside   admitted to a cup that has no draw taking them: none set
-                  up yet, or one that started without them"""
+                  up yet, or one that started without them
+        withdrawn gone for the night; every fixture they owed has been
+                  settled as a walkover and nothing waits for them"""
         s = self.store
+        if not e.active:
+            return "withdrawn"
         for t in s.tables.values():
             m = s.matches.get(t.match_id) if t.match_id else None
             if m and e.id in (m.entrant_a, m.entrant_b, *(m.meta.get("queued") or [])):
@@ -128,13 +132,26 @@ class App:
                 if m.format_id == f.id and m.status == "done"]
         if not done:
             return []
-        if f.phase == "ko" or f.kind == "single_elim":
-            final = max(done, key=lambda m: (m.meta.get("round", 0), m.seq))
+        # Only knockout matches decide a knockout, and the third-place
+        # play-off is not the final — it is written with a higher round
+        # number than the final, so picking the highest round flat out
+        # announced whoever came third as the winner of the whole thing.
+        # The Swiss rounds before a cut outrank it the same way.
+        ko = [m for m in done if m.meta.get("phase") == "ko"
+              and m.meta.get("round_name") != "Third place"]
+        if ko:
+            final = max(ko, key=lambda m: (m.meta.get("round", 0), m.seq))
             win, lose = ((final.entrant_a, final.entrant_b) if final.winner == "a"
                          else (final.entrant_b, final.entrant_a))
             out = [{"place": 1, "name": s.entrant_name(win)}]
             if lose:
                 out.append({"place": 2, "name": s.entrant_name(lose)})
+            third = next((m for m in done
+                          if m.meta.get("round_name") == "Third place"
+                          and m.winner), None)
+            if third:
+                t = third.entrant_a if third.winner == "a" else third.entrant_b
+                out.append({"place": 3, "name": s.entrant_name(t)})
             return out
         rows = [r for sec in f.standings(s) for r in sec["rows"]]
         rows.sort(key=lambda r: (-r["won"], -r["game_diff"], -r["point_diff"], r["name"]))
@@ -241,6 +258,11 @@ class App:
                 "entrants": [{**e.to_dict(),
                               "strength": round(s.entrant_strength(e.id), 1),
                               "status": self.entrant_status(e),
+                              # which way out applies: delete them outright
+                              # while nothing depends on them, or withdraw
+                              # them and settle what they owe once something
+                              # does. The console shows whichever is true.
+                              "removable": not self._why_not_removable(e),
                               "resting": e.id in s.opted_out}
                              for e in sorted(s.entrants.values(),
                                              key=lambda e: e.name.lower())],
@@ -304,6 +326,23 @@ class App:
 
     def op_update_player(self, p):
         s = self.store
+        pl = s.players.get(p.get("id"))
+        name = " ".join(str(p.get("name") or "").split())
+        if pl and name and s.name_key(name) != s.name_key(pl.name):
+            # A rename is either a typo being fixed or a substitution —
+            # somebody else stepping into the team when a partner drops out,
+            # which is the fastest way to do it and therefore the way it
+            # will get done. Renaming the club record is right for the first
+            # and quietly wrong for the second: it rewrites a real member's
+            # identity, and their strength, because a roster line changed.
+            # Re-pointing this player at whoever the new name *is* works for
+            # both. The worst it leaves behind is a spare directory entry,
+            # which is visible in Setup and removable.
+            p = dict(p, name=name)
+            who = s.person_by_name(name)
+            if who is None:
+                who = self._person_for(name, p.get("strength", pl.strength))
+            p["person_id"] = who.id
         s.append("player_update", p)
         pl = s.players.get(p.get("id"))
         if pl and pl.person_id and pl.person_id in s.people and "strength" in p:
@@ -312,8 +351,6 @@ class App:
             s.append("person_update", {"id": pl.person_id,
                                        "strength": float(p["strength"]),
                                        "last_seen": s.event.get("id", "")})
-        if pl and pl.person_id and "name" in p:
-            s.append("person_update", {"id": pl.person_id, "name": p["name"]})
 
     def op_add_team(self, p):
         s = self.store
@@ -331,6 +368,36 @@ class App:
             self._resolve_cup(p["cup_id"])
         self.store.append("entrant_update", p)
 
+    def op_withdraw(self, p):
+        """Take somebody out of the event, or put them back.
+
+        Sitting out says "not this one"; this says "gone". The difference
+        matters to everything downstream: a rested entrant still owes their
+        fixtures and the draw waits for them, while a withdrawn one owes
+        nothing — every fixture they had is settled as a walkover to whoever
+        was waiting on them, which frees the table they were seated at, lets
+        the round close and lets the bracket resolve (see
+        dispatch.resolve_walkovers, which runs on the very next tick).
+
+        Nothing is deleted. The matches they played stay in the log and keep
+        counting for the people who played them, which is what you want —
+        an opponent's evening should not change because somebody else left.
+        Reversible: put them back and they return to the pool."""
+        s = self.store
+        e = s.entrants.get(p.get("entrant_id") or "")
+        if not e:
+            raise ValueError("no such entrant")
+        want_out = bool(p.get("withdrawn", True))
+        if want_out == (not e.active):
+            return {"entrant_id": e.id, "withdrawn": want_out, "walkovers": 0}
+        owed = [m for m in s.matches.values()
+                if m.status in ("pending", "live") and m.is_filled()
+                and e.id in (m.entrant_a, m.entrant_b)] if want_out else []
+        freed = sorted({m.table for m in owed if m.status == "live" and m.table})
+        s.append("entrant_update", {"id": e.id, "active": not want_out})
+        return {"entrant_id": e.id, "name": e.name, "withdrawn": want_out,
+                "walkovers": len(owed), "freed_tables": freed}
+
     def op_set_resting(self, p):
         """Sit somebody out, or bring them back. The queue itself is never
         edited by hand any more — it is whoever in the cup's pool is free
@@ -344,7 +411,22 @@ class App:
         self.store.append("table_set", p)
 
     def op_remove_table(self, p):
-        self.store.append("table_remove", p)
+        """Refuse while a match is on it.
+
+        Removing the table under a live match left the match with no table
+        and no status but "pending" — invisible on every screen, scoreable
+        from nowhere, and in a draw that pairs on demand, one that nothing
+        would ever pick up again. In a paced Swiss that also meant the cut
+        to the knockout never came, because it waits for nothing to be
+        outstanding. Put it back or score it first; both take one click."""
+        s = self.store
+        n = int(p["number"])
+        t = s.tables.get(n)
+        m = s.matches.get(t.match_id) if t and t.match_id else None
+        if m and m.status == "live":
+            raise ValueError(
+                f"table {n} has a match on it — score it or put it back first")
+        s.append("table_remove", p)
 
     def op_share_tables(self, p):
         """Every table back into the shared pool.
@@ -901,7 +983,8 @@ class App:
             raise ValueError("no such player")
         why = self._why_not_removable(e)
         if why:
-            raise ValueError(f"{why} — use Sit out, or reset the draw first")
+            raise ValueError(f"{why} — use Gone home, which settles what they "
+                             f"owe as walkovers, or reset the draw first")
         s.append("entrant_remove", {"id": e.id})
 
     def op_remove_entrants(self, p):
@@ -962,7 +1045,7 @@ OP_LEVEL = {
     "add_player": 2, "update_player": 2, "add_team": 2, "update_entrant": 2,
     "set_table": 2, "remove_table": 2, "share_tables": 2, "split_tables": 2,
     "add_format": 2, "update_format": 2, "start_format": 2, "remove_format": 2,
-    "reset_format": 2, "swiss_cut_ko": 2, "set_resting": 1,
+    "reset_format": 2, "swiss_cut_ko": 2, "set_resting": 1, "withdraw": 2,
     "add_cup": 2, "update_cup": 2, "remove_cup": 2, "merge_cups": 2,
     "join_queue": 1, "leave_queue": 1,
     "report": 1, "void_match": 1, "reopen_match": 1, "put_back": 2, "assign": 2,

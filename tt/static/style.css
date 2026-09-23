@@ -445,6 +445,13 @@ details.why p{margin:0 0 6px;line-height:1.5}
 .entry .drow:last-child{padding-bottom:11px}
 /* the partner line sits under the player, quieter but not grey-on-grey */
 .entry .drow + .drow > span:first-child{color:#4a4a46;font-weight:500}
+/* Both halves of a pair, under the team they make up: indented and a shade
+   quieter, so the row you scan is still the team and the people are detail
+   you drop to only when you need to change one. */
+.entry .drow.member{padding:5px 0 5px 18px;border-left:2px solid var(--edge);margin-left:2px}
+.entry .drow.member input{font-size:14px}
+@media (max-width:640px){.entry .drow.member{padding-left:12px}}
+
 /* a note the entrant typed — its own full-width .drow (app.js:1304) */
 .entry .sub{font-size:14px;line-height:1.45;color:var(--muted)}
 .subsec{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:14px 0 4px}

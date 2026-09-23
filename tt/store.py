@@ -199,15 +199,26 @@ class Store:
         if not pl:
             return
         if "name" in p:
+            was = pl.name
             pl.name = p["name"]
-            # a solo entrant's name is just its one player's name at the
-            # time it was created; keep it in sync or every picker (format
-            # entry, queue, match labels) keeps showing the old name forever
+            # An entrant's name is its players' names at the time it was
+            # created, unless somebody typed a team name over it. Keep the
+            # first kind in step — otherwise every picker, the queue, the
+            # match label and the wall all keep showing the old name for
+            # ever, which on a doubles night is how a substitute stays
+            # invisible. A name somebody chose is left alone.
             for e in self.entrants.values():
-                if e.player_ids == [pl.id]:
-                    e.name = pl.name
+                if pl.id not in e.player_ids:
+                    continue
+                nm = lambda q: (was if q == pl.id
+                                else self.players[q].name if q in self.players else "")
+                if e.name == " / ".join(nm(q) for q in e.player_ids):
+                    e.name = " / ".join(self.players[q].name
+                                        for q in e.player_ids if q in self.players)
         if "strength" in p:
             pl.strength = float(p["strength"])
+        if "person_id" in p:
+            pl.person_id = p["person_id"]
         if "active" in p:
             pl.active = bool(p["active"])
             if not pl.active:
@@ -555,6 +566,10 @@ class Store:
         m = self.matches.get(p["match_id"])
         if not m:
             return
+        if p.get("walkover"):
+            # so every screen can say what this was rather than showing a
+            # whitewash somebody has to explain
+            m.meta["walkover"] = p["walkover"]
         m.games = [list(g) for g in p["games"]]
         m.winner = p.get("winner") or decide_winner(m.games, m.scoring)
         was_done = m.status == "done"
@@ -740,9 +755,15 @@ class Store:
     # --------------------------------------------------------- registration
 
     def cup_pool(self, cup_id):
-        """Everyone admitted to this cup, in the order they were admitted.
-        This is the one list a cup has; its draws read from it."""
-        return [e.id for e in self.entrants.values() if e.cup_id == cup_id]
+        """Everyone admitted to this cup and still in it, in the order they
+        were admitted. This is the one list a cup has; its draws read from it.
+
+        Somebody withdrawn is out of the pool but not out of the log: a draw
+        already under way keeps them in `entrant_ids` so the matches they
+        played still count for the people they played, and a draw that has
+        not started simply never sees them."""
+        return [e.id for e in self.entrants.values()
+                if e.cup_id == cup_id and e.active]
 
     def regs_for_cup(self, cup_id, status="pending"):
         return [r for r in (self.registrations[i] for i in self.registration_order
@@ -810,19 +831,54 @@ class Store:
         return durs[len(durs) // 2]
 
     def busy_players(self) -> set[str]:
+        """Who cannot be called to a table, by player id *and* by person id.
+
+        The person id is the load-bearing half. Somebody entered in the
+        singles and in a doubles cup is two Players with two different ids,
+        so a check on player ids alone happily calls the same human to two
+        tables at once — which is exactly the evening this is built for:
+        one singles cup and two doubles. Ids are prefixed ("P1" vs "N1"), so
+        the two kinds share a set without colliding."""
         out = set()
         for t in self.tables.values():
             if t.match_id and t.match_id in self.matches:
-                out.update(self.matches[t.match_id].players())
+                for pid in self.matches[t.match_id].players():
+                    out.add(pid)
+                    pl = self.players.get(pid)
+                    if pl and pl.person_id:
+                        out.add(pl.person_id)
         return out
 
     def entrant_available(self, eid: str, busy: set[str]) -> bool:
+        """Whether this entrant can be put on a table right now.
+
+        Resting counts here, not just in the queue. It used to be checked
+        only where the queue was built, so sitting somebody out stopped them
+        being paired in open play but did nothing at all about a group or
+        bracket fixture already on the books — the dispatcher seated it
+        anyway and called somebody who had asked not to be called."""
         e = self.entrants.get(eid)
         if not e or not e.active:
             return False
-        if any(pid in busy for pid in e.player_ids):
+        if eid in self.opted_out:
             return False
+        for pid in e.player_ids:
+            if pid in busy:
+                return False
+            pl = self.players.get(pid)
+            if pl and pl.person_id and pl.person_id in busy:
+                return False
         return all(self.players[p].active for p in e.player_ids if p in self.players)
+
+    def withdrawn(self, eid: str) -> bool:
+        e = self.entrants.get(eid)
+        return bool(e) and not e.active
+
+    def walkover_games(self, scoring) -> list[list[int]]:
+        """The score a walkover is recorded as: the minimum whitewash the
+        match's own scoring allows, so it decides cleanly and reads as what
+        it is wherever a result is shown."""
+        return [[scoring.points_to, 0] for _ in range(scoring.games_to_win())]
 
     def entrant_strength(self, eid: str) -> float:
         e = self.entrants.get(eid)
