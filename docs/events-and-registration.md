@@ -237,3 +237,9 @@ Later, deliberately not now: waitlists and caps, entry codes, pairing up the
 - Removing somebody from the pool is only possible before they have been drawn
   into a match or a started draw; after that it is Sit out. A confirmed
   registration goes back on the pre-registered list.
+- Two cups can be merged at the last minute from the door (each cup's header:
+  *Merge into…*). Pool, pending entries and reserved tables move to the other
+  cup; the merged cup and its unstarted draw are removed. Only while the merged
+  cup has not started, only between cups taking the same entry, and only into
+  a cup whose draw can still take people. It is ordinary log events, so
+  More → Log rewinds it.
