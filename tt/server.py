@@ -423,6 +423,48 @@ class App:
     def op_remove_cup(self, p):
         self.store.append("cup_remove", p)
 
+    def op_merge_cups(self, p):
+        """Fold one cup into another at the last minute — two thin cups
+        played as one. The pool is the cup's only list, so this only has to
+        say "everyone in B is now in A": the draw picks them up on the next
+        tick like any other admission. B's pending entries, and any tables
+        reserved for B, go with them; B's own draws and B itself go.
+
+        Only before B has started: once it has matches, its people have
+        results in B's standings and there is nothing honest to carry over.
+        A must still be able to take them, or they would land in a pool
+        with no draw."""
+        s = self.store
+        src, dst = s.cups.get(p.get("from") or ""), s.cups.get(p.get("into") or "")
+        if not src or not dst:
+            raise ValueError("no such cup")
+        if src.id == dst.id:
+            raise ValueError("a cup cannot merge into itself")
+        if (src.entry or "single") != (dst.entry or "single"):
+            raise ValueError(f"{src.name} and {dst.name} take different entries "
+                             "— one is singles, one is pairs")
+        fs = lambda cid: [f for f in s.formats.values() if s.cup_of_format(f) == cid]
+        if any(f.status != "setup" for f in fs(src.id)):
+            raise ValueError(f"{src.name} has already started — reset its draw first")
+        if any(f.status != "setup" and not f.takes_new_entrants() for f in fs(dst.id)):
+            raise ValueError(f"{dst.name}'s draw has started and cannot take anybody new")
+
+        for e in [e for e in s.entrants.values() if e.cup_id == src.id]:
+            s.append("entrant_update", {"id": e.id, "cup_id": dst.id})
+        for r in [r for r in s.registrations.values() if r.cup_id == src.id]:
+            s.append("registration_update", {"id": r.id, "cup_id": dst.id})
+        for n in sorted(s.tables):
+            if s.tables[n].cup_id == src.id:
+                s.append("table_set", {"number": n, "cup_id": dst.id})
+        for f in fs(src.id):
+            s.append("format_remove", {"id": f.id})
+        if src.registration == "open" and dst.registration != "open":
+            # whoever would have signed up for B can still sign up
+            s.append("cup_update", {"id": dst.id, "registration": "open"})
+        s.append("cup_remove", {"id": src.id})
+        self._match_seekers(dst.id)      # two lone seekers may now be a team
+        return {"into": dst.id}
+
     # queue — the console does not use these any more: who waits is worked
     # out from the pool (dispatch.sync_queues), and sitting out is
     # set_resting. They stay as the low-level way to force an entry.
@@ -921,7 +963,7 @@ OP_LEVEL = {
     "set_table": 2, "remove_table": 2, "share_tables": 2, "split_tables": 2,
     "add_format": 2, "update_format": 2, "start_format": 2, "remove_format": 2,
     "reset_format": 2, "swiss_cut_ko": 2, "set_resting": 1,
-    "add_cup": 2, "update_cup": 2, "remove_cup": 2,
+    "add_cup": 2, "update_cup": 2, "remove_cup": 2, "merge_cups": 2,
     "join_queue": 1, "leave_queue": 1,
     "report": 1, "void_match": 1, "reopen_match": 1, "put_back": 2, "assign": 2,
     "manual_match": 2, "manual_result": 1, "event_meta": 2, "rewind": 2,

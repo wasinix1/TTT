@@ -1535,6 +1535,53 @@ def test_the_board_shows_the_next_pairing():
     shutil.rmtree(d)
 
 
+def test_merging_cups():
+    print("\n[two thin cups folded into one at the last minute]")
+    app, d = fresh()
+    s = app.store
+    a, b = pool_event(app, cups=2)
+    app.act("admin", "split_tables", {"assignments": {"1": a, "2": b}})
+    for n in ("Ana", "Ben"):
+        admit(app, n, a)
+    for n in ("Cleo", "Dan", "Eve"):
+        admit(app, n, b)
+    reg = app.act("public", "register", {"cup_id": b, "name": "Late Fritz", "strength": 5,
+                                         "kind": "single"})["registration_id"]
+    fb = s.cups[b].format_id
+    app.act("admin", "merge_cups", {"from": b, "into": a})
+    fa = s.formats[s.cups[a].format_id]
+    check(b not in s.cups and fb not in s.formats, "the merged cup and its draw are gone")
+    check(len(s.cup_pool(a)) == 5 and fa.entrant_ids == s.cup_pool(a),
+          "everyone in it is in the other cup's pool, and its draw")
+    check(s.registrations[reg].cup_id == a, "pre-registered entries follow them")
+    check(s.tables[2].cup_id == a, "and so do the tables reserved for it")
+
+    c = app.act("admin", "add_cup", {"name": "Doubles"})["cup_id"]
+    app.act("admin", "update_cup", {"id": c, "entry": "pair"})
+    for body, why in (({"from": c, "into": a}, "singles and pairs do not merge"),
+                      ({"from": a, "into": a}, "a cup does not merge into itself")):
+        try:
+            app.act("admin", "merge_cups", body)
+            ok = False
+        except ValueError:
+            ok = True
+        check(ok, why)
+
+    g = app.act("admin", "add_cup", {"name": "Late"})["cup_id"]
+    admit(app, "Gus", g)
+    app.act("admin", "start_format", {"id": fa.id})
+    try:
+        app.act("admin", "merge_cups", {"from": a, "into": g})
+        ok = False
+    except ValueError:
+        ok = True
+    check(ok and a in s.cups, "a cup that has started cannot be merged away")
+    app.act("admin", "merge_cups", {"from": g, "into": a})
+    check(s.entrants[s.cup_pool(a)[-1]].name == "Gus" and s.cup_pool(a)[-1] in fa.entrant_ids,
+          "but a running Swiss can still take a cup folded into it")
+    shutil.rmtree(d)
+
+
 if __name__ == "__main__":
     test_open_play()
     test_scramble()
@@ -1579,6 +1626,7 @@ if __name__ == "__main__":
     test_a_failed_cascade_is_all_or_nothing()
     test_the_pool()
     test_the_pool_rules()
+    test_merging_cups()
     test_resting_and_put_back()
     test_a_reset_draw_leaves_no_old_bracket()
     test_the_board_shows_the_next_pairing()

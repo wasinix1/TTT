@@ -1454,7 +1454,14 @@ function cupPeople(c, pending, allEnts, q) {
   ].filter(Boolean).join(' · ');
   // a matched team is one row and one confirm, so it counts once
   const teams = rows.filter(r => { const m = mateOf(r); return !(m && rows.includes(m) && m.id < r.id); });
-  return `${sec(c.name + (bits ? ' · ' + bits : ''))}
+  const into = mergeTargets(c);
+  const merging = !!form['mg_' + c.id];
+  const mergeBtn = !into.length ? '' : into.length === 1
+    ? `<button class="ghost tiny" data-act="merge-cup" data-c="${c.id}" data-i="${into[0].id}">Merge into ${esc(into[0].name)}</button>`
+    : `<button class="ghost tiny" data-act="merge-open" data-c="${c.id}">${merging ? 'Cancel' : 'Merge into…'}</button>`;
+  return `${sec(c.name + (bits ? ' · ' + bits : ''), mergeBtn)}
+    ${merging && into.length > 1 ? `<div class="inline">${into.map(t =>
+      `<button class="tiny" data-act="merge-cup" data-c="${c.id}" data-i="${t.id}">${esc(t.name)}</button>`).join('')}</div>` : ''}
     ${c.id === '__none' ? '' : `<div class="subsec"><h3>Pre-registered${allRows.length
         ? ` <span class="count">${allRows.length}</span>` : ''}</h3>${teams.length > 1
         ? `<button class="ghost tiny" data-act="admit-all" data-c="${c.id}">Confirm all ${teams.length}</button>` : ''}</div>
@@ -1465,6 +1472,16 @@ function cupPeople(c, pending, allEnts, q) {
         ? `<button class="ghost tiny" data-act="rm-all" data-c="${c.id}">Remove all ${allEnts.length}</button>` : ''}</div>`}
     ${ents.length ? `<div class="rows">${ents.map(e => personRow(e)).join('')}</div>`
       : `<p class="blank">${allEnts.length ? 'None match.' : 'Nobody in this cup yet.'}</p>`}`;
+}
+
+/* Where this cup could be folded at the last minute: another cup taking the
+   same kind of entry, and only while this one has not started — once it has
+   matches there is nothing honest to carry over. The server checks the same
+   (App.op_merge_cups), plus that the other cup's draw can still take them. */
+function mergeTargets(c) {
+  if (!c.id || c.id === '__none' || S.cups.length < 2) return [];
+  if (fmtsOfCup(c.id).some(f => f.status !== 'setup')) return [];
+  return S.cups.filter(o => o.id !== c.id && (o.entry || 'single') === (c.entry || 'single'));
 }
 
 function personRow(e) {
@@ -1939,6 +1956,19 @@ document.addEventListener('click', async e => {
       closeTeamModal();
       if (out.where === 'roster') toast(`Added to the roster — ${out.why}`);
     }
+    return;
+  }
+  if (a === 'merge-open') { form['mg_' + b.dataset.c] = !form['mg_' + b.dataset.c]; return renderSheet(); }
+  if (a === 'merge-cup') {
+    const from = cupById(b.dataset.c), into = cupById(b.dataset.i);
+    if (!from || !into) return;
+    const n = S.entrants.filter(e => e.cup_id === from.id).length;
+    const r = (S.registrations || []).filter(x => x.cup_id === from.id && x.status === 'pending').length;
+    if (!confirm(`Merge ${from.name} into ${into.name}? ` +
+      `${n} in the pool${r ? ` and ${r} pre-registered` : ''} move across, with any tables reserved for ${from.name}. ` +
+      `${from.name} and its draw are removed; ${into.name}'s draw and settings are kept.`)) return;
+    const out = await api('merge_cups', { from: from.id, into: into.id });
+    if (out) { form['mg_' + from.id] = false; toast(`${from.name} merged into ${into.name}`); }
     return;
   }
   if (a === 'rm-all') {
