@@ -1,11 +1,17 @@
 @import url('https://fonts.googleapis.com/css2?family=Syne:wght@400..800&display=swap');
 
-/* TTT — GUI revamp v1.
+/* TTT — GUI, final.
    White paper, black ink, one red. The red is the only colour in the system
    and it is never decoration: it marks the live table, the pair who should be
    walking over, the seat that qualified, the match being played right now.
    Blocks sit flat on the page separated by a 2px gutter instead of borders,
-   so the grid reads as one object rather than a set of framed boxes. */
+   so the grid reads as one object rather than a set of framed boxes.
+
+   This file is the deployed stylesheet with the console brought back to the
+   mock. Six things had drifted: a rule under the header, a top pad on main,
+   a flat page gutter, stretched table rows, solid-white score boxes with red
+   numerals, and hairline dividers between rows. All are fixed in place — no
+   appended override block. */
 
 :root{
   --ground:#ffffff;
@@ -23,7 +29,7 @@
 
   --sans:"Syne",ui-sans-serif,system-ui,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
   --gap:2px;          /* the gutter between blocks */
-  --pad:18px;         /* page padding, previously conflated with --gap */
+  --pad:clamp(16px,3vw,26px);  /* page gutter, breathes with the viewport */
   --r:8px;            /* panels and cards */
   --r-sm:6px;         /* inputs */
   --r-xs:5px;         /* chips and tiny buttons */
@@ -46,13 +52,14 @@ h1,h2,h3{margin:0;font-weight:700;letter-spacing:-.02em}
 a{color:var(--signal);text-decoration:none}
 a:hover{color:var(--chalk)}
 
-/* ------------------------------------------------------------------- bar */
+/* ------------------------------------------------------------------- bar
+   No rule under the header. The page is separated by gutters, not lines. */
 .bar{
   display:flex;align-items:center;justify-content:space-between;gap:12px;
-  padding:14px var(--pad);border-bottom:1px solid var(--edge);
+  padding:14px var(--pad);border-bottom:none;
   position:sticky;top:0;z-index:20;background:var(--ground);
 }
-.bar-left{display:flex;align-items:center;gap:13px;min-width:0}
+.bar-left{display:flex;align-items:center;gap:14px;min-width:0}
 .bar-right{display:flex;align-items:center;gap:12px}
 /* the ball, still a dot — swap the element for the letters TTT if you want
    the wordmark from the landing page (see CHANGES.md) */
@@ -65,11 +72,19 @@ a:hover{color:var(--chalk)}
   font-size:20px;font-weight:800;letter-spacing:-.04em;color:var(--chalk);
 }
 .bar h1{font-size:18px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.role-tag{font-size:13px;color:var(--muted)}
+.role-tag{font-size:13px;font-weight:500;color:var(--muted)}
 .pulse{width:9px;height:9px;border-radius:50%;background:var(--dim);transition:background .25s}
 .pulse.on{background:var(--signal)}
+/* Setup is the one control in the bar — a grey chip, not a transparent word.
+   (index.html marks it .ghost; this wins on id specificity.) */
+#setup-btn{
+  background:var(--surface);color:var(--chalk);
+  font-size:14px;font-weight:600;padding:9px 15px;
+}
+#setup-btn:hover{background:var(--chalk);color:var(--ground)}
 
-main{padding:var(--pad) var(--pad) 40px;max-width:1400px;margin:0 auto}
+/* the sticky cup tabs already end on 14px, so main carries no top pad */
+main{padding:0 var(--pad) 40px;max-width:1400px;margin:0 auto}
 
 /* -------------------------------------------------------------- cup tabs */
 .cup-tabs[hidden]{display:none}
@@ -81,9 +96,11 @@ main{padding:var(--pad) var(--pad) 40px;max-width:1400px;margin:0 auto}
 .cup-tabs button:hover{background:var(--edge);color:var(--chalk)}
 .cup-tabs button.on{background:var(--chalk);color:var(--ground);font-weight:700}
 
-/* ---------------------------------------------------------------- tables */
+/* ---------------------------------------------------------------- tables
+   align-items:start — auto-fit rows stretch by default, which lets one live
+   card set the height of every idle card beside it. A card is its content. */
 #tables{
-  display:grid;gap:var(--gap);
+  display:grid;gap:var(--gap);align-items:start;
   grid-template-columns:repeat(auto-fit,minmax(300px,1fr));
   margin-bottom:var(--gap);
 }
@@ -95,6 +112,8 @@ main{padding:var(--pad) var(--pad) 40px;max-width:1400px;margin:0 auto}
 /* a live table is a red block, legible from the far side of the room */
 .table-card.live{background:var(--signal);color:var(--on-signal)}
 .table-card.paused{opacity:.5}
+/* a free table is quieter than a played one */
+.table-card:not(.live):not(.has-match){opacity:.72}
 .table-head{display:flex;align-items:baseline;gap:12px}
 .table-no{
   font-size:38px;font-weight:800;line-height:.85;letter-spacing:-.05em;
@@ -102,7 +121,7 @@ main{padding:var(--pad) var(--pad) 40px;max-width:1400px;margin:0 auto}
 }
 .table-card:not(.live) .table-no{color:var(--chalk)}
 .table-card.empty .table-no,
-.table-card:not(.live):not(.has-match) .table-no{color:var(--muted)}
+.table-card:not(.live):not(.has-match) .table-no{color:var(--dim)}
 .table-name{
   font-size:13px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;
   color:var(--muted);flex:1;
@@ -110,19 +129,37 @@ main{padding:var(--pad) var(--pad) 40px;max-width:1400px;margin:0 auto}
 .table-state{font-size:13px;font-weight:600;color:var(--muted)}
 .table-card.live .table-name{color:rgba(255,255,255,.78)}
 .table-card.live .table-state{color:var(--on-signal)}
+/* Pause is not part of the head lockup — a rare action, held until the card
+   is hovered or the button takes focus. On touch it is always visible. */
+.table-head button{
+  background:transparent;color:var(--muted);
+  padding:7px 12px;font-size:13px;font-weight:600;border-radius:var(--r-xs);
+  opacity:0;transition:opacity .12s,background .09s,color .09s;
+}
+.table-card.live .table-head button{color:rgba(255,255,255,.78)}
+.table-card:hover .table-head button,
+.table-card .table-head button:focus-visible{opacity:1}
+.table-card:not(.live) .table-head button:hover{background:var(--raised);color:var(--chalk)}
+.table-card.live .table-head button:hover{background:rgba(255,255,255,.16);color:var(--on-signal)}
+@media (hover:none){.table-head button{opacity:1}}
 
 .match-label{font-size:12px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.08em}
 .table-card.live .match-label{color:rgba(255,255,255,.78)}
 .versus{display:flex;flex-direction:column;gap:8px;flex:1;justify-content:center}
 .side{display:flex;align-items:baseline;gap:10px}
-.side-name{font-size:23px;font-weight:700;letter-spacing:-.025em;line-height:1.15}
+.side-name{font-size:23px;font-weight:700;letter-spacing:-.025em;line-height:1.1}
 .side-sub{font-size:13px;color:var(--muted)}
 .vs{font-size:12px;font-weight:600;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);margin:1px 0}
 .table-card.live .side-sub{color:rgba(255,255,255,.72)}
 .table-card.live .vs{color:rgba(255,255,255,.6)}
 .empty-table{color:var(--muted);font-size:16px;display:flex;flex:1;align-items:center}
 
-/* ------------------------------------------------------------- score pad */
+/* ------------------------------------------------------------- score pad
+   The boxes are wells sunk into the red, with white numerals. An earlier
+   pass made them solid white with red type so they would read across a
+   room; it cost the card its hierarchy — four rectangles brighter than the
+   action that ends the match, and the only red type in the app sitting on
+   the only red ground. */
 .pad{border-top:1px solid var(--edge);padding-top:14px;display:flex;flex-direction:column;gap:11px}
 .table-card.live .pad{border-top-color:rgba(255,255,255,.28)}
 .games{display:flex;flex-wrap:wrap;gap:8px}
@@ -133,6 +170,7 @@ main{padding:var(--pad) var(--pad) 40px;max-width:1400px;margin:0 auto}
   border:none;border-radius:var(--r-xs);font-size:18px;font-weight:700;
 }
 .table-card.live .game input{background:rgba(255,255,255,.16);color:var(--on-signal)}
+.table-card.live .game input::placeholder{color:rgba(255,255,255,.5)}
 .game input:focus{outline:2px solid var(--chalk);outline-offset:-2px}
 .table-card.live .game input:focus{outline-color:var(--on-signal)}
 .game .sep{color:var(--muted);font-size:13px;font-weight:600}
@@ -157,10 +195,11 @@ button.ghost:hover{background:var(--surface);color:var(--chalk)}
 button.tiny{padding:7px 12px;font-size:13px;border-radius:var(--r-xs);font-weight:700}
 button:disabled{opacity:.4;cursor:default}
 button:disabled:hover{background:var(--surface);color:var(--chalk)}
-/* inside a live card the ground is red, so the buttons invert */
+/* inside a live card the ground is red, so the buttons invert. One opaque
+   object on the red: the action that ends the match. */
 .table-card.live button{background:rgba(255,255,255,.16);color:var(--on-signal)}
 .table-card.live button:hover{background:rgba(255,255,255,.26)}
-.table-card.live button.primary{background:var(--raised);color:var(--signal)}
+.table-card.live button.primary{background:var(--raised);color:var(--signal);font-weight:700}
 .table-card.live button.primary:hover{background:var(--chalk);color:var(--ground)}
 
 /* ----------------------------------------------------------------- panels */
@@ -180,36 +219,37 @@ button:disabled:hover{background:var(--surface);color:var(--chalk)}
 .panel-body.flush{padding:0 0 6px}
 .blank{color:var(--muted);font-size:14px;padding:12px 18px}
 
-/* ------------------------------------------------------------------ rows */
+/* ------------------------------------------------------------------ rows
+   No dividers. --hair on --surface is a 1.5% step: too faint to be a rule,
+   too present to be a gap. Rows are told apart by their own air, by weight,
+   and by the wash on the pair who are next. */
 .row{
   display:flex;align-items:center;gap:12px;
-  padding:12px 18px;border-bottom:1px solid var(--hair);
+  padding:12px 18px;border-bottom:none;
 }
-.row:last-child{border-bottom:none}
-.row .pos{font-size:13px;font-weight:700;color:var(--muted);width:20px;flex:none}
-.row .nm{flex:1;min-width:0;font-size:16px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.row .pos{font-size:13px;font-weight:700;color:var(--dim);width:20px;flex:none}
+.row .nm{flex:1;min-width:0;font-size:16px;font-weight:500}
 .row .meta{font-size:15px;font-weight:700;letter-spacing:-.01em;color:var(--chalk);flex:none}
 .row.waiting-long .pos{color:var(--signal)}
-.row.blocked{opacity:.45}
+.row.blocked{opacity:.6}
 .chip{
-  font-size:12px;font-weight:600;color:var(--muted);border:none;
+  font-size:12px;font-weight:700;color:var(--muted);border:none;
   border-radius:var(--r-xs);padding:5px 9px;flex:none;letter-spacing:.04em;
 }
-.chip.hot{color:var(--signal);background:var(--signal-wash);font-weight:700}
-.chip.next{color:var(--on-signal);background:var(--signal);font-weight:700}
-.chip.where{color:var(--muted)}
+.chip.hot{color:var(--signal);background:var(--signal-wash)}
+.chip.next{color:var(--on-signal);background:var(--signal)}
+.chip.where,.chip.when{color:var(--muted);background:transparent}
 /* a state, not an action */
 .chip.state{color:var(--chalk);background:var(--edge)}
-.chip.when{color:var(--muted)}
 /* added upstream after v1: a quieter chip, and a chip that warns without
    claiming the live-table red as a fill */
-.chip.dim{color:var(--dim)}
-.chip.warn{color:var(--signal);background:var(--signal-wash);font-weight:700}
+.chip.dim{color:var(--muted);background:transparent}
+.chip.warn{color:var(--signal);background:var(--signal-wash)}
 /* whoever should be putting their shoes on */
 .row.ondeck{background:var(--signal-wash)}
 .row.ondeck .pos{color:var(--signal)}
 .row.ondeck .nm{font-weight:600}
-.row.ondeck .chip.when{color:var(--on-signal);background:var(--signal);font-weight:700}
+.row.ondeck .chip.when{color:var(--on-signal);background:var(--signal)}
 /* an action that would otherwise be a button on every single row */
 .row .on-hover{opacity:0;transition:opacity .12s}
 .row.hoverable:hover .on-hover,
@@ -231,11 +271,16 @@ table.grid th{
   letter-spacing:.08em;text-transform:uppercase;
   padding:0 18px 8px;border-bottom:none;
 }
-table.grid td{padding:11px 18px;border-bottom:1px solid var(--hair)}
-table.grid tr:last-child td{border-bottom:none}
+table.grid td{padding:11px 18px;border-bottom:none}
 table.grid td.n,table.grid th.n{text-align:right;width:1%;white-space:nowrap}
+/* the rank column is 1% of the table, not an equal share of it */
+table.grid th:first-child,table.grid td:first-child{
+  width:1%;white-space:nowrap;text-align:right;padding-right:0;
+}
+table.grid th:nth-child(2),table.grid td:nth-child(2){padding-left:14px}
 table.grid tr.qualified td{color:var(--chalk);font-weight:700}
 table.grid tr.qualified td:first-child{box-shadow:inset 3px 0 0 var(--signal);color:var(--signal)}
+table.grid tr.qualified td:nth-child(2){letter-spacing:-.01em}
 
 /* --------------------------------------------------------------- bracket */
 .bracket{display:flex;gap:var(--gap);overflow-x:auto;padding:0 18px 18px}
@@ -246,10 +291,10 @@ table.grid tr.qualified td:first-child{box-shadow:inset 3px 0 0 var(--signal);co
 }
 .bmatch{border:none;border-radius:var(--r-sm);overflow:hidden;background:var(--raised)}
 .bmatch div{padding:9px 12px;font-size:14px;display:flex;justify-content:space-between;gap:8px}
-.bmatch div:first-child{border-bottom:1px solid var(--hair)}
+.bmatch div:first-child{border-bottom:1px solid #ededea}
 .bmatch .won{color:var(--chalk);font-weight:700}
 .bmatch .lost{color:var(--muted);font-weight:500}
-.bmatch .tbd{color:var(--muted);font-style:italic}
+.bmatch .tbd{color:var(--dim);font-style:italic}
 .bmatch.live{box-shadow:inset 0 0 0 2px var(--signal)}
 
 /* ----------------------------------------------------------------- sheet */
@@ -290,33 +335,31 @@ table.grid tr.qualified td:first-child{box-shadow:inset 3px 0 0 var(--signal);co
 fieldset{border:none;border-radius:var(--r);padding:16px 18px;margin:0;background:var(--surface)}
 legend{font-size:12px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);padding:0 6px}
 .pickers{display:grid;gap:var(--gap);grid-template-columns:repeat(auto-fill,minmax(165px,1fr));max-height:230px;overflow-y:auto}
-.pick{display:flex;align-items:center;gap:8px;font-size:15px;padding:7px 9px;border-radius:var(--r-sm);cursor:pointer}
+.pick{display:flex;align-items:center;gap:8px;font-size:15px;padding:7px 9px;border-radius:var(--r-sm);cursor:pointer;font-weight:500}
 .pick:hover{background:var(--surface)}
+.pick:has(input:checked){background:var(--raised);font-weight:600}
+.pick input[type=checkbox],.pick input[type=radio]{
+  accent-color:var(--signal);width:17px;height:17px;flex:none;margin:0;
+}
 .hr{height:1px;background:var(--edge);margin:8px 0}
-.key{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:13px;color:var(--signal);word-break:break-all}
+/* the share URLs are the one monospace thing in the app; on white they need
+   a ground of their own or they read as body copy */
+.key{
+  font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:13px;
+  color:var(--signal);word-break:break-all;
+  background:var(--surface);border-radius:var(--r-xs);padding:6px 9px;
+  display:inline-block;max-width:100%;min-width:0;
+}
+.card .key,.card-sub .key{background:var(--raised)}
+/* .key is a direct span child of .drow (app.js:1401) — the grid cell is what
+   has to be allowed to shrink, not a wrapper */
+.drow > .key{overflow-x:auto;white-space:nowrap;-webkit-overflow-scrolling:touch}
 
 .toast{
   position:fixed;left:50%;transform:translateX(-50%);bottom:26px;z-index:80;
   background:var(--chalk);color:var(--ground);border:none;border-radius:var(--r);
   padding:13px 20px;font-size:15px;font-weight:600;max-width:90vw;
 }
-
-@media (max-width:640px){
-  /* names matter more than tidy single lines on a phone */
-  .row{align-items:flex-start}
-  .row .nm{white-space:normal;overflow:visible;text-overflow:clip}
-  main{padding:12px 12px 30px}
-  .bar{padding:12px 12px}
-  .cup-tabs{padding:0 12px 12px}
-  .table-no{font-size:32px}
-  .side-name{font-size:20px}
-  .sheet{padding:0}
-  .sheet-inner{max-height:100vh;height:100vh;border-radius:0}
-  /* the scorepad is the one thing entered standing at a table */
-  .game input{width:58px;padding:11px 4px;font-size:19px}
-  button{padding:11px 16px}
-}
-@media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
 
 /* --------------------------------------------------- setup: the event tab */
 .sec{display:flex;align-items:baseline;gap:12px;margin:30px 0 12px}
@@ -331,6 +374,13 @@ legend{font-size:12px;font-weight:600;letter-spacing:.06em;text-transform:upperc
 .card-body{padding:18px;display:flex;flex-direction:column;gap:14px}
 .card-sub{border-top:1px solid var(--edge);padding:16px 18px;display:flex;flex-direction:column;gap:12px}
 .card-sub.muted{background:rgba(10,10,10,.03)}
+/* .card-sub.muted is darker again and needs the white input back explicitly */
+.card-sub.muted .field input,.card-sub.muted .field select,
+.card-sub.muted .field textarea,
+.card-sub.muted .rows input,.card-sub.muted .rows select{background:var(--raised)}
+/* inputs inside a grey fieldset need the white back or they vanish */
+.sheet-body fieldset .field input,.sheet-body fieldset .field select,
+.sheet-body fieldset .field textarea{background:var(--raised)}
 
 /* one header row, then rows that are values — no label per cell */
 .rows{display:flex;flex-direction:column}
@@ -339,8 +389,7 @@ legend{font-size:12px;font-weight:600;letter-spacing:.06em;text-transform:upperc
   font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);
   padding:0 0 8px;border-bottom:none;
 }
-.drow{border-bottom:1px solid var(--hair)}
-.drow:last-child{border-bottom:none}
+.drow{border-bottom:none}
 .rows input,.rows select{
   background:var(--raised);color:var(--chalk);border:none;
   border-bottom:2px solid transparent;
@@ -354,10 +403,12 @@ legend{font-size:12px;font-weight:600;letter-spacing:.06em;text-transform:upperc
 .sumline{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
 .sumline .what{font-size:15px;font-weight:700}
 .sumline .cfg{font-size:14px;font-weight:500;color:var(--muted);flex:1;min-width:0}
+.sumline a{color:var(--signal);text-decoration:none}
+.sumline a:hover{color:var(--chalk)}
 
 /* prose that is true but not needed every time */
 details.why{font-size:13px;color:var(--muted)}
-details.why > summary{cursor:pointer;color:var(--muted);list-style:none;width:max-content}
+details.why > summary{cursor:pointer;color:var(--muted);list-style:none;width:max-content;font-weight:600}
 details.why > summary::-webkit-details-marker{display:none}
 details.why > summary::before{content:"?";
   display:inline-grid;place-items:center;width:16px;height:16px;margin-right:7px;
@@ -365,7 +416,7 @@ details.why > summary::before{content:"?";
 }
 details.why > summary:hover{color:var(--chalk)}
 details.why[open] > summary{margin-bottom:6px}
-details.why p{margin:0 0 6px}
+details.why p{margin:0 0 6px;line-height:1.5}
 
 .warn-in{
   border-left:2px solid var(--signal);background:var(--signal-wash);
@@ -384,63 +435,11 @@ details.why p{margin:0 0 6px}
   font-size:11px;font-weight:700;vertical-align:1px;
 }
 .tabs button.on .count{background:var(--on-signal);color:var(--chalk)}
-.sumline a{color:var(--signal);text-decoration:none}
-.sumline a:hover{color:var(--chalk)}
 
-/* one pending entry is one block */
+/* ---------------------------------------------------------- door tab
+   One pending entry is one block: two .drow lines inside one .entry. */
 .entry{padding:2px 0}
 .entry + .entry{border-top:1px solid var(--edge)}
-.entry .drow{border-bottom:none}
-
-@media (max-width:640px){
-  .hrow{display:none}
-  .drow{display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:11px 0}
-  .drow > input,.drow > select{flex:1 1 130px;min-width:0}
-  .drow > .num{flex:0 0 auto;min-width:18px;text-align:left}
-  .drow > span:not(.num):not(.acts){flex:1 1 100%;min-width:0}
-  .drow > .acts{flex:1 1 100%;justify-content:flex-start}
-  .sec{margin:20px 0 10px}
-}
-
-/* ===================================================================
-   Screens designed after the first pass: the Door / Event / Links /
-   More sheet tabs, manual entry, the inline editor and the event
-   wizard. Every selector below was either unstyled before or is a
-   light-theme gap that only appeared once those screens were built.
-   =================================================================== */
-/* ---------------------------------------------------- inputs on grey cards
-   v1 put form inputs on white. Inside .card and .card-sub the ground is
-   already grey, so a white input reads correctly — but .card-sub.muted is
-   darker again and needs the white back explicitly. */
-.card-sub.muted .field input,.card-sub.muted .field select,
-.card-sub.muted .field textarea,
-.card-sub.muted .rows input,.card-sub.muted .rows select{background:var(--raised)}
-
-/* ------------------------------------------------------------------ picks
-   Checkboxes were inheriting the browser's blue. */
-.pick input[type=checkbox],.pick input[type=radio]{
-  accent-color:var(--signal);width:17px;height:17px;flex:none;margin:0;
-}
-.pick{font-weight:500}
-.pick:has(input:checked){background:var(--raised);font-weight:600}
-
-/* ------------------------------------------------------------------ links
-   The share URLs are the one monospace thing in the app. On white they need
-   a ground of their own or they read as body copy. */
-.key{
-  background:var(--surface);border-radius:var(--r-xs);padding:6px 9px;
-  display:inline-block;max-width:100%;min-width:0;
-}
-/* only where the ground is actually grey — .rows lives on .sheet-body (white),
-   so the chip there keeps --surface or it disappears */
-.card .key,.card-sub .key{background:var(--raised)}
-/* .key is a direct span child of .drow (app.js:1401) — the grid cell is what
-   has to be allowed to shrink, not a wrapper */
-.drow > .key{overflow-x:auto;white-space:nowrap;-webkit-overflow-scrolling:touch}
-
-/* ------------------------------------------------------------- door tab
-   A pending pair is two .drow lines in one .entry. v1 gave .entry a top
-   border; these stop the inner rows from adding a second one. */
 .entry .drow{border-bottom:none;padding:9px 0}
 .entry .drow:first-child{padding-top:11px}
 .entry .drow:last-child{padding-bottom:11px}
@@ -448,50 +447,36 @@ details.why p{margin:0 0 6px}
 .entry .drow + .drow > span:first-child{color:#4a4a46;font-weight:500}
 /* a note the entrant typed — its own full-width .drow (app.js:1304) */
 .entry .sub{font-size:14px;line-height:1.45;color:var(--muted)}
+.subsec{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:14px 0 4px}
+.subsec h3{margin:0;font-size:12px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
+.subsec .count{color:var(--signal);margin-left:4px}
+.entry .tag{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:10px 0 0}
+.dupnote{font-size:13px;font-weight:600;color:var(--signal);background:var(--signal-wash);border-radius:var(--r-xs);padding:8px 10px;margin:2px 0 8px}
+.dupnote[hidden]{display:none}
+.door-search{max-width:420px}
 
 /* ------------------------------------------------------ destructive tinies
-   .danger exists in the original CSS but had no tiny variant. Red text on a
-   red wash rather than a red fill — a fill competes with the live table.
-   (Undo on a result row is .ghost.tiny, app.js:239, and stays quiet.) */
+   Red text on a red wash rather than a red fill — a fill competes with the
+   live table. (Undo on a result row is .ghost.tiny, app.js:239.) */
 button.danger.tiny{background:var(--signal-wash);color:var(--signal)}
 button.danger.tiny:hover{background:var(--signal);color:var(--on-signal)}
 
 /* ---------------------------------------------------------------- wizard
    No rules needed: renderWizard (app.js:648) writes its steps into the
    sheet's own #tabs nav as <button class="on" data-wstep="…">1. Event</button>,
-   so they inherit .tabs button / .tabs button.on from v1 — the wizard's
-   numbered steps and the sheet's Door/Event/Links/More tabs are deliberately
-   the same control in the same place. */
-
-/* ------------------------------------------------------------ details.why
-   v1 styled the marker; the summary text itself was still body weight. */
-details.why > summary{font-weight:600}
-details.why p{line-height:1.5}
+   so they inherit .tabs button / .tabs button.on — the wizard's numbered
+   steps and the Door/Event/Links/More tabs are deliberately the same control
+   in the same place. */
 
 /* --------------------------------------------------------- manual entry
    renderManual (app.js:381) emits a plain .panel-body — no .flush — holding
-   .field blocks and a .games row, so v1's .panel-body padding already
-   applies. Only the score row needed air above it. */
+   .field blocks and a .games row. Only the score row needed air above it. */
 #manual-entry .games{margin-top:6px}
 
 /* --------------------------------------------------------- inline editor
-   renderEditor (app.js:332) emits .sheet-inner.narrow, which v1 already
-   styles and caps at 460px. Nothing to add but the inner padding, since the
-   editor has no .sheet-body wrapper of its own. */
+   renderEditor (app.js:332) emits .sheet-inner.narrow, capped at 460px. The
+   editor has no .sheet-body wrapper of its own, so it needs inner padding. */
 #editor .games,#editor .versus,#editor .pad-row{padding-left:18px;padding-right:18px}
-
-/* the active tab's count badge inverts with its tab */
-.tabs button.on .count{background:var(--on-signal);color:var(--chalk)}
-
-/* ---------------------------------------------------------------- mobile
-   The setup sheet is where a phone hurts most: four tabs, then grids. v1
-   already collapses .drow to wrapping flex below 640px. These finish it. */
-@media (max-width:640px){
-  .sheet-head{flex-wrap:wrap;gap:8px}
-  .sheet-head .tabs{order:2;width:100%}
-  /* v1 already makes .sheet-inner full-screen here, .narrow included */
-  .drow > .key{max-width:100%}
-}
 
 /* ------------------------------------------------- landing: mobile polish
    Belongs to site.html but is CSS, so it lives here. */
@@ -505,38 +490,15 @@ details.why p{line-height:1.5}
   .hero-panel{gap:28px}
 }
 
-/* ------------------------------------------- door: pre-registered / pool */
-.subsec{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:14px 0 4px}
-.subsec h3{margin:0;font-size:12px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
-.subsec .count{color:var(--signal);margin-left:4px}
-.entry .tag{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:10px 0 0}
-.dupnote{font-size:13px;font-weight:600;color:var(--signal);background:var(--signal-wash);border-radius:var(--r-xs);padding:8px 10px;margin:2px 0 8px}
-.dupnote[hidden]{display:none}
-.door-search{max-width:420px}
-
-/* ------------------------------------------------------------- polish
-   Refinements made after the first integration, kept together so they are
-   easy to see and to revert. */
-
-/* names matter more than a tidy single line: wrap, never clip */
-.row .nm{overflow:visible;text-overflow:clip;white-space:normal;line-height:1.25;overflow-wrap:break-word}
-.row.blocked{opacity:.6}
-
-/* the score boxes on a live table: solid white so they read across a room */
-.table-card.live .game input{background:var(--on-signal);color:var(--signal)}
-.table-card.live .game input:focus{outline-color:var(--chalk)}
-
-/* inputs inside a grey fieldset need the white back or they vanish */
-.sheet-body fieldset .field input,.sheet-body fieldset .field select,
-.sheet-body fieldset .field textarea{background:var(--raised)}
-
-/* Queue rows, two lines. In a narrow column (a phone, or the half-width column
-   on a laptop) four things on one line means clipped names: name first, the
-   status chips beneath it aligned to the name, any action at the far edge. */
+/* ------------------------------------------------------- narrow columns
+   Queue rows, two lines. In a narrow column (a phone, or the half-width
+   column on a laptop) four things on one line means clipped names: name
+   first, the status chips beneath it aligned to the name, any action at the
+   far edge. Names wrap — they matter more than a tidy single line. */
 .panel-body{container-type:inline-size}
 @container (max-width:560px){
   .row{align-items:center;flex-wrap:wrap;row-gap:6px;column-gap:8px;padding:14px 16px}
-  .row .nm{flex:1 1 calc(100% - 28px)}
+  .row .nm{flex:1 1 calc(100% - 28px);white-space:normal;line-height:1.25;overflow-wrap:break-word}
   .row .nm + *{margin-left:28px}
   .row .chip{padding:4px 0}
   .row .chip + .chip{margin-left:0}
@@ -548,7 +510,34 @@ details.why p{line-height:1.5}
   .row button.tiny:hover{background:var(--chalk);color:var(--ground)}
   .row button.tiny.danger{background:var(--signal-wash);color:var(--signal)}
 }
+
+/* ---------------------------------------------------------------- mobile */
 @media (max-width:640px){
+  /* names matter more than tidy single lines on a phone */
+  .row{align-items:flex-start}
+  .row .nm{white-space:normal;line-height:1.25;overflow-wrap:break-word}
   .row .on-hover{opacity:1}
+  main{padding:0 12px 30px}
+  .bar{padding:12px 12px}
+  .cup-tabs{padding:0 12px 12px}
+  .table-no{font-size:32px}
+  .side-name{font-size:20px}
+  .sheet{padding:0}
+  .sheet-inner{max-height:100vh;height:100vh;border-radius:0}
+  /* the scorepad is the one thing entered standing at a table */
+  .game input{width:58px;padding:11px 4px;font-size:19px}
+  button{padding:11px 16px}
+  /* the setup sheet is where a phone hurts most: four tabs, then grids */
+  .sheet-head{flex-wrap:wrap;gap:8px}
+  .sheet-head .tabs{order:2;width:100%}
   .sheet-head #sheet-close{margin-left:auto}
+  .drow > .key{max-width:100%}
+  .hrow{display:none}
+  .drow{display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:11px 0}
+  .drow > input,.drow > select{flex:1 1 130px;min-width:0}
+  .drow > .num{flex:0 0 auto;min-width:18px;text-align:left}
+  .drow > span:not(.num):not(.acts){flex:1 1 100%;min-width:0}
+  .drow > .acts{flex:1 1 100%;justify-content:flex-start}
+  .sec{margin:20px 0 10px}
 }
+@media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
