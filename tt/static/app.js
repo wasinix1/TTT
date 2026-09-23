@@ -213,12 +213,26 @@ function renderTables() {
       `<div class="table-card"><div class="empty-table">No tables reserved for this cup — they're all on the other side.</div></div>`;
     return;
   }
+  const stale = S.formats.filter(f => f.bracket_stale && inView(f.cup_id));
+  const notes = S.formats.filter(f => inView(f.cup_id))
+    .flatMap(f => (f.warnings || []).map(w => [f, w]));
   const idle = (S.idle_tables || []).filter(w => inView(w.cup_id));
-  $('warn').innerHTML = idle.length ? idle.map(w => `<div class="warn">
+  $('warn').innerHTML = notes.map(([f, w]) => `<div class="warn">
+      ${esc(f.name)}: ${esc(w)}
+      ${f.kind === 'swiss' && f.status === 'running' && f.phase !== 'ko'
+        ? `<div class="inline"><button class="primary tiny" data-act="cut-ko"
+             data-i="${f.id}">Cut to knockout now</button></div>` : ''}
+    </div>`).join('')
+    + stale.map(f => `<div class="warn">
+      ${esc(f.name)}: a result was put right after the knockout was drawn, and the
+      standings no longer agree with the bracket. Nobody's played match has been
+      touched. If it matters, undo the knockout results and cut again; if it does
+      not, carry on — this notice goes when the two agree.</div>`).join('')
+    + (idle.length ? idle.map(w => `<div class="warn">
       Table ${w.table} is reserved and standing empty while
       ${esc(w.waiting_for.join(' and '))} ${w.waiting_for.length > 1 ? 'have' : 'has'}
       people waiting. Share it out in Setup → Tables, or leave it if the
-      reservation is the point.</div>`).join('') : '';
+      reservation is the point.</div>`).join('') : '');
   $('tables').innerHTML = vis.map(t => {
     const m = t.match;
     const cls = ['table-card', m ? 'live' : '', t.paused ? 'paused' : ''].join(' ');
@@ -530,6 +544,12 @@ function renderRecent() {
       ${canAdd ? `<button class="ghost tiny" data-act="manual-open"
         title="For a game nobody arranged — a walk-up match, or one played before anyone was keeping track">Add a result</button>` : ''}</div>
     <div class="panel-body flush">${r.length ? '' : '<div class="blank" style="padding:12px 15px">Nothing played yet.</div>'}${r.map(m => {
+      // A bye has one side and no winner, so the winner/loser layout below
+      // reads it backwards — "— beat Jana Berger", on the wall, all evening.
+      if (m.meta && m.meta.bye) return `<div class="row result">
+        <span class="rw">${esc(m.a)}</span><span class="rs"></span>
+        <span class="rl"></span><span class="rs l"></span>
+        <span class="rmeta">${esc(m.label || 'bye')}</span></div>`;
       // v2: winner + games won, loser + games won, then label and game scores
       const sc = m.games.map(g => `${g[0]}-${g[1]}`).join(', ');
       const aWon = m.games.filter(g => g[0] > g[1]).length;
@@ -538,7 +558,8 @@ function renderRecent() {
       const w = aWins ? m.a : m.b, l = aWins ? m.b : m.a;
       const ws = m.games.length ? (aWins ? aWon : bWon) : '';
       const ls = m.games.length ? (aWins ? bWon : aWon) : '';
-      const meta = [m.label, sc].filter(Boolean).join(' · ');
+      const meta = [m.label, m.meta && m.meta.walkover ? 'walkover' : sc]
+        .filter(Boolean).join(' · ');
       return `<div class="row hoverable result">
         <span class="rw">${esc(w)}</span><span class="rs">${ws}</span>
         <span class="rl">${esc(l)}</span><span class="rs l">${ls}</span>
@@ -1511,6 +1532,7 @@ const STATUS = {
   entered: ['in the draw', 'state', 'In the draw, which has not started'],
   drawn: ['in the draw', 'state', 'In the draw, between matches'],
   outside: ['no draw', 'warn', 'In this cup, but there is no draw taking them: none set up yet, or it started without them'],
+  withdrawn: ['withdrawn', 'dim', 'Gone for the night — every fixture they owed was given to their opponent'],
 };
 
 function cupPeople(c, pending, allEnts, q) {
@@ -1558,27 +1580,56 @@ function mergeTargets(c) {
   return S.cups.filter(o => o.id !== c.id && (o.entry || 'single') === (c.entry || 'single'));
 }
 
+/* Everyone here is editable, including both halves of a pair.
+
+   A pair used to be a name and a number you could only read, which is the
+   wrong way round: a doubles cup is *all* pairs, so on a doubles night
+   nothing about anybody could be corrected at all. And correcting a name in
+   place is also how a substitute gets in when somebody's partner drops out,
+   which is the one thing you actually want to be fast. */
+function memberRows(e) {
+  const players = e.player_ids.map(id => S.players.find(p => p.id === id)).filter(Boolean);
+  if (players.length < 2) return '';
+  const cols = SHOW_STRENGTH ? '1fr 60px auto' : '1fr auto';
+  return players.map(p => `<div class="drow member" style="--cols:${cols}">
+      ${auto('pn-' + p.id, 'update_player:' + p.id, 'name', p.name,
+             'aria-label="Player name"')}
+      ${SHOW_STRENGTH ? auto('ps-' + p.id, 'update_player:' + p.id, 'strength',
+             p.strength, 'inputmode="decimal" aria-label="Strength"') : ''}
+      <span></span>
+    </div>`).join('');
+}
+
 function personRow(e) {
   const solo = e.player_ids.length === 1
     ? S.players.find(p => p.id === e.player_ids[0]) : null;
   const [label, cls, tip] = STATUS[e.status] || [e.status, '', ''];
   const many = S.cups.length > 1;
+  const out = e.status === 'withdrawn';
   const cols = (SHOW_STRENGTH ? '1fr 60px ' : '1fr ') + (many ? '92px 130px auto' : '92px auto');
-  return `<div class="drow" style="--cols:${cols}"${e.resting ? ' data-dim="1"' : ''}>
+  return `<div class="entry"><div class="drow" style="--cols:${cols}"${
+      e.resting || out ? ' data-dim="1"' : ''}>
     ${solo ? auto('pn-' + solo.id, 'update_player:' + solo.id, 'name', solo.name)
-           : `<span>${esc(e.name)}</span>`}
-    ${!SHOW_STRENGTH ? '' : solo ? auto('ps-' + solo.id, 'update_player:' + solo.id, 'strength', solo.strength,
-                  'inputmode="decimal"')
-           : `<span class="num">${e.strength}</span>`}
+           : auto('en-' + e.id, 'update_entrant:' + e.id, 'name', e.name,
+                  'aria-label="Team name"')}
+    ${!SHOW_STRENGTH ? '' : solo
+        ? auto('ps-' + solo.id, 'update_player:' + solo.id, 'strength', solo.strength,
+               'inputmode="decimal"')
+        : `<span class="num" title="The average of the two">${e.strength}</span>`}
     <span class="chip ${cls}" title="${esc(tip)}">${esc(label)}</span>
     ${many ? pick('ec-' + e.id, 'update_entrant:' + e.id, 'cup_id', e.cup_id || '',
         S.cups.map(c => [c.id, c.name]), 'title="Move to another cup"') : ''}
-    <span class="acts">${e.resting
-      ? `<button class="tiny" data-act="unrest" data-e="${e.id}">Back in</button>`
-      : `<button class="ghost tiny" data-act="rest" data-e="${e.id}">Sit out</button>`}
-      <button class="ghost tiny" data-act="rm-entrant" data-e="${e.id}"
-        title="Take them out of the pool">Remove</button></span>
-  </div>`;
+    <span class="acts">${out
+      ? `<button class="tiny" data-act="rejoin" data-e="${e.id}">Bring back</button>`
+      : `${e.resting
+          ? `<button class="tiny" data-act="unrest" data-e="${e.id}">Back in</button>`
+          : `<button class="ghost tiny" data-act="rest" data-e="${e.id}">Sit out</button>`}
+         ${e.removable
+           ? `<button class="ghost tiny" data-act="rm-entrant" data-e="${e.id}"
+                title="Take them out of the pool — nothing depends on them yet">Remove</button>`
+           : `<button class="ghost tiny" data-act="withdraw" data-e="${e.id}"
+                title="They have gone home. Everything they still owe is given to their opponent and any table they are on is freed">Gone home</button>`}`}</span>
+  </div>${out ? '' : memberRows(e)}</div>`;
 }
 
 /* ---- walk-ins */
@@ -2175,6 +2226,21 @@ document.addEventListener('click', async e => {
     if (!free) return toast('No table free that this match can use');
     return void api('assign', { match_id: b.dataset.m, table: free.number });
   }
+  if (a === 'withdraw') {
+    const e = S.entrants.find(x => x.id === b.dataset.e) || {};
+    if (!confirm(`${e.name} has gone home?\n\nEvery match they still owe is given `
+      + `to their opponent as a walkover, any table they are on is freed straight away, `
+      + `and they take no place into the knockout. What they already played still counts `
+      + `for the people they played. You can bring them back.`)) return;
+    const out = await api('withdraw', { entrant_id: b.dataset.e });
+    if (out) toast(out.walkovers
+      ? `${out.name} is out — ${out.walkovers} ${out.walkovers === 1 ? 'match' : 'matches'} `
+        + `given to their opponents` + (out.freed_tables.length
+          ? `, table ${out.freed_tables.join(' and ')} freed` : '')
+      : `${out.name} is out`);
+    return;
+  }
+  if (a === 'rejoin') return void api('withdraw', { entrant_id: b.dataset.e, withdrawn: false });
   if (a === 'rest') return void api('set_resting', { entrant_id: b.dataset.e, resting: true });
   if (a === 'unrest') return void api('set_resting', { entrant_id: b.dataset.e, resting: false });
   if (a === 'pause') {

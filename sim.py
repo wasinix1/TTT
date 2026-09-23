@@ -757,10 +757,22 @@ def test_housekeeping():
     check(not [q for q in s.queue if not s.entrant_available(q.entrant_id, busy)],
           "no permanently blocked ghost rows are left in the queue")
 
+    # A table with a live match on it can no longer be removed. It used to
+    # be allowed and left the match with no table and no way to score it —
+    # and, in a draw that pairs on demand, nothing that would ever pick it
+    # up again. Free it first; that is one click either way.
     mid = s.tables[1].match_id
+    refused = False
+    try:
+        app.act("admin", "remove_table", {"number": 1})
+    except Exception:
+        refused = True
+    check(refused, "a table holding a live match cannot be removed")
+    check(s.tables[1].match_id == mid, "and the match is still on it, scoreable")
+    app.act("admin", "set_table", {"number": 1, "paused": True})
+    app.act("admin", "put_back", {"match_id": mid})
     app.act("admin", "remove_table", {"number": 1})
-    check(s.matches[mid].status != "live",
-          "removing a table does not strand its match as unscoreable")
+    check(1 not in s.tables, "once it is free the table goes")
 
     cup = app.act("admin", "add_cup", {"name": "Cup A"})["cup_id"]
     app.act("admin", "set_table", {"number": 2, "cup_id": cup})
@@ -1579,6 +1591,445 @@ def test_merging_cups():
     app.act("admin", "merge_cups", {"from": g, "into": a})
     check(s.entrants[s.cup_pool(a)[-1]].name == "Gus" and s.cup_pool(a)[-1] in fa.entrant_ids,
           "but a running Swiss can still take a cup folded into it")
+
+# ------------------------------------------------- somebody goes home early
+def test_withdrawal_walks_over_and_frees_the_table():
+    print("\n[somebody goes home, mid-match]")
+    app, d = fresh()
+    cup = app.act("admin", "add_cup", {"name": "Cup"})["cup_id"]
+    for i in range(10):
+        add_player(app, f"W{i}", 9 - i * 0.4, cup)
+    fid = app.act("admin", "add_format", {"kind": "swiss", "name": "S", "config": {
+        "cup_id": cup, "rounds": 4, "continuous": False, "then_ko": True,
+        "advance": 4, "scoring": {"best_of": 3, "points_to": 11}}})["format_id"]
+    app.act("admin", "update_cup", {"id": cup, "format_id": fid})
+    app.act("admin", "start_format", {"id": fid})
+    s = app.store
+    m = s.matches[s.tables[2].match_id]
+    gone, opp = m.entrant_a, m.entrant_b
+    out = app.act("admin", "withdraw", {"entrant_id": gone})
+    check(out["walkovers"] == 1 and out["freed_tables"] == [2],
+          "withdrawing says what it settled and which table it freed")
+    check(m.status == "done" and m.winner == "b",
+          "the match they were in is a walkover to the other side")
+    check(m.meta.get("walkover") == gone,
+          "and it is recorded as a walkover, not as a whitewash")
+    check(s.tables[2].match_id and s.tables[2].match_id != m.id,
+          "the table did not stand empty — it was reseated at once")
+    check(gone not in s.cup_pool(cup), "they are out of the cup's pool")
+    drain(app)
+    f = s.formats[fid]
+    check(f.is_complete(s) and f.phase == "ko", "the evening still finishes on its own")
+    check(not any(gone in (x.entrant_a, x.entrant_b)
+                  for x in s.matches.values() if x.meta.get("phase") == "ko"),
+          "and they take no place in the bracket with them")
+    row = next(r for r in f.standings(s)[0]["rows"] if r["entrant_id"] == gone)
+    check(row["withdrawn"], "standings say they withdrew rather than quietly ranking them")
+    check(len([x for x in s.matches.values()
+               if x.status == "done" and opp in (x.entrant_a, x.entrant_b)]) >= 1,
+          "their opponent keeps the matches they played")
+    app.act("admin", "withdraw", {"entrant_id": gone, "withdrawn": False})
+    check(gone in s.cup_pool(cup), "and it is reversible")
+    shutil.rmtree(d)
+
+
+def test_withdrawal_resolves_a_bracket():
+    print("\n[somebody goes home with a bracket match outstanding]")
+    app, d = fresh()
+    cup = app.act("admin", "add_cup", {"name": "Cup"})["cup_id"]
+    for i in range(8):
+        add_player(app, f"K{i}", 9 - i * 0.4, cup)
+    fid = app.act("admin", "add_format", {"kind": "single_elim", "name": "KO", "config": {
+        "cup_id": cup, "scoring": {"best_of": 3, "points_to": 11}}})["format_id"]
+    app.act("admin", "update_cup", {"id": cup, "format_id": fid})
+    app.act("admin", "start_format", {"id": fid})
+    s = app.store
+    m = s.matches[s.tables[1].match_id]
+    gone, opp = m.entrant_a, m.entrant_b
+    app.act("admin", "withdraw", {"entrant_id": gone})
+    nxt = s.matches[m.meta["feeds"][0]]
+    check(opp in (nxt.entrant_a, nxt.entrant_b),
+          "the walkover advances their opponent into the next round")
+    drain(app)
+    check(s.formats[fid].is_complete(s), "and the bracket plays itself out")
+    shutil.rmtree(d)
+
+
+# --------------------------------------------- resting means what it says
+def test_resting_holds_a_scheduled_fixture():
+    print("\n[sitting out holds a fixture instead of being ignored]")
+    app, d = fresh()
+    cup = app.act("admin", "add_cup", {"name": "Cup"})["cup_id"]
+    for i in range(8):
+        add_player(app, f"T{i}", 9 - i, cup)
+    fid = app.act("admin", "add_format", {"kind": "groups", "name": "G", "config": {
+        "cup_id": cup, "n_groups": 1, "advance_per_group": 2, "then_ko": False,
+        "scoring": {"best_of": 3, "points_to": 11}}})["format_id"]
+    app.act("admin", "update_cup", {"id": cup, "format_id": fid})
+    app.act("admin", "start_format", {"id": fid})
+    s = app.store
+    seated = set()
+    for t in s.tables.values():
+        if t.match_id:
+            seated |= {s.matches[t.match_id].entrant_a, s.matches[t.match_id].entrant_b}
+    idle = [e for e in s.cup_pool(cup) if e not in seated][0]
+    app.act("admin", "set_resting", {"entrant_id": idle, "resting": True})
+    for _ in range(14):
+        for n in sorted(s.tables):
+            t = s.tables.get(n)
+            if t and t.match_id:
+                app.act("referee", "report", {"match_id": t.match_id,
+                                              "games": [[11, 5], [11, 6]]})
+    check(not [m for m in s.matches.values()
+               if idle in (m.entrant_a, m.entrant_b) and m.status in ("live", "done")],
+          "a rested player is not called to a group fixture behind their back")
+    board = app.state("admin")["board"][0]
+    name = s.entrant_name(idle)
+    check(all(r["blocked"] for r in board["up"] if name in (r["a"], r["b"])),
+          "and the board says why those fixtures are not moving")
+    app.act("admin", "set_resting", {"entrant_id": idle, "resting": False})
+    for _ in range(16):
+        for n in sorted(s.tables):
+            t = s.tables.get(n)
+            if t and t.match_id:
+                app.act("referee", "report", {"match_id": t.match_id,
+                                              "games": [[11, 5], [11, 6]]})
+    check(s.formats[fid].is_complete(s), "bringing them back finishes the group")
+    shutil.rmtree(d)
+
+
+# ------------------------------------- one human, two cups, one table each
+def test_one_person_two_cups():
+    print("\n[the same person entered in a singles cup and a doubles cup]")
+    app, d = fresh()
+    for t in (4, 5, 6):
+        app.act("admin", "set_table", {"number": t, "name": f"T{t}"})
+    c1 = app.act("admin", "add_cup", {"name": "Singles"})["cup_id"]
+    c2 = app.act("admin", "add_cup", {"name": "Doubles"})["cup_id"]
+    app.act("admin", "admit", {"cup_id": c1, "name": "Jana Berger", "strength": 7})
+    app.act("admin", "admit", {"cup_id": c2, "name": "Jana Berger", "strength": 7,
+                               "partner_name": "Tom Frei", "partner_strength": 6,
+                               "kind": "pair"})
+    for i in range(5):
+        app.act("admin", "admit", {"cup_id": c1, "name": f"S{i}", "strength": 6})
+    for i in range(3):
+        app.act("admin", "admit", {"cup_id": c2, "name": f"D{i}", "strength": 6,
+                                   "partner_name": f"E{i}", "partner_strength": 6,
+                                   "kind": "pair"})
+    s = app.store
+    for cup in (c1, c2):
+        fid = app.act("admin", "add_format", {"kind": "swiss", "name": "S", "config": {
+            "cup_id": cup, "rounds": 4, "continuous": False,
+            "scoring": {"best_of": 3, "points_to": 11}}})["format_id"]
+        app.act("admin", "update_cup", {"id": cup, "format_id": fid})
+        app.act("admin", "start_format", {"id": fid})
+    dispatch.tick(s)
+    jana = [p.id for p in s.players.values() if p.name.startswith("Jana")]
+    on = [n for n, t in sorted(s.tables.items())
+          if t.match_id and any(j in s.matches[t.match_id].players() for j in jana)]
+    check(len(on) <= 1, "she is never called to two tables at once")
+    drain(app)
+    check(all(f.is_complete(s) for f in s.formats.values()),
+          "and both cups still finish")
+    shutil.rmtree(d)
+
+
+# ------------------------------- a correction that changes who qualified
+def _groups_to_the_cut(app, cup, n=8):
+    fid = app.act("admin", "add_format", {"kind": "groups", "name": "G", "config": {
+        "cup_id": cup, "n_groups": 2, "advance_per_group": 2, "then_ko": True,
+        "scoring": {"best_of": 3, "points_to": 11}}})["format_id"]
+    app.act("admin", "update_cup", {"id": cup, "format_id": fid})
+    app.act("admin", "start_format", {"id": fid})
+    s = app.store
+    left = lambda: [m for m in s.matches.values()
+                    if m.meta.get("phase") == "groups" and m.status != "done"]
+    while len(left()) > 1:
+        for m in list(s.matches.values()):
+            if m.meta.get("phase") == "groups" and m.status == "live":
+                play_one(app, m.table)
+                break
+    for t in list(s.tables):                 # shut the hall before the cut,
+        app.act("admin", "set_table", {"number": t, "paused": True})
+    app.act("referee", "report", {"match_id": left()[0].id,
+                                  "games": [[11, 6], [11, 8]]})
+    return fid
+
+
+def test_a_correction_redraws_an_unplayed_bracket():
+    print("\n[a group score put right after the cut]")
+    app, d = fresh()
+    cup = app.act("admin", "add_cup", {"name": "Cup"})["cup_id"]
+    for i, st in enumerate([9, 8, 7, 6, 5, 4, 3, 2]):
+        add_player(app, f"C{i}", st, cup)
+    fid = _groups_to_the_cut(app, cup)
+    s, f = app.store, app.store.formats[fid]
+    check(f.phase == "ko", "the bracket is drawn")
+    drawn = list(f.config["ko_seeds"])
+    # re-enter group scores the other way round until one of them actually
+    # changes who goes through — which one depends on how the night fell
+    changed = None
+    for m in sorted((x for x in s.matches.values()
+                     if x.meta.get("phase") == "groups" and x.status == "done"),
+                    key=lambda x: x.seq):
+        before = m.winner
+        app.act("referee", "report", {"match_id": m.id,
+            "games": [[0, 11], [0, 11]] if before == "a" else [[11, 0], [11, 0]]})
+        if f._qualifiers(s) != drawn:
+            changed = m
+            break
+    check(changed is not None, "a corrected group score can change who qualifies")
+    check(list(f.config["ko_seeds"]) == f._qualifiers(s),
+          "putting the score right redraws the bracket around who qualified now")
+    check(not f.bracket_stale(s), "and the draw and the table agree again")
+    for t in list(s.tables):
+        app.act("admin", "set_table", {"number": t, "paused": False})
+    drain(app)
+    check(f.is_complete(s), "the redrawn bracket plays out")
+    shutil.rmtree(d)
+
+
+def test_a_late_correction_is_reported_not_forced():
+    print("\n[the same correction, once the knockout is under way]")
+    app, d = fresh()
+    cup = app.act("admin", "add_cup", {"name": "Cup"})["cup_id"]
+    for i, st in enumerate([9, 8, 7, 6, 5, 4, 3, 2]):
+        add_player(app, f"L{i}", st, cup)
+    fid = _groups_to_the_cut(app, cup)
+    s, f = app.store, app.store.formats[fid]
+    for t in list(s.tables):
+        app.act("admin", "set_table", {"number": t, "paused": False})
+    play_one(app, 1)                                   # a knockout match played
+    seeds_before = list(f.config["ko_seeds"])
+    rows = f.standings(s)[0]["rows"]
+    second, third = rows[1]["entrant_id"], rows[2]["entrant_id"]
+    m = next((x for x in s.matches.values()
+              if x.meta.get("phase") == "groups" and x.status == "done"
+              and {x.entrant_a, x.entrant_b} == {second, third}), None)
+    if m:
+        app.act("referee", "report", {"match_id": m.id,
+            "games": [[0, 11], [0, 11]] if m.entrant_a == second else [[11, 0], [11, 0]]})
+        check(list(f.config["ko_seeds"]) == seeds_before,
+              "a bracket people are already playing in is not torn up under them")
+        check(f.bracket_stale(s), "it is flagged for the organiser instead")
+        check(any(x["bracket_stale"] for x in app.state("admin")["formats"]),
+              "and the flag reaches the console")
+    drain(app)
+    check(f.is_complete(s), "the evening still finishes")
+    shutil.rmtree(d)
+
+
+# ----------------------------------------------- brackets of awkward sizes
+def test_third_place_with_an_odd_bracket():
+    print("\n[third place, in a bracket that has a bye in the semis]")
+    app, d = fresh()
+    cup = app.act("admin", "add_cup", {"name": "Cup"})["cup_id"]
+    for i, st in enumerate([8, 6, 4]):
+        add_player(app, f"B{i}", st, cup)
+    fid = app.act("admin", "add_format", {"kind": "single_elim", "name": "KO", "config": {
+        "cup_id": cup, "third_place": True,
+        "scoring": {"best_of": 3, "points_to": 11}}})["format_id"]
+    app.act("admin", "update_cup", {"id": cup, "format_id": fid})
+    app.act("admin", "start_format", {"id": fid})
+    drain(app)
+    s, f = app.store, app.store.formats[fid]
+    check(not [m for m in s.matches.values()
+               if m.status != "void" and not m.is_filled()],
+          "no half-filled play-off is left that nothing can ever fill")
+    check(f.is_complete(s), "and the draw reads as finished")
+    shutil.rmtree(d)
+
+
+def test_the_podium_names_the_actual_winner():
+    print("\n[who the results page says won]")
+    app, d = fresh()
+    cup = app.act("admin", "add_cup", {"name": "Cup"})["cup_id"]
+    for i, st in enumerate([9, 7, 5, 3]):
+        add_player(app, f"F{i}", st, cup)
+    fid = app.act("admin", "add_format", {"kind": "single_elim", "name": "KO", "config": {
+        "cup_id": cup, "third_place": True,
+        "scoring": {"best_of": 3, "points_to": 11}}})["format_id"]
+    app.act("admin", "update_cup", {"id": cup, "format_id": fid})
+    app.act("admin", "start_format", {"id": fid})
+    drain(app)
+    s, f = app.store, app.store.formats[fid]
+    final = next(m for m in s.matches.values()
+                 if m.meta.get("round_name") == "Final")
+    won = s.entrant_name(final.entrant_a if final.winner == "a" else final.entrant_b)
+    pod = app._podium(f)
+    check(pod[0]["name"] == won,
+          "the winner of the final, not the winner of the third-place match")
+    third = next(m for m in s.matches.values()
+                 if m.meta.get("round_name") == "Third place")
+    check(pod[2]["name"] == s.entrant_name(
+              third.entrant_a if third.winner == "a" else third.entrant_b),
+          "and third place is third")
+    shutil.rmtree(d)
+
+
+# ------------------------------------- a fixture nothing would pick up again
+def test_an_undone_result_is_not_an_orphan():
+    print("\n[undoing a result in a draw that pairs on demand]")
+    app, d = fresh()
+    cup = app.act("admin", "add_cup", {"name": "Cup"})["cup_id"]
+    for i in range(8):
+        add_player(app, f"O{i}", 9 - i * 0.4, cup)
+    fid = app.act("admin", "add_format", {"kind": "swiss", "name": "S", "config": {
+        "cup_id": cup, "rounds": 4, "continuous": True, "paced": True,
+        "then_ko": True, "advance": 4,
+        "scoring": {"best_of": 3, "points_to": 11}}})["format_id"]
+    app.act("admin", "update_cup", {"id": cup, "format_id": fid})
+    app.act("admin", "start_format", {"id": fid})
+    s = app.store
+    m = s.matches[s.tables[1].match_id]
+    app.act("referee", "report", {"match_id": m.id, "games": [[11, 5], [11, 7]]})
+    app.act("referee", "reopen_match", {"match_id": m.id})
+    drain(app)
+    f = s.formats[fid]
+    check(m.status == "done", "the match comes back round and gets played again")
+    check(f.phase == "ko" and f.is_complete(s),
+          "and the cut to the knockout still happens")
+    shutil.rmtree(d)
+
+
+# --------------------------------------------- saying so before it bites
+def test_a_paced_swiss_says_when_it_cannot_come_out_even():
+    print("\n[a draw that warns instead of quietly stopping]")
+    app, d = fresh()
+    cup = app.act("admin", "add_cup", {"name": "Cup"})["cup_id"]
+    for i in range(9):
+        add_player(app, f"N{i}", 9 - i * 0.4, cup)
+    fid = app.act("admin", "add_format", {"kind": "swiss", "name": "S", "config": {
+        "cup_id": cup, "rounds": 5, "continuous": True, "paced": True,
+        "then_ko": True, "advance": 4,
+        "scoring": {"best_of": 3, "points_to": 11}}})["format_id"]
+    app.act("admin", "update_cup", {"id": cup, "format_id": fid})
+    app.act("admin", "start_format", {"id": fid})
+    s, f = app.store, app.store.formats[fid]
+    check(any("cannot come out even" in w for w in f.warnings(s)),
+          "nine over five rounds is flagged the moment the draw starts")
+    drain(app)
+    check(f.phase == "ko", "it reaches its knockout anyway rather than stopping dead")
+    short = f.short_of_budget(s)
+    check(len(short) == 1, "exactly one of them is a game short, as the arithmetic says")
+    check(any("finished a game short" in w for w in f.warnings(s)),
+          "and the console says who, rather than leaving it to be noticed")
+    check(any(x["warnings"] for x in app.state("admin")["formats"]),
+          "the console is told")
+    check(f.is_complete(s), "the evening finishes on its own")
+    shutil.rmtree(d)
+
+
+def test_an_even_round_count_does_not_warn():
+    print("\n[the same field over an even number of rounds]")
+    app, d = fresh()
+    cup = app.act("admin", "add_cup", {"name": "Cup"})["cup_id"]
+    for i in range(9):
+        add_player(app, f"M{i}", 9 - i * 0.4, cup)
+    fid = app.act("admin", "add_format", {"kind": "swiss", "name": "S", "config": {
+        "cup_id": cup, "rounds": 4, "continuous": True, "paced": True,
+        "then_ko": True, "advance": 4,
+        "scoring": {"best_of": 3, "points_to": 11}}})["format_id"]
+    app.act("admin", "update_cup", {"id": cup, "format_id": fid})
+    app.act("admin", "start_format", {"id": fid})
+    s, f = app.store, app.store.formats[fid]
+    check(not f.warnings(s), "nothing to warn about")
+    drain(app)
+    check(f.phase == "ko" and f.is_complete(s),
+          "and it reaches its knockout on its own")
+    shutil.rmtree(d)
+
+
+def test_too_many_groups_is_flagged():
+    print("\n[more groups than the field can fill]")
+    app, d = fresh()
+    cup = app.act("admin", "add_cup", {"name": "Cup"})["cup_id"]
+    for i in range(5):
+        add_player(app, f"G{i}", 9 - i, cup)
+    fid = app.act("admin", "add_format", {"kind": "groups", "name": "G", "config": {
+        "cup_id": cup, "n_groups": 4, "advance_per_group": 2, "then_ko": True,
+        "scoring": {"best_of": 3, "points_to": 11}}})["format_id"]
+    app.act("admin", "update_cup", {"id": cup, "format_id": fid})
+    dispatch.tick(app.store)
+    f = app.store.formats[fid]
+    check(any("nobody to play" in w for w in f.warnings(app.store)),
+          "five in four groups is flagged before the draw is ever started")
+    shutil.rmtree(d)
+
+
+def test_three_cups_sharing_tables_all_finish():
+    """The evening this is actually for: a singles cup and two doubles cups,
+    all Swiss into a knockout, contending for one pool of tables."""
+    print("\n[one singles and two doubles cups, sharing six tables]")
+    app, d = fresh()
+    for t in (4, 5, 6):
+        app.act("admin", "set_table", {"number": t, "name": f"Table {t}"})
+    cups = [app.act("admin", "add_cup", {"name": n})["cup_id"]
+            for n in ("Singles", "Doubles A", "Doubles B")]
+    for i in range(14):
+        app.act("admin", "admit", {"cup_id": cups[0], "name": f"S{i}",
+                                   "strength": 8 - i * 0.4})
+    for ci, cup in ((0, cups[1]), (1, cups[2])):
+        for i in range(6):
+            app.act("admin", "admit", {
+                "cup_id": cup, "kind": "pair", "name": f"{'AB'[ci]}{i}a",
+                "strength": 7 - i * 0.5, "partner_name": f"{'AB'[ci]}{i}b",
+                "partner_strength": 6 - i * 0.4})
+    # one person playing in the singles and in a doubles cup
+    app.act("admin", "admit", {"cup_id": cups[0], "name": "Jana Berger",
+                               "strength": 7})
+    app.act("admin", "admit", {"cup_id": cups[1], "kind": "pair",
+                               "name": "Jana Berger", "strength": 7,
+                               "partner_name": "Tom Frei", "partner_strength": 6})
+    s = app.store
+    for cup in cups:
+        fid = app.act("admin", "add_format", {"kind": "swiss", "name": "Swiss",
+            "config": {"cup_id": cup, "rounds": 4, "continuous": False,
+                       "then_ko": True, "advance": 4, "third_place": True,
+                       "scoring": {"best_of": 5, "points_to": 11}}})["format_id"]
+        app.act("admin", "update_cup", {"id": cup, "format_id": fid})
+        app.act("admin", "start_format", {"id": fid})
+    # somebody goes home part-way through
+    for _ in range(6):
+        for n in sorted(s.tables):
+            play_one(app, n)
+    victim = [m for m in s.matches.values() if m.status == "live"][0].entrant_a
+    app.act("admin", "withdraw", {"entrant_id": victim})
+    drain(app)
+    check(all(f.is_complete(s) for f in s.formats.values()),
+          "all three cups finish, with a withdrawal in the middle of it")
+    check(all(f.phase == "ko" for f in s.formats.values()),
+          "each one crossed into its knockout by itself")
+    check(not [m for m in s.matches.values() if m.status in ("pending", "live")],
+          "and nothing is left hanging")
+    for f in s.formats.values():
+        pod = app._podium(f)
+        check(len(pod) >= 2, f"{s.cups[f.cup_id()].name} has a winner and a runner-up")
+    before = sorted((m.id, m.status, m.winner) for m in s.matches.values())
+    s.replay()
+    check(before == sorted((m.id, m.status, m.winner) for m in s.matches.values()),
+          "the whole evening replays identically")
+    shutil.rmtree(d)
+def test_the_door_flags_a_name_already_playing():
+    print("\n[a name that is already on tonight's roster]")
+    app, d = fresh()
+    c1 = app.act("admin", "add_cup", {"name": "Singles"})["cup_id"]
+    c2 = app.act("admin", "add_cup", {"name": "Doubles"})["cup_id"]
+    first = app.act("admin", "admit", {"cup_id": c1, "name": "Jana Berger",
+                                       "strength": 6})
+    check(not first["already"], "the first Jana Berger is unremarkable")
+    again = app.act("admin", "admit", {"cup_id": c1, "name": "Jana Berger",
+                                       "strength": 6})
+    check(again["already"] == ["Jana Berger"],
+          "a second one is flagged rather than quietly admitted twice")
+    across = app.act("admin", "admit", {
+        "cup_id": c2, "kind": "pair", "name": "Jana Berger", "strength": 6,
+        "partner_name": "Tom Frei", "partner_strength": 5})
+    check(across["already"] == ["Jana Berger"],
+          "and flagged across cups too, where it matters most")
+    other = app.act("admin", "admit", {"cup_id": c1, "name": "Bo Lind",
+                                       "strength": 5})
+    check(not other["already"], "somebody new is not")
     shutil.rmtree(d)
 
 
@@ -1630,4 +2081,17 @@ if __name__ == "__main__":
     test_resting_and_put_back()
     test_a_reset_draw_leaves_no_old_bracket()
     test_the_board_shows_the_next_pairing()
+    test_withdrawal_walks_over_and_frees_the_table()
+    test_withdrawal_resolves_a_bracket()
+    test_resting_holds_a_scheduled_fixture()
+    test_one_person_two_cups()
+    test_a_correction_redraws_an_unplayed_bracket()
+    test_a_late_correction_is_reported_not_forced()
+    test_third_place_with_an_odd_bracket()
+    test_the_podium_names_the_actual_winner()
+    test_an_undone_result_is_not_an_orphan()
+    test_a_paced_swiss_says_when_it_cannot_come_out_even()
+    test_an_even_round_count_does_not_warn()
+    test_too_many_groups_is_flagged()
+    test_three_cups_sharing_tables_all_finish()
     print("\nall good\n")

@@ -29,6 +29,56 @@ up.
 MAX_SEATS_PER_TICK = 96
 
 
+def resolve_walkovers(store):
+    """Make a withdrawal reach the fixtures that were already on the books.
+
+    Taking somebody out of the pool is not enough on its own: a group or a
+    bracket has already written down matches they owe, and those sit there
+    blocked — holding a table if one was seated, stopping the round from
+    closing, stopping the bracket from resolving. Somebody who has gone
+    home is not going to play them.
+
+    So every fixture a withdrawn entrant still owes is recorded as a
+    walkover to whoever was waiting on them. The table frees, the round
+    closes, the bracket advances, and the result says what it was rather
+    than looking like a whitewash nobody saw. If both sides are gone there
+    is nobody to walk over, so the match is scrapped instead.
+
+    Run to a fixed point, because a walkover can fill the next round's slot
+    with somebody who has also withdrawn."""
+    for _ in range(64):
+        if not _walkover_pass(store):
+            return
+
+
+def _walkover_pass(store):
+    for m in list(store.matches.values()):
+        if m.status not in ("pending", "live") or not m.is_filled():
+            continue
+        a_out, b_out = store.withdrawn(m.entrant_a), store.withdrawn(m.entrant_b)
+        if not (a_out or b_out):
+            continue
+        if a_out and b_out:
+            if not m.meta.get("feeds"):
+                store.append("match_void", {"match_id": m.id})
+                return True
+            # Both gone, but a bracket slot below is waiting on this one and
+            # voiding would leave it unfillable for the rest of the evening.
+            # Push one of them through instead — which side makes no odds,
+            # since the next pass walks them over again to whoever is there.
+            a_out = False
+        games = store.walkover_games(m.scoring)
+        if a_out:
+            games = [[b, a] for a, b in games]
+        store.append("match_result", {
+            "match_id": m.id, "games": games,
+            "winner": "b" if a_out else "a",
+            "walkover": m.entrant_a if a_out else m.entrant_b,
+        })
+        return True
+    return False
+
+
 def sync_pools(store):
     """A cup has one list of people, and its draws read it.
 
@@ -141,6 +191,10 @@ def _rank(store, running):
 def tick(store):
     """Advance phases, then fill every free table. Safe to call on any request."""
     with store.lock:
+        # before anything else: a fixture owed by somebody who has gone home
+        # is a blocked table, a round that cannot close and a bracket that
+        # cannot resolve, so settle those first and let the rest proceed
+        resolve_walkovers(store)
         sync_pools(store)
         for fid in list(store.format_order):
             f = store.formats.get(fid)
