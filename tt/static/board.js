@@ -5,12 +5,6 @@ const esc = s => String(s ?? '').replace(/[&<>"']/g, c =>
   ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const $ = id => document.getElementById(id);
 
-/* How many rows fit depends on the screen, so measure rather than guess:
-   a cut-off row is worse than a shorter list. */
-function fits() {
-  return Math.max(4, Math.floor(window.innerHeight * 0.62 / (window.innerHeight * 0.0315)));
-}
-
 /* Columns for the tables in play, so the blocks are always equal and never a
    full-width straggler: 3 tables are 3 across (or stacked when cups share the
    width), 4 are 2x2, and so on. */
@@ -27,40 +21,65 @@ function when(r) {
   return r.eta_min <= 5 ? 'a few min' : '~' + r.eta_min + ' min';
 }
 
+/* v2: rows are bigger, so how many fit is measured after layout rather than
+   estimated — a cut-off row is worse than a shorter list. Rows that do not
+   fit are removed and replaced by one "and N more" line. */
+function fit() {
+  document.querySelectorAll('#cups .list').forEach(list => {
+    const total = +list.dataset.total || 0;
+    const rows = [...list.querySelectorAll('.q[data-r]')];
+    const old = list.querySelector('.q.more');
+    if (old) old.remove();
+    const bottom = list.getBoundingClientRect().bottom;
+    let shown = rows.findIndex(r => r.getBoundingClientRect().bottom > bottom + 1);
+    if (shown < 0) shown = rows.length;
+    rows.slice(shown).forEach(r => r.remove());
+    if (shown >= total) return;
+    const more = document.createElement('div');
+    more.className = 'q more';
+    list.appendChild(more);
+    const label = () => { more.innerHTML = `<span class="n"></span><span class="w">and ${total - shown} more</span>`; };
+    label();
+    while (shown > 0 && more.getBoundingClientRect().bottom > bottom + 1) {
+      rows[--shown].remove();
+      label();
+    }
+  });
+}
+
 function render(S) {
   $('title').textContent = S.event.name || 'Coming up';
   const bs = (S.board || []);
+  const clock = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  $('sub').textContent = (S.event.venue ? S.event.venue + ' · ' : '') + clock;
   if (!bs.length) {
     $('cups').innerHTML = `<div class="cup"><h2>Nothing running yet</h2></div>`;
-    $('sub').textContent = '';
+    $('note').textContent = '';
     return;
   }
-  const cap = fits();
   $('cups').innerHTML = bs.map(b => {
     const cup = S.cups.find(c => c.id === b.cup_id);
     const now = b.playing.map(m => `<div class="now">
-      <div class="t">TABLE ${m.table}</div>
-      <div class="p">${esc(m.a)}</div>
-      <div class="p">${esc(m.b)}</div></div>`).join('')
+      <div class="t">Now · Table ${m.table}</div>
+      <div class="p">${esc(m.a)} — ${esc(m.b)}</div></div>`).join('')
       || `<div class="now"><div class="t">&nbsp;</div><div class="p">No match on yet</div></div>`;
-    const rows = b.up.slice(0, cap).map(r => `
-      <div class="q ${r.on_deck ? 'ondeck' : ''}">
+    const rows = b.up.map(r => `
+      <div class="q ${r.on_deck ? 'ondeck' : ''}" data-r>
         <span class="n">${r.position}</span>
-        <span class="w">${esc(r.a)}${r.b ? ' v ' + esc(r.b) : ''}</span>
+        <span class="w">${esc(r.a)}${r.b ? ' — ' + esc(r.b) : ''}</span>
         ${when(r) ? `<span class="e when">${esc(when(r))}</span>` : ''}
       </div>`).join('');
-    const more = b.total > cap ? `<div class="q"><span class="n"></span>
-      <span class="w" style="color:var(--muted)">and ${b.total - cap} more</span></div>` : '';
     return `<div class="cup">
       <h2>${esc(cup ? cup.name : (S.event.name || 'Tonight'))}
         <span>${esc(b.tables_label)} · ~${b.match_minutes} min a match</span></h2>
       <div class="live" style="--cols:${colsFor(b.playing.length, bs.length > 1 && window.innerWidth > window.innerHeight)}">${now}</div>
-      <div class="list">${rows || '<div class="q"><span class="w" style="color:var(--muted)">Nobody waiting</span></div>'}${more}</div>
+      <div class="list" data-total="${b.total}">${rows || '<div class="q"><span class="w" style="color:var(--muted)">Nobody waiting</span></div>'}</div>
     </div>`;
   }).join('');
+  fit();
+  if (document.fonts && document.fonts.status !== 'loaded') document.fonts.ready.then(() => { last = -1; poll(); });
   const waiting = bs.reduce((n, b) => n + b.waiting, 0);
   const left = bs.reduce((n, b) => n + b.total, 0);
-  $('sub').textContent = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   $('note').textContent = left ? `${left} still to play` + (waiting ? `, ${waiting} waiting` : '') : '';
 }
 
@@ -68,7 +87,7 @@ let last = -1, etag = null;
 async function poll() {
   try {
     const h = {};
-    if (etag) h['If-None-Match'] = etag;
+    if (etag && last >= 0) h['If-None-Match'] = etag;
     const r = await fetch('/api/state', { headers: h });
     if (r.status === 304) return;
     etag = r.headers.get('ETag');

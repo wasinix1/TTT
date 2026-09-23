@@ -12,82 +12,85 @@
 <style>
 /* Sized for a room, not a hand: everything here has to be readable from the
    far side of a hall, so there is no chrome, no controls and no scrolling.
-   A live table is a red block — that is the one thing people look for. */
+   v2: queue only. Each cup is a chapter — 5px ink rule, display title —
+   the same move as Up next / Standings / Results on the phone. Values are
+   the 1920×1080 mock in px ÷ 10.8 (vh) or ÷ 19.2 (vw). */
 body{overflow:hidden;padding-bottom:0}
-.screen{padding:2.4vh 2.4vw;height:100vh;display:flex;flex-direction:column;gap:1.8vh}
-.screen h1{font-size:3.4vh;font-weight:700;letter-spacing:-.03em;margin:0}
-.screen .sub{font-size:2vh;font-weight:600;color:var(--muted);margin:0}
-.head{display:flex;align-items:baseline;justify-content:space-between;gap:2vw}
+.screen{padding:4.07vh 2.5vw 3.33vh;height:100vh;display:flex;flex-direction:column;gap:2.96vh}
+.screen h1{font-size:5.56vh;font-weight:700;letter-spacing:-.03em;line-height:.9;margin:0}
+.screen .sub{font-size:2.78vh;font-weight:600;color:var(--muted);margin:0}
+.head{display:flex;align-items:baseline;justify-content:space-between;gap:2vw;flex:none}
 /* the wordmark, matching the landing page */
 .head .mark{
   width:auto;height:auto;border-radius:0;background:none;
-  font-size:3.6vh;font-weight:800;letter-spacing:-.05em;color:var(--signal);
+  font-size:5.93vh;font-weight:800;letter-spacing:-.05em;line-height:.9;color:var(--signal);
 }
-.head-left{display:flex;align-items:baseline;gap:1.6vw}
+.head-left{display:flex;align-items:baseline;gap:1.46vw}
 
-.cups{display:flex;gap:2px;flex:1;min-height:0}
+.cups{display:flex;gap:3.75vw;flex:1;min-height:0;padding-top:1.48vh}
 .cup{flex:1;display:flex;flex-direction:column;min-width:0;min-height:0;
-     border:none;border-radius:10px;overflow:hidden;background:var(--surface)}
+     border:none;border-radius:0;overflow:hidden;background:none}
 .cup h2{
-  font-size:2.7vh;font-weight:800;letter-spacing:-.03em;margin:0;
-  padding:1.7vh 1.3vw;border-bottom:none;
-  display:flex;align-items:baseline;justify-content:space-between;gap:1vw;
+  font-size:5.93vh;font-weight:800;letter-spacing:-.04em;line-height:1;margin:0;
+  padding:1.85vh 0 0;border-top:max(3px,.46vh) solid var(--chalk);border-bottom:none;
+  display:flex;align-items:baseline;justify-content:space-between;gap:1vw;flex:none;
 }
 .cup h2 span{
-  float:none;font-size:1.7vh;color:var(--muted);font-weight:600;
+  float:none;font-size:2.04vh;color:var(--muted);font-weight:700;
   letter-spacing:.06em;text-transform:uppercase;
 }
-.live{display:grid;grid-template-columns:repeat(var(--cols,1),minmax(0,1fr));gap:2px;padding:0 1.3vw 1.3vh;border-bottom:none}
+.live{display:grid;grid-template-columns:repeat(var(--cols,1),minmax(0,1fr));gap:4px;padding:2.96vh 0 1.85vh;border-bottom:none;flex:none}
 .live:empty{display:none}
 /* the match happening right now */
-.now{background:var(--signal);border-radius:8px;padding:1.3vh 1.1vw;min-width:0}
+.now{background:var(--signal);border-radius:8px;padding:1.85vh 1.25vw;min-width:0}
 .now .t{
-  font-size:1.6vh;color:rgba(255,255,255,.82);font-weight:700;
+  font-size:1.85vh;color:rgba(255,255,255,.86);font-weight:700;
   letter-spacing:.1em;text-transform:uppercase;
 }
 .now .p{
-  font-size:2.4vh;font-weight:700;letter-spacing:-.02em;color:#fff;margin-top:.4vh;
-  line-height:1.18;overflow-wrap:anywhere;text-wrap:pretty;
+  font-size:3.15vh;font-weight:700;letter-spacing:-.02em;color:#fff;margin-top:.74vh;
+  line-height:1.15;overflow-wrap:anywhere;text-wrap:pretty;
 }
 
-.list{flex:1;overflow:hidden;padding:.6vh 0}
-.q{display:flex;align-items:baseline;gap:1vw;padding:1.15vh 1.3vw;font-size:2.1vh;
-   border-bottom:1px solid var(--hair)}
-.q .n{color:var(--muted);font-size:1.8vh;font-weight:700;width:1.6em;flex:none}
+.list{flex:1;min-height:0;overflow:hidden;padding:0}
+.q{display:flex;align-items:baseline;gap:1.04vw;padding:2.04vh 0;font-size:2.78vh;
+   border-bottom:1px solid var(--edge)}
+.q .n{color:var(--dim);font-size:2.22vh;font-weight:700;width:1.2em;flex:none}
 .q .w{
-  flex:1;min-width:0;font-weight:500;letter-spacing:-.015em;line-height:1.2;
+  flex:1;min-width:0;font-weight:600;letter-spacing:-.015em;line-height:1.2;
   overflow-wrap:anywhere;text-wrap:pretty;
 }
-.q .e{font-size:1.7vh;font-weight:600;color:var(--muted);flex:none}
-.q.ondeck{background:var(--signal-wash)}
-.q.ondeck .n{color:var(--signal)}
-.q.ondeck .w{font-weight:700}
+.q .e{font-size:2.22vh;font-weight:600;color:var(--muted);flex:none}
+.q.more .w{color:var(--muted);font-weight:500}
+.q.ondeck{background:none}
+.q.ondeck .n{color:var(--dim)}
+.q.ondeck .w{font-weight:600}
 .q.ondeck .e.when{
-  color:#fff;background:var(--signal);border-radius:5px;
-  padding:.4vh .8vw;font-weight:700;
+  font-size:2.04vh;color:#fff;background:var(--signal);border-radius:6px;
+  padding:.46vh .625vw;font-weight:700;
 }
-.foot{display:flex;justify-content:space-between;gap:2vw;font-size:1.7vh;font-weight:500;color:var(--muted)}
+.foot{display:flex;justify-content:space-between;gap:2vw;font-size:2.04vh;font-weight:500;color:var(--dim);flex:none}
 
 /* A portrait screen — a spare monitor turned on its side, or a phone held up
    at the door. The columns stack, so each cup owns a third of the height and
    type switches to vmin to stay legible. The footer goes: it is the least
    useful line on the smallest screen. */
 @media (orientation:portrait){
-  .screen{padding:2.4vmin 2.4vw;gap:1.8vmin}
-  .screen h1{font-size:3.4vmin}
-  .screen .sub{font-size:2vmin}
-  .head .mark{font-size:3.6vmin}
-  .cups{flex-direction:column}
-  .cup h2{font-size:2.7vmin;padding:1.7vmin 1.3vw}
-  .cup h2 span{font-size:1.7vmin}
-  .live{padding:0 1.3vw 1.3vmin}
-  .now{padding:1.3vmin 1.1vw}
-  .now .t{font-size:1.6vmin}
-  .now .p{font-size:2.4vmin;margin-top:.4vmin}
-  .q{padding:1.15vmin 1.3vw;font-size:2.1vmin}
-  .q .n{font-size:1.8vmin}
-  .q .e{font-size:1.7vmin}
-  .q.ondeck .e.when{padding:.4vmin .8vw}
+  .screen{padding:4.07vmin 2.5vw 3.33vmin;gap:2.96vmin}
+  .screen h1{font-size:5.56vmin}
+  .screen .sub{font-size:2.78vmin}
+  .head .mark{font-size:5.93vmin}
+  .cups{flex-direction:column;gap:3.75vmin;padding-top:1.48vmin}
+  .cup h2{font-size:5.93vmin;padding:1.85vmin 0 0;border-top-width:max(3px,.46vmin)}
+  .cup h2 span{font-size:2.04vmin}
+  .live{padding:2.96vmin 0 1.85vmin}
+  .now{padding:1.85vmin 1.25vw}
+  .now .t{font-size:1.85vmin}
+  .now .p{font-size:3.15vmin;margin-top:.74vmin}
+  .q{padding:2.04vmin 0;font-size:2.78vmin}
+  .q .n{font-size:2.22vmin}
+  .q .e{font-size:2.22vmin}
+  .q.ondeck .e.when{font-size:2.04vmin;padding:.46vmin .625vw}
   .foot{display:none}
 }
 /* A dark hall. Same layout, inverted ground — the red is unchanged, because
