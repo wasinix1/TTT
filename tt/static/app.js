@@ -32,6 +32,8 @@ let editing = null;
 let manualDraft = { a: '', b: '', format_id: '', bo: 3, pts: 11 };
 let manualGames = [['', '']];
 let manualOpen = false;
+let recentAll = false;     // Results panel: show every result, not the latest
+let recentQuery = '';      // Results panel: name filter
 
 // which cup this browser is looking at — per-viewer, not shared with the
 // server, so admin and every spectator can each pick their own
@@ -562,16 +564,32 @@ function renderBrackets() {
 
 /* -- recent ------------------------------------------------------------ */
 
+/* The server sends every result; the wall only needs the latest few. The
+   rest stay one click away, and the search reaches any of them by name, so
+   a score entered wrong an hour ago can still be found and put right. */
+const RECENT_SHOWN = 15;
+
 function renderRecent() {
-  const r = S.recent.filter(m => inView(m.cup_id));
+  const all = S.recent.filter(m => inView(m.cup_id));
   const canAdd = canScore() && !manualOpen && S.entrants.length >= 2;
-  if (!r.length && !canAdd) { $('recent').innerHTML = ''; return; }
+  if (!all.length && !canAdd) { $('recent').innerHTML = ''; return; }
+  const q = recentQuery.trim().toLowerCase();
+  const hits = q ? all.filter(m => [m.a, m.b, m.label].some(
+    x => x && String(x).toLowerCase().includes(q))) : all;
+  const r = q || recentAll ? hits : hits.slice(0, RECENT_SHOWN);
+  const hidden = hits.length - r.length;
+  // a poll re-renders this panel; keep the search box focused through it
+  const had = document.activeElement && document.activeElement.id === 'recent-q';
+  const caret = had ? document.activeElement.selectionStart : 0;
   $('recent').innerHTML = `<div class="panel">
     <div class="panel-head"><h2>Results</h2>
-      <span class="note">${r.length ? r.length + ' played' : ''}</span>
+      <span class="note">${all.length ? all.length + ' played' : ''}</span>
+      ${all.length > RECENT_SHOWN ? `<input id="recent-q" type="search" placeholder="Find a player"
+        value="${esc(recentQuery)}" style="max-width:150px">` : ''}
       ${canAdd ? `<button class="ghost tiny" data-act="manual-open"
         title="For a game nobody arranged — a walk-up match, or one played before anyone was keeping track">Add a result</button>` : ''}</div>
-    <div class="panel-body flush">${r.length ? '' : '<div class="blank" style="padding:12px 15px">Nothing played yet.</div>'}${r.map(m => {
+    <div class="panel-body flush">${all.length ? '' : '<div class="blank" style="padding:12px 15px">Nothing played yet.</div>'}${
+      all.length && !hits.length ? '<div class="blank" style="padding:12px 15px">No result with that name.</div>' : ''}${r.map(m => {
       // A bye has one side and no winner, so the winner/loser layout below
       // reads it backwards — "— beat Jana Berger", on the wall, all evening.
       if (m.meta && m.meta.bye) return `<div class="row result">
@@ -594,7 +612,14 @@ function renderRecent() {
         ${meta ? `<span class="rmeta">${esc(meta)}</span>` : ''}
         ${canScore() ? `<button class="ghost tiny on-hover" data-act="edit" data-m="${m.id}">Edit result</button>` : ''}
       </div>`;
-    }).join('')}</div></div>`;
+    }).join('')}${hidden > 0
+      ? `<div class="row"><button class="ghost tiny" data-act="recent-all">Show all ${hits.length} results</button></div>`
+      : recentAll && !q && all.length > RECENT_SHOWN
+        ? `<div class="row"><button class="ghost tiny" data-act="recent-all">Show only the latest ${RECENT_SHOWN}</button></div>` : ''}</div></div>`;
+  if (had) {
+    const back = $('recent-q');
+    if (back) { back.focus(); try { back.setSelectionRange(caret, caret); } catch (x) { } }
+  }
 }
 
 /* ---------------------------------------------------------------- sheet */
@@ -1904,6 +1929,7 @@ function directoryRows() {
 /* --------------------------------------------------------------- events */
 
 document.addEventListener('input', e => {
+  if (e.target.id === 'recent-q') { recentQuery = e.target.value; renderRecent(); return; }
   const mg = e.target.dataset.mg;
   if (mg) {
     const [i, side] = mg.split('|');
@@ -2287,6 +2313,7 @@ document.addEventListener('click', async e => {
     return;
   }
   if (a === 'manual-clear') { manualGames = [['', '']]; renderManual(); return; }
+  if (a === 'recent-all') { recentAll = !recentAll; renderRecent(); return; }
   if (a === 'manual-open') { manualOpen = true; renderManual(); return; }
   if (a === 'manual-close') { manualOpen = false; renderManual(); return; }
   if (a === 'put-back') {

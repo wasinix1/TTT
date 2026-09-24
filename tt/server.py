@@ -244,8 +244,13 @@ class App:
             # matches do not exist until the moment they are dispatched.
             boards = board.boards(s, self)
 
+            # Every finished match, newest first. This used to stop at 15,
+            # which on a busy night pushed a wrongly entered result out of
+            # reach before anyone noticed it — and the editor finds matches
+            # through this list, so it could not be corrected either. The
+            # panel shows the latest few and folds the rest away.
             recent = sorted([m for m in s.matches.values() if m.status == "done"],
-                            key=lambda m: -m.seq)[:15]
+                            key=lambda m: -m.seq)
 
             return {
                 "version": s.version, "seq": s.seq, "role": role,
