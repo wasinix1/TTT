@@ -331,7 +331,9 @@ function scorePad(m) {
 /* -- the board: who plays next, and roughly when ---------------------- */
 
 function whenLabel(r) {
-  if (r.blocked) return 'waiting on a player';
+  // r.blocked (a player is on another table, sitting out or withdrawn) is
+  // not shown: the dispatcher already skips them, and the label read as an
+  // error to organisers when nothing was actually wrong
   if (r.on_deck) return 'get ready';
   if (r.eta_min == null) return '';
   return 'circa! in ' + r.eta_min + 'min.';
@@ -348,7 +350,7 @@ function renderBoard() {
   $('board').innerHTML = bs.map(b => {
     const name = cupName(b.cup_id);
     const rows = b.up.map(r => `
-      <div class="row hoverable ${r.blocked ? 'blocked' : ''} ${r.on_deck ? 'ondeck' : ''}">
+      <div class="row hoverable ${r.on_deck ? 'ondeck' : ''}">
         <span class="pos">${r.position}</span>
         <span class="nm">${esc(r.a)}${r.b ? ` — ${esc(r.b)}` : ''}</span>
         ${r.kind === 'pairing' ? `<span class="chip next" title="Worked out by the same rule that will seat them">next</span>` : ''}

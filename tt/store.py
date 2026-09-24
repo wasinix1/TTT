@@ -333,6 +333,23 @@ class Store:
         if "phase" in p:
             f.phase = p["phase"]
 
+    def _ev_format_rescore(self, p, seq):
+        """A changed Best-of reaching the matches already drawn.
+
+        Matches copy their scoring when they are made, so editing the format
+        used to change only what was drawn after it. Its own event rather
+        than part of format_update, so an old log replays exactly as it was
+        recorded. Only matches with no result yet are touched; a finished
+        one keeps the rules it was played under."""
+        sc = Scoring.from_dict(p["scoring"])
+        f = self.formats.get(p["id"])
+        ko_own = bool(f and f.config.get("ko_scoring"))   # KO has its own rules
+        for m in self.matches.values():
+            if (m.format_id == p["id"] and m.status in ("pending", "live")
+                    and not m.games
+                    and not (ko_own and m.meta.get("phase") == "ko")):
+                m.scoring = Scoring.from_dict(sc.to_dict())
+
     def _ev_format_remove(self, p, seq):
         self._purge_format_matches(p["id"])
         self.formats.pop(p["id"], None)
@@ -844,22 +861,18 @@ class Store:
         return durs[len(durs) // 2]
 
     def busy_players(self) -> set[str]:
-        """Who cannot be called to a table, by player id *and* by person id.
+        """Who cannot be called to a table: the player ids already on one.
 
-        The person id is the load-bearing half. Somebody entered in the
-        singles and in a doubles cup is two Players with two different ids,
-        so a check on player ids alone happily calls the same human to two
-        tables at once — which is exactly the evening this is built for:
-        one singles cup and two doubles. Ids are prefixed ("P1" vs "N1"), so
-        the two kinds share a set without colliding."""
+        This used to add the person id too, so somebody in the singles and
+        a doubles cup was never called to two tables at once. But people are
+        linked by name, so two different players who share a name across
+        cups blocked each other all evening. Only the entrant actually on a
+        table is held back now; an organiser can "Put back" the rare real
+        double-booking by hand."""
         out = set()
         for t in self.tables.values():
             if t.match_id and t.match_id in self.matches:
-                for pid in self.matches[t.match_id].players():
-                    out.add(pid)
-                    pl = self.players.get(pid)
-                    if pl and pl.person_id:
-                        out.add(pl.person_id)
+                out.update(self.matches[t.match_id].players())
         return out
 
     def entrant_available(self, eid: str, busy: set[str]) -> bool:
@@ -877,9 +890,6 @@ class Store:
             return False
         for pid in e.player_ids:
             if pid in busy:
-                return False
-            pl = self.players.get(pid)
-            if pl and pl.person_id and pl.person_id in busy:
                 return False
         return all(self.players[p].active for p in e.player_ids if p in self.players)
 

@@ -1669,7 +1669,7 @@ def test_resting_holds_a_scheduled_fixture():
 
 # ------------------------------------- one human, two cups, one table each
 def test_one_person_two_cups():
-    print("\n[the same person entered in a singles cup and a doubles cup]")
+    print("\n[the same name in a singles cup and a doubles cup does not hold either up]")
     app, d = fresh()
     for t in (4, 5, 6):
         app.act("admin", "set_table", {"number": t, "name": f"T{t}"})
@@ -1696,10 +1696,53 @@ def test_one_person_two_cups():
     jana = [p.id for p in s.players.values() if p.name.startswith("Jana")]
     on = [n for n, t in sorted(s.tables.items())
           if t.match_id and any(j in s.matches[t.match_id].players() for j in jana)]
-    check(len(on) <= 1, "she is never called to two tables at once")
+    # a shared name across cups used to block one of them; organisers want
+    # matches seated as they are queued, so both go on
+    check(len(on) == 2, "both of her matches are seated, one per cup")
     drain(app)
     check(all(f.is_complete(s) for f in s.formats.values()),
           "and both cups still finish")
+    shutil.rmtree(d)
+
+
+# ---------------------------------------- Best of changed after the draw
+def test_best_of_change_mid_event():
+    print("\n[changing Best of mid-event reaches matches already drawn]")
+    app, d = fresh()
+    for t in (1, 2):
+        app.act("admin", "set_table", {"number": t, "name": f"T{t}"})
+    c = app.act("admin", "add_cup", {"name": "S"})["cup_id"]
+    for i in range(6):
+        app.act("admin", "admit", {"cup_id": c, "name": f"X{i}", "strength": 5})
+    fid = app.act("admin", "add_format", {"kind": "swiss", "name": "S", "config": {
+        "cup_id": c, "rounds": 3, "continuous": False,
+        "scoring": {"best_of": 1, "points_to": 11}}})["format_id"]
+    app.act("admin", "update_cup", {"id": c, "format_id": fid})
+    app.act("admin", "start_format", {"id": fid})
+    s = app.store
+    dispatch.tick(s)
+    first = next(m for m in s.matches.values() if m.status == "live")
+    app.act("admin", "report", {"match_id": first.id, "games": [[11, 5]]})
+    app.act("admin", "update_format", {"id": fid, "config": {
+        "scoring": {"best_of": 3, "points_to": 11}}})
+    open_ = [m for m in s.matches.values() if m.status in ("pending", "live")]
+    check(open_ and all(m.scoring.best_of == 3 for m in open_),
+          "unplayed matches take the new Best of")
+    check(s.matches[first.id].scoring.best_of == 1,
+          "a finished match keeps the rules it was played under")
+    n = s.seq
+    app.act("admin", "update_format", {"id": fid, "config": {
+        "scoring": {"best_of": 3, "points_to": 11}}})
+    check(not any(r[1] == "format_rescore" for r in s.conn.execute(
+        "SELECT seq, type FROM events WHERE seq > ?", (n,))),
+          "saving it again with nothing left to change logs nothing extra")
+    s.replay()
+    check(all(m.scoring.best_of == 3 for m in s.matches.values()
+              if m.status in ("pending", "live"))
+          and s.matches[first.id].status == "done",
+          "and a restart replays it the same way")
+    drain(app)
+    check(all(f.is_complete(s) for f in s.formats.values()), "and the cup finishes")
     shutil.rmtree(d)
 
 
@@ -2219,6 +2262,7 @@ if __name__ == "__main__":
     test_withdrawal_resolves_a_bracket()
     test_resting_holds_a_scheduled_fixture()
     test_one_person_two_cups()
+    test_best_of_change_mid_event()
     test_a_correction_redraws_an_unplayed_bracket()
     test_a_late_correction_is_reported_not_forced()
     test_third_place_with_an_odd_bracket()
