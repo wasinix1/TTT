@@ -226,7 +226,14 @@ function renderCupTabs() {
 
 function renderTables() {
   const all = S.tables;
-  const vis = S._visibleTables = all.filter(t => inView(t.cup_id));
+  // A table belongs to the cup of the match on it, not only to its tag.
+  // Retagging a table mid-match (Cup A -> Cup B) used to show A's match,
+  // score pad and all, in B's tab and drop it from A's, so A's referee
+  // could not find it. A busy table follows its match; a free one follows
+  // its tag. B still sees its own table, just not A's players on it.
+  const vis = S._visibleTables = all.filter(t => t.match
+    ? inView(t.match.cup_id) || (t.cup_id != null && inView(t.cup_id))
+    : inView(t.cup_id));
   if (!all.length) {
     $('warn').innerHTML = '';
     $('tables').innerHTML =
@@ -270,6 +277,10 @@ function renderTables() {
     // them: pause the table, put the match back, seat the one you want.
     if (!m) {
       body = `<div class="empty-table">${t.paused ? 'Paused' : 'Free'}</div>`;
+    } else if (!inView(m.cup_id)) {
+      // reserved for this cup, still finishing another cup's match
+      body = `<div class="empty-table">Finishing a ${esc(cupName(m.cup_id) || 'other')} match${
+        t.paused ? ' · paused' : ''}</div>`;
     } else {
       body = `<div class="match-label">${esc(m.label)}${
         t.paused ? ' · paused' : ''}</div><div class="versus">
