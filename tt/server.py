@@ -473,6 +473,18 @@ class App:
         if f and self.store.cup_of_format(f):
             p.pop("entrant_ids", None)       # the pool decides, not the form
         self.store.append("format_update", p)
+        # a new Best-of applies to the matches already drawn but not played.
+        # Checked against the matches, not the old setting, so saving the
+        # form again also catches ones drawn before this existed
+        if f and "scoring" in (p.get("config") or {}):
+            sc = f.scoring()
+            ko_own = bool(f.config.get("ko_scoring"))
+            if any(m.format_id == f.id and m.status in ("pending", "live")
+                   and not m.games and m.scoring != sc
+                   and not (ko_own and m.meta.get("phase") == "ko")
+                   for m in self.store.matches.values()):
+                self.store.append("format_rescore", {"id": f.id,
+                                                     "scoring": sc.to_dict()})
 
     def op_start_format(self, p):
         s = self.store

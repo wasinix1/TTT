@@ -333,6 +333,23 @@ class Store:
         if "phase" in p:
             f.phase = p["phase"]
 
+    def _ev_format_rescore(self, p, seq):
+        """A changed Best-of reaching the matches already drawn.
+
+        Matches copy their scoring when they are made, so editing the format
+        used to change only what was drawn after it. Its own event rather
+        than part of format_update, so an old log replays exactly as it was
+        recorded. Only matches with no result yet are touched; a finished
+        one keeps the rules it was played under."""
+        sc = Scoring.from_dict(p["scoring"])
+        f = self.formats.get(p["id"])
+        ko_own = bool(f and f.config.get("ko_scoring"))   # KO has its own rules
+        for m in self.matches.values():
+            if (m.format_id == p["id"] and m.status in ("pending", "live")
+                    and not m.games
+                    and not (ko_own and m.meta.get("phase") == "ko")):
+                m.scoring = Scoring.from_dict(sc.to_dict())
+
     def _ev_format_remove(self, p, seq):
         self._purge_format_matches(p["id"])
         self.formats.pop(p["id"], None)
