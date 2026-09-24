@@ -18,7 +18,7 @@ function when(r) {
   if (r.blocked) return 'still playing';
   if (r.on_deck) return 'get ready';
   if (r.eta_min == null) return '';
-  return r.eta_min <= 5 ? 'a few min' : '~' + r.eta_min + ' min';
+  return 'circa! in ' + r.eta_min + 'min.';
 }
 
 /* v2: rows are bigger, so how many fit is measured after layout rather than
@@ -51,7 +51,7 @@ function render(S) {
   $('title').textContent = S.event.name || 'Coming up';
   const bs = (S.board || []);
   const clock = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-  $('sub').textContent = (S.event.venue ? S.event.venue + ' · ' : '') + clock;
+  $('sub').textContent = clock;
   if (!bs.length) {
     $('cups').innerHTML = `<div class="cup"><h2>Nothing running yet</h2></div>`;
     $('note').textContent = '';
@@ -60,7 +60,7 @@ function render(S) {
   $('cups').innerHTML = bs.map(b => {
     const cup = S.cups.find(c => c.id === b.cup_id);
     const now = b.playing.map(m => `<div class="now">
-      <div class="t">Now · Table ${m.table}</div>
+      <div class="t">Jetzt · Tisch ${m.table}</div>
       <div class="p">${esc(m.a)} — ${esc(m.b)}</div></div>`).join('')
       || `<div class="now"><div class="t">&nbsp;</div><div class="p">No match on yet</div></div>`;
     const rows = b.up.map(r => `
@@ -71,7 +71,7 @@ function render(S) {
       </div>`).join('');
     return `<div class="cup">
       <h2>${esc(cup ? cup.name : (S.event.name || 'Tonight'))}
-        <span>${esc(b.tables_label)} · ~${b.match_minutes} min a match</span></h2>
+        <span>${esc(b.tables_label)}</span></h2>
       <div class="live" style="--cols:${colsFor(b.playing.length, bs.length > 1 && window.innerWidth > window.innerHeight)}">${now}</div>
       <div class="list" data-total="${b.total}">${rows || '<div class="q"><span class="w" style="color:var(--muted)">Nobody waiting</span></div>'}</div>
     </div>`;
