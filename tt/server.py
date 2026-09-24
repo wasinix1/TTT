@@ -17,7 +17,7 @@ from urllib.parse import urlparse, parse_qs
 
 from .store import Store
 from .models import Scoring, decide_winner
-from . import dispatch, board
+from . import dispatch, board, simulate
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 STATIC = os.path.join(HERE, "static")
@@ -31,6 +31,11 @@ class App:
         self.data_dir = data_dir
         self.store = Store(os.path.join(data_dir, "event.db"))
         self.keys = self._load_keys()
+        # The sandbox: a second App of this same class, on its own file, that
+        # the live one owns and nothing else can reach. is_sim is what it
+        # knows about itself; sim is what the real event knows about it.
+        self.is_sim = False
+        self.sim = None
         self._cache = {}          # (version, role) -> encoded state JSON
         self._reg_hits = {}       # ip -> recent registration timestamps
         if not self.store.tables:
@@ -275,6 +280,7 @@ class App:
                     if i in s.registrations)] if role == "admin" else [],
                 "history": s.history(40) if role == "admin" else [],
                 "keys": self.keys if role == "admin" else {},
+                "sim": self.sim_state() if role == "admin" else None,
             }
 
     # ----------------------------------------------------------- write side
@@ -1029,6 +1035,42 @@ class App:
         if reg:
             self._match_seekers(reg.cup_id)     # whoever was left alone may have a new match
 
+    # ------------------------------------------------------------- sandbox
+
+    def sim_state(self):
+        """What the More tab knows about the sandbox."""
+        if self.is_sim:
+            return {"is_sim": True, "running": True}
+        return {"is_sim": False, "running": bool(self.sim),
+                **(self.sim.info() if self.sim else {})}
+
+    def op_sim_start(self, p):
+        """Build a simulated evening and hand back the tab to open it in.
+
+        Deliberately the only way in: the sandbox is created here, held here,
+        and torn down here, so there is never a second one and never one
+        nobody owns."""
+        if self.is_sim:
+            raise ValueError("you are already in the sandbox")
+        sim = simulate.build(self, App,
+                             per_cup=p.get("per_cup", 18),
+                             rounds=p.get("rounds", 3),
+                             seed=p.get("seed"))
+        if self.sim:
+            self.sim.close()          # only once the new one stood up
+        self.sim = sim
+        self.store.touch()
+        return {"sim": self.sim_state()}
+
+    def op_sim_stop(self, p):
+        if self.is_sim:
+            raise ValueError("you are already in the sandbox")
+        if self.sim:
+            self.sim.close()
+            self.sim = None
+        self.store.touch()
+        return {"sim": self.sim_state()}
+
     def op_set_phase(self, p):
         """Pin the phase, or clear the pin and go back to the clock."""
         from .store import PHASES
@@ -1052,6 +1094,7 @@ OP_LEVEL = {
     "manual_match": 2, "manual_result": 1, "event_meta": 2, "rewind": 2,
     "new_event": 2, "create_event": 2, "set_phase": 2,
     "register": 0, "update_registration": 2,
+    "sim_start": 2, "sim_stop": 2,
     "admit": 2, "add_registration": 2, "remove_entrant": 2, "remove_entrants": 2, "update_person": 2, "remove_person": 2, "add_from_directory": 2,
 }
 
@@ -1083,10 +1126,32 @@ class Handler(BaseHTTPRequestHandler):
             t = q["token"][0]
         return t
 
+    def _route(self, q, body=None):
+        """Which event this request is talking about: the real one, or the
+        sandbox. A tab asks for the sandbox on every single request it makes,
+        so the two can never be confused for one another by a stale header or
+        a cached page — `sim=1` is not a mode anything is left in.
+
+        Asking for a sandbox that is not there is a 404 rather than a quiet
+        fall back to the live event, which is the one failure that would
+        matter: a tab that thinks it is simulating, entering real results."""
+        live = type(self).app
+        want = q.get("sim", [""])[0] == "1" or bool(body and body.get("sim"))
+        if not want:
+            return live
+        return live.sim.app if live.sim else None
+
     def do_GET(self):
         u = urlparse(self.path)
         q = parse_qs(u.query)
         path = u.path
+
+        self.app = self._route(q)
+        if self.app is None:
+            if path.startswith("/api/"):
+                return self._send(404, {"error": "no sim running"})
+            # the page itself still loads; it will say so once it polls
+            self.app = type(self).app
 
         if path == "/api/state":
             role = self.app.role_for(self._token(q))
@@ -1143,6 +1208,9 @@ class Handler(BaseHTTPRequestHandler):
             body = json.loads(self.rfile.read(n) or b"{}")
         except Exception:
             return self._send(400, {"error": "bad json"})
+        self.app = self._route(q, body)
+        if self.app is None:
+            return self._send(404, {"error": "no sim running"})
         role = self.app.role_for(self._token(q) or body.get("token", ""))
         if body.get("op") == "register" and role == "public" \
                 and not self.app.registration_allowed(self.client_address[0]):

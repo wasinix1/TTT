@@ -16,6 +16,10 @@
    the same move as Up next / Standings / Results on the phone. Values are
    the 1920×1080 mock in px ÷ 10.8 (vh) or ÷ 19.2 (vw). */
 body{overflow:hidden;padding-bottom:0}
+/* pointed at the sandbox (/board?sim=1): a wall showing a made-up evening
+   has to say so from the far side of the hall */
+body.sim .screen{box-shadow:inset 0 0 0 .74vh var(--signal)}
+body.sim .head-left::after{content:"SIM";font-size:2.78vh;font-weight:800;color:var(--signal)}
 .screen{padding:4.07vh 2.5vw 3.33vh;height:100vh;display:flex;flex-direction:column;gap:2.96vh}
 .screen h1{font-size:5.56vh;font-weight:700;letter-spacing:-.03em;line-height:.9;margin:0}
 .screen .sub{font-size:2.78vh;font-weight:600;color:var(--muted);margin:0}

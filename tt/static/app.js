@@ -1786,8 +1786,8 @@ function tabLinks() {
 
 /* -------------------------------------------------------------- More tab
 
-   The two things you reach for once a month: who the club knows, and the
-   undo of last resort. */
+   The things you reach for once a month: who the club knows, the undo of
+   last resort, and a rehearsal of the night that costs nothing. */
 
 function tabMore() {
   return `<div class="form">
@@ -1820,7 +1820,56 @@ function tabMore() {
     ${why('To start the next evening clean, Event → next event does it properly: one ' +
           'pass that clears the old one and sets up the next, instead of a wipe you then ' +
           'have to rebuild from.')}
+
+    ${simBlock()}
   </div>`;
+}
+
+/* ------------------------------------------------------------------ sim
+
+   Everything the console does interestingly, it does an hour in: standings
+   that mean something, a bracket half full, three matches running and a
+   queue behind them. Getting there by hand is forty results, so this builds
+   the same evening somewhere else and plays it for you. */
+
+const simUrl = () => location.pathname + '?sim=1';
+
+function simBlock() {
+  const sim = S.sim || {};
+  if (sim.is_sim) return '';               // no sandboxes inside the sandbox
+  const nothing = !S.cups.length && !S.formats.length;
+  const built = sim.running
+    ? `<p class="sub">Running — ${sim.entrants} entrants, ${sim.played} played,
+       ${sim.live} on a table, built ${ago(sim.built_ts)}.</p>` : '';
+  return `${sec('Sim')}
+    <p class="sub">A copy of this event with a made-up field in it, played a few rounds
+      in, in its own tab. It is a separate store on a separate file: nothing in there
+      can reach tonight, and nothing tonight can see it.</p>
+    ${nothing ? '<p class="blank">Set up a cup with a draw in it first — there is nothing to copy yet.</p>' : `
+    <div class="inline">
+      <div class="field" style="max-width:150px"><label for="sim-n">Entrants per cup</label>
+        <input id="sim-n" value="${esc(form.sim_n ?? 18)}" data-f="sim_n" inputmode="numeric"></div>
+      <div class="field" style="max-width:110px"><label for="sim-r">Rounds</label>
+        <input id="sim-r" value="${esc(form.sim_r ?? 3)}" data-f="sim_r" inputmode="numeric"></div>
+      <button data-act="sim-run" ${form.sim_busy ? 'disabled' : ''}>${
+        form.sim_busy ? 'Building…' : sim.running ? 'Build a new one' : 'Run a sim'}</button>
+      ${sim.running ? `<button class="ghost" data-act="sim-open">Open the tab</button>
+        <button class="ghost" data-act="sim-board">Wall display</button>
+        <button class="ghost" data-act="sim-stop">Stop it</button>` : ''}
+    </div>
+    ${built}`}
+    ${why('A pair cup counts pairs, so 18 there is 36 people. Rounds is how far in to ' +
+      'stop: three leaves a group stage part-played and a bracket at the semis, with ' +
+      'matches still live on the tables, which is where the screens are worth looking at.',
+      'It stops at the first restart either way — the sandbox lives in a temp file that ' +
+      'is never written to the data directory.')}`;
+}
+
+/* Rough age of something, for the one place that needs it. */
+function ago(ts) {
+  const m = Math.max(0, Math.round((Date.now() / 1000 - (ts || 0)) / 60));
+  return m < 1 ? 'just now' : m < 60 ? `${m} min ago`
+    : `${Math.round(m / 60)} h ago`;
 }
 
 /* Search first. Rendering sixty people, each with an editable box and three
@@ -2367,6 +2416,25 @@ document.addEventListener('click', async e => {
     if (!confirm('Drop everything after event ' + b.dataset.s + '?')) return;
     return void api('rewind', { seq: +b.dataset.s });
   }
+  if (a === 'sim-run') {
+    // opened on the click itself: a window.open after the await is a pop-up
+    // as far as the browser is concerned, and gets blocked
+    const w = window.open('', 'tt-sim');
+    form.sim_busy = true; renderSheet();
+    const out = await api('sim_start', {
+      per_cup: num(form.sim_n ?? 18), rounds: num(form.sim_r ?? 3) });
+    form.sim_busy = false; renderSheet();
+    if (!out) { if (w) w.close(); return; }
+    if (w) w.location = simUrl();
+    else toast('Built it — allow pop-ups, or use “Open the tab”');
+    return;
+  }
+  if (a === 'sim-open') { window.open(simUrl(), 'tt-sim'); return; }
+  if (a === 'sim-board') { window.open('/board?sim=1', 'tt-sim-board'); return; }
+  if (a === 'sim-stop') {
+    if (!confirm('Stop the sim? Any tab showing it goes dead.')) return;
+    return void api('sim_stop', {});
+  }
 });
 
 $('setup-btn').onclick = () => { sheetOpen = true; $('sheet').hidden = false; renderSheet(); };
@@ -2399,6 +2467,7 @@ $('editor').addEventListener('click', e => {
 
 if (SIM) {
   const b = $('sim-bar');
+  document.body.classList.add('sim');
   if (b) { b.hidden = false; b.textContent =
     'Sandbox — a simulated copy of the event. Nothing here is real, and ' +
     'nothing you do here reaches the night.'; }

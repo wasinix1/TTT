@@ -241,6 +241,42 @@ Elo onto it: with six or eight games each, a K-factor big enough to move the
 needle is also big enough to be noise. Nudge two or three numbers by eye after
 the first round instead.
 
+## Seeing what it looks like an hour in
+
+Everything the console does interestingly, it does mid-tournament: standings
+that mean something, a bracket half full, three matches running with a queue
+behind them and a time against each name. Getting there to look at it used to
+mean forty results typed in by hand.
+
+**Setup → More → Sim** copies the shape of tonight — the cups, the draws, the
+tables, the scoring — into a second store, puts a made-up field in it, plays
+it a few rounds in and hands you a tab. The copy takes the setup and none of
+the people: no real name is ever in a simulated draw, and no simulated name
+ever reaches the club directory.
+
+The sandbox is a second `App` on its own sqlite file in a temp directory, and
+a request reaches it only by carrying `sim=1` — on every single request, so
+it is not a mode a tab can be left in or a header that can go stale. Ask for a
+sandbox that is not there and you get a 404, never a quiet fall back to the
+real event, because a tab that thinks it is simulating while entering real
+results is the one failure here worth designing against. Add `?sim=1` to the
+admin, referee or `/board` URL to point any screen at it. It is stopped from
+the same place, and goes anyway at the next restart.
+
+It plays with a fake clock. Match durations are not decoration: the board's
+"when am I playing" is the median of what matches have actually taken, so an
+evening simulated in a tenth of a second would answer that question with
+nonsense. The sandbox runs its clock at a plausible pace and then slides the
+whole log back so the last result lands now, which puts every elapsed time and
+every estimate where it would be an hour into a real night.
+
+Rounds is where to stop, and it means rounds of games rather than matches: a
+free-running Swiss numbers every match it creates, so what holds across all
+four formats is games played, and a bracket — where half the field is knocked
+out every round and the median stops moving — is counted its own way. It stops
+with matches still live on the tables, because a console with three matches
+running is the thing being looked at.
+
 ## Layout
 
 ```
@@ -250,6 +286,7 @@ tt/formats.py    the four formats behind one interface
 tt/dispatch.py   tables, and which cup gets the next one
 tt/board.py      who plays next, and roughly when
 tt/server.py     HTTP, roles, JSON state
+tt/simulate.py   the sandbox: a copy of tonight with nobody real in it
 tt/static/       the client
 sim.py           plays full events through every format
 ```
@@ -260,7 +297,9 @@ determinism, correcting a result mid-bracket, fair table share between cups,
 a small draw not outrunning a big one, paced Swiss holding the field to
 within one game of itself, somebody walking out mid-match, one person entered
 in two cups never being called to two tables at once, and a corrected group
-score redrawing a bracket nobody has played in yet.
+score redrawing a bracket nobody has played in yet, and the sandbox copying
+the shape of an event without any of its people while the live log does not
+move.
 
 A paced Swiss can only bring a field out even when entrants times rounds is
 even, because every match is worth two games played. Nine people over five

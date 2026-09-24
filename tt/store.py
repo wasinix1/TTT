@@ -40,6 +40,10 @@ class Store:
     def __init__(self, db_path: str):
         self.db_path = db_path
         self.lock = threading.RLock()
+        # Where "now" comes from. Real time, except in a sandbox, where an
+        # evening has to be played out in a second and still look like it
+        # took three hours — see tt/simulate.py.
+        self.clock = time.time
         self.conn = sqlite3.connect(db_path, check_same_thread=False)
         self.conn.execute(
             "CREATE TABLE IF NOT EXISTS events ("
@@ -98,7 +102,7 @@ class Store:
         one: the whole cascade commits together or not at all, which is
         what you want from "this result ended the round" anyway."""
         with self.lock:
-            ts = time.time()
+            ts = self.clock()
             cur = self.conn.execute(
                 "INSERT INTO events (ts, type, payload) VALUES (?,?,?)",
                 (ts, etype, json.dumps(payload)),
@@ -121,6 +125,15 @@ class Store:
             self.seq = seq
             self.version += 1
             return seq
+
+    def touch(self):
+        """Say that what a client sees has changed, without anything having
+        happened to the event. The sandbox is the only thing that needs it:
+        whether one exists is state the console shows and the log knows
+        nothing about, so without this every screen keeps its cached copy and
+        the Sim section never notices its own button worked."""
+        with self.lock:
+            self.version += 1
 
     def replay(self):
         with self.lock:
