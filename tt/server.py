@@ -478,6 +478,8 @@ class App:
         if f and self.store.cup_of_format(f):
             p.pop("entrant_ids", None)       # the pool decides, not the form
         self.store.append("format_update", p)
+        if f and "config" in p:
+            f.settings_changed(self.store)
         # a new Best-of applies to the matches already drawn but not played.
         # Checked against the matches, not the old setting, so saving the
         # form again also catches ones drawn before this existed

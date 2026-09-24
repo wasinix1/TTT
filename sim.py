@@ -554,6 +554,44 @@ def test_paced_swiss_keeps_the_field_level():
     shutil.rmtree(d)
 
 
+def test_lowering_the_round_count_cuts_off():
+    print("\n[a round count lowered mid-event cuts off what was drawn past it]")
+    for pace in ("paced", "strict"):
+        app, d = fresh()
+        s = app.store
+        solo_field(app, 8, 5.0, 0.2)
+        cfg = {"rounds": 4, "continuous": pace != "strict", "paced": pace == "paced",
+               "then_ko": True, "advance": 4}
+        f = app.act("admin", "add_format", {"kind": "swiss", "name": "Swiss",
+            "config": cfg, "entrant_ids": entrant_ids(app)})["format_id"]
+        app.act("admin", "start_format", {"id": f})
+        if pace != "strict":
+            for e in entrant_ids(app):
+                app.act("admin", "join_queue", {"entrant_id": e, "format_id": f})
+        fo = s.formats[f]
+        # play three rounds' worth; round four is then already under way
+        while sum(1 for m in s.matches.values() if m.format_id == f
+                  and m.status == "done" and m.meta.get("phase") == "swiss") < 12:
+            for n in sorted(s.tables):
+                if s.tables[n].match_id:
+                    play_one(app, n)
+        check(any(m.format_id == f and m.status == "live"
+                  and m.meta.get("phase") == "swiss" for m in s.matches.values()),
+              f"{pace}: a fourth-round match is on a table")
+        before = fo._played(s)
+        app.act("admin", "update_format", {"id": f, "config": dict(cfg, rounds=3)})
+        check(not [m for m in s.matches.values() if m.format_id == f
+                   and m.meta.get("phase") == "swiss" and m.status in ("pending", "live")],
+              f"{pace}: lowering to three takes it back off the table")
+        check(fo.phase == "ko", f"{pace}: and the knockout is drawn straight away")
+        drain(app)
+        # a fourth game already finished stays: it was played
+        after = fo._played(s)
+        check(all(after[e] <= max(before[e], 3) for e in after),
+              f"{pace}: nobody played past three after the change")
+        shutil.rmtree(d)
+
+
 def test_swiss_ko_drops_the_queue():
     print("\n[cutting a continuous Swiss to a knockout closes its queue]")
     app, d = fresh()
@@ -2269,6 +2307,7 @@ if __name__ == "__main__":
     test_the_podium_names_the_actual_winner()
     test_an_undone_result_is_not_an_orphan()
     test_a_paced_swiss_says_when_it_cannot_come_out_even()
+    test_lowering_the_round_count_cuts_off()
     test_an_even_round_count_does_not_warn()
     test_too_many_groups_is_flagged()
     test_three_cups_sharing_tables_all_finish()

@@ -158,6 +158,12 @@ class Format:
         """Phase transitions and round generation. Runtime only."""
         return
 
+    def settings_changed(self, store):
+        """The admin just saved this format's settings. Anything already
+        drawn that the new settings rule out is taken back here; reading the
+        config afresh is enough for everything that has not been drawn yet."""
+        return
+
     def propose(self, store, busy, force=False):
         """Return a Proposal for the match this format wants to seat, or None.
 
@@ -919,6 +925,36 @@ class Swiss(Format):
                 and m.status not in ("done", "void")]
         if not live:
             self._generate_round(store, cur)
+
+    def settings_changed(self, store):
+        """A round count lowered mid-event has to cut off, not just stop
+        pairing. Everything reads the count live, so nothing new is drawn
+        past it, but whatever was already drawn beyond it used to be played
+        out: a strict draw put the knockout up with the old last round still
+        on the tables, and its results then moved the standings under a
+        bracket already seeded from them. So anything past the new count
+        that has no result yet is voided, a bye in a cut round included.
+        A result already in stays — it was played."""
+        if self.status != "running" or self.phase == "ko":
+            return
+        total = int(self.config.get("rounds", 0) or 0)
+        if total <= 0:
+            return
+        mine = [m for m in store.matches.values()
+                if m.format_id == self.id and m.meta.get("phase") == "swiss"
+                and m.status != "void"]
+        if not self.config.get("continuous"):
+            cut = [m for m in mine if m.meta.get("round", 0) >= total
+                   and (m.status != "done" or m.meta.get("bye"))]
+        elif self.paced():
+            played = self._played(store)
+            cut = [m for m in mine if m.status in ("pending", "live")
+                   and any(played.get(e, 0) >= total
+                           for e in (m.entrant_a, m.entrant_b) if e)]
+        else:
+            return                  # free-running has no round count to cut at
+        for m in cut:
+            store.append("match_void", {"match_id": m.id})
 
     def _budget_spent(self, store):
         """Paced Swiss is over when everyone has had their rounds and no
