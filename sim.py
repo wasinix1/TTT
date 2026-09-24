@@ -1669,7 +1669,7 @@ def test_resting_holds_a_scheduled_fixture():
 
 # ------------------------------------- one human, two cups, one table each
 def test_one_person_two_cups():
-    print("\n[the same person entered in a singles cup and a doubles cup]")
+    print("\n[the same name in a singles cup and a doubles cup does not hold either up]")
     app, d = fresh()
     for t in (4, 5, 6):
         app.act("admin", "set_table", {"number": t, "name": f"T{t}"})
@@ -1696,7 +1696,9 @@ def test_one_person_two_cups():
     jana = [p.id for p in s.players.values() if p.name.startswith("Jana")]
     on = [n for n, t in sorted(s.tables.items())
           if t.match_id and any(j in s.matches[t.match_id].players() for j in jana)]
-    check(len(on) <= 1, "she is never called to two tables at once")
+    # a shared name across cups used to block one of them; organisers want
+    # matches seated as they are queued, so both go on
+    check(len(on) == 2, "both of her matches are seated, one per cup")
     drain(app)
     check(all(f.is_complete(s) for f in s.formats.values()),
           "and both cups still finish")
