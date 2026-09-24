@@ -262,12 +262,15 @@ function renderTables() {
     const m = t.match;
     const cls = ['table-card', m ? 'live' : '', t.paused ? 'paused' : ''].join(' ');
     let body;
-    if (t.paused) {
-      body = `<div class="empty-table">Paused</div>`;
-    } else if (!m) {
-      body = `<div class="empty-table">Free</div>`;
+    // Pausing only stops the dispatcher sending more work here; it does not
+    // stop the match already on the table. Hiding that match took the score
+    // pad and Put back with it, which is exactly the moment you reach for
+    // them: pause the table, put the match back, seat the one you want.
+    if (!m) {
+      body = `<div class="empty-table">${t.paused ? 'Paused' : 'Free'}</div>`;
     } else {
-      body = `<div class="match-label">${esc(m.label)}</div><div class="versus">
+      body = `<div class="match-label">${esc(m.label)}${
+        t.paused ? ' · paused' : ''}</div><div class="versus">
         <div class="side"><span class="side-name">${esc(m.a)}</span></div>
         <div class="vs">plays</div>
         <div class="side"><span class="side-name">${esc(m.b)}</span></div>
@@ -2292,11 +2295,19 @@ document.addEventListener('click', async e => {
     return;
   }
   if (a === 'jump') {
-    const row = (S.board || []).flatMap(x => x.up).find(r => r.id === b.dataset.m);
-    const allowed = row ? row.tables : S.tables.map(t => t.number);
-    const free = S.tables.find(t => !t.paused && !t.match && allowed.includes(t.number));
+    // board.tables leaves paused tables out, because they are not serving and
+    // should not count towards a wait. A table you paused and emptied on
+    // purpose is exactly the one you mean here, though, so work the candidates
+    // out from the reservations instead: shared, or held for this match's cup.
+    const blk = (S.board || []).find(x => (x.up || []).some(r => r.id === b.dataset.m));
+    const cup = blk ? blk.cup_id : null;
+    const open = S.tables.filter(t => !t.match && (!t.cup_id || t.cup_id === cup));
+    const free = open.find(t => !t.paused) || open[0];
     if (!free) return toast('No table free that this match can use');
-    return void api('assign', { match_id: b.dataset.m, table: free.number });
+    const held = free.paused;
+    const out = await api('assign', { match_id: b.dataset.m, table: free.number });
+    if (out && held) toast(`Seated on table ${free.number}, which is back in service`);
+    return;
   }
   if (a === 'withdraw') {
     const e = S.entrants.find(x => x.id === b.dataset.e) || {};

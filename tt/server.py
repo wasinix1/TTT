@@ -628,8 +628,12 @@ class App:
         t = s.tables.get(n)
         if not t:
             raise ValueError(f"there is no table {n}")
+        # Pausing a table says "send me no more work", not "this table is
+        # out of use". Naming it in an assignment is the stronger, later
+        # statement of the two, and a table with a match on it is not paused
+        # in any sense the dispatcher cares about — so seat it and resume.
         if t.paused:
-            raise ValueError(f"table {n} is paused")
+            s.append("table_set", {"number": n, "paused": False})
         if t.match_id and t.match_id != m.id:
             raise ValueError(f"table {n} is already playing")
         tcup = s.cup_of_table(t)
