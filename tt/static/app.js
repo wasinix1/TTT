@@ -6,6 +6,14 @@ const TOKEN = (() => {
   return m ? m[1] : '';
 })();
 
+/* The sandbox. This same console, pointed at a throwaway copy of the event —
+   see tt/simulate.py. Every request the tab makes carries the flag, so the
+   store it talks to is decided per request rather than being a mode the tab
+   is left in: there is no state to go stale and no way to end up entering a
+   real result into a simulated evening or the other way round. */
+const SIM = new URLSearchParams(location.search).get('sim') === '1';
+const simq = sep => (SIM ? sep + 'sim=1' : '');
+
 // Strength is parked: hidden everywhere, still stored and still used by the
 // matchmaker at its default. Flip to bring the inputs back.
 const SHOW_STRENGTH = false;
@@ -27,10 +35,13 @@ let manualOpen = false;
 
 // which cup this browser is looking at — per-viewer, not shared with the
 // server, so admin and every spectator can each pick their own
-let selectedCup = localStorage.getItem('tt_cup') || '';
+// the sim keeps its own, so switching cups in the sandbox does not move the
+// real console's tab out from under whoever is running the night
+const CUP_KEY = SIM ? 'tt_cup_sim' : 'tt_cup';
+let selectedCup = localStorage.getItem(CUP_KEY) || '';
 function setCup(id) {
   selectedCup = id || '';
-  try { localStorage.setItem('tt_cup', selectedCup); } catch (e) { }
+  try { localStorage.setItem(CUP_KEY, selectedCup); } catch (e) { }
   render();
 }
 // true if an item with this cup_id (null = shared/ungrouped) belongs in the
@@ -47,7 +58,7 @@ const canScore = () => S && (S.role === 'admin' || S.role === 'referee');
 /* ------------------------------------------------------------------ net */
 
 async function api(op, data) {
-  const r = await fetch('/api/action', {
+  const r = await fetch('/api/action' + simq('?'), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'X-Key': TOKEN },
     body: JSON.stringify({ op, data: data || {} }),
@@ -58,14 +69,17 @@ async function api(op, data) {
   return j;
 }
 
-let lastVersion = -1, polling = false, etag = null;
+let lastVersion = -1, polling = false, etag = null, dead = false;
+const ticks = [];
 async function poll(force) {
-  if (polling) return;
+  if (polling || dead) return;
   polling = true;
   try {
     const h = { 'X-Key': TOKEN };
     if (etag && !force) h['If-None-Match'] = etag;
-    const r = await fetch('/api/state?token=' + encodeURIComponent(TOKEN), { headers: h });
+    const r = await fetch('/api/state?token=' + encodeURIComponent(TOKEN) + simq('&'),
+                          { headers: h });
+    if (r.status === 404 && SIM) return simGone();
     $('pulse').classList.add('on');
     setTimeout(() => $('pulse').classList.remove('on'), 320);
     if (r.status === 304) return;
@@ -86,7 +100,7 @@ async function poll(force) {
 let stream = null, streamOk = false;
 function connectStream() {
   try {
-    stream = new EventSource('/api/stream');
+    stream = new EventSource('/api/stream' + simq('?'));
   } catch (e) { return; }
   stream.onopen = () => { streamOk = true; };
   stream.onmessage = e => {
@@ -98,6 +112,17 @@ function connectStream() {
     stream.close();
     setTimeout(connectStream, 3000);   // EventSource retries, but be explicit
   };
+}
+
+/* The sandbox is torn down from the real console, which can happen while this
+   tab is open. Say so and stop, rather than retrying into a 404 forever. */
+function simGone() {
+  const b = $('sim-bar');
+  if (b) { b.hidden = false; b.className = 'sim-bar over'; b.textContent =
+    'This sim has been stopped from the real console. Close the tab.'; }
+  if (stream) { stream.close(); stream = null; }
+  ticks.forEach(clearInterval);
+  dead = true;
 }
 
 function toast(msg) {
@@ -306,8 +331,7 @@ function whenLabel(r) {
   if (r.blocked) return 'waiting on a player';
   if (r.on_deck) return 'get ready';
   if (r.eta_min == null) return '';
-  if (r.eta_min <= 5) return 'in a few minutes';
-  return 'in about ' + r.eta_min + ' min';
+  return 'circa! in ' + r.eta_min + 'min.';
 }
 
 function cupName(id) {
@@ -342,7 +366,6 @@ function renderBoard() {
       // the exact table is only picked the instant one frees up, so a cup
       // on the shared pool gets no number; its own tables are a promise
       b.tables_label,
-      '~' + b.match_minutes + ' min a match',
     ].filter(Boolean).join(' · ');
     // v2: the chapter is "Up next"; the cup name only when several share the view
     return `<div class="panel">
@@ -2374,7 +2397,15 @@ $('editor').addEventListener('click', e => {
   if (e.target.id === 'editor') closeEditor();
 });
 
+if (SIM) {
+  const b = $('sim-bar');
+  if (b) { b.hidden = false; b.textContent =
+    'Sandbox — a simulated copy of the event. Nothing here is real, and ' +
+    'nothing you do here reaches the night.'; }
+  document.title = 'SIM · ' + document.title;
+}
+
 poll(true);
 connectStream();
-setInterval(() => { if (!streamOk) poll(); }, 2500);   // fallback only
-setInterval(() => { if (streamOk) poll(); }, 20000);   // slow reconcile
+ticks.push(setInterval(() => { if (!streamOk) poll(); }, 2500));   // fallback only
+ticks.push(setInterval(() => { if (streamOk) poll(); }, 20000));   // slow reconcile

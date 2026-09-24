@@ -28,14 +28,14 @@ def _tables_serving(store, cup_id):
 
 
 def _range_label(nums):
-    """[1,2,3] -> "Tables 1-3"; [1,3,4,7] -> "Tables 1, 3-4, 7".
+    """[1,2,3] -> "Tisch 1-3"; [1,3,4,7] -> "Tisch 1, 3-4, 7".
 
     Which table you are on is the other half of "when am I playing", and a
     cup with its own tables can answer it exactly. Collapsing runs is what
     makes that readable across a hall instead of "table 1 or 2 or 3"."""
     nums = sorted(nums)
     if not nums:
-        return "No table"
+        return "Kein Tisch"
     runs, start, prev = [], nums[0], nums[0]
     for n in nums[1:]:
         if n == prev + 1:
@@ -45,7 +45,7 @@ def _range_label(nums):
         start = prev = n
     runs.append((start, prev))
     parts = [str(a) if a == b else f"{a}\u2013{b}" for a, b in runs]
-    return ("Table " if len(nums) == 1 else "Tables ") + ", ".join(parts)
+    return "Tisch " + ", ".join(parts)
 
 
 def _reserved_for(store, cup_id, tables):
@@ -185,7 +185,7 @@ def cup_board(store, cup_id, app):
         # other half of the question, and a cup with its own tables can
         # answer it exactly. Only a cup that could turn up anywhere gets
         # the vague version.
-        "tables_label": ("Any table"
+        "tables_label": ("Alle Tische"
                          if not reserved and len(tables) == len(store.tables)
                          else _range_label(tables)),
         "reserved": reserved,
