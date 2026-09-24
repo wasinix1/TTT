@@ -83,12 +83,17 @@ function render(S) {
   $('note').textContent = left ? `${left} still to play` + (waiting ? `, ${waiting} waiting` : '') : '';
 }
 
+/* The wall display can be pointed at the sandbox too — see tt/simulate.py.
+   Same flag on every request, for the same reason. */
+const SIM = new URLSearchParams(location.search).get('sim') === '1';
+const simq = sep => (SIM ? sep + 'sim=1' : '');
+
 let last = -1, etag = null;
 async function poll() {
   try {
     const h = {};
     if (etag && last >= 0) h['If-None-Match'] = etag;
-    const r = await fetch('/api/state', { headers: h });
+    const r = await fetch('/api/state' + simq('?'), { headers: h });
     if (r.status === 304) return;
     etag = r.headers.get('ETag');
     const s = await r.json();
@@ -100,10 +105,12 @@ async function poll() {
    wall in about the time it takes the referee to look up. */
 function stream() {
   let es;
-  try { es = new EventSource('/api/stream'); } catch (e) { return; }
+  try { es = new EventSource('/api/stream' + simq('?')); } catch (e) { return; }
   es.onmessage = e => { if (+e.data !== last) poll(); };
   es.onerror = () => { es.close(); setTimeout(stream, 3000); };
 }
+
+if (SIM) { document.body.classList.add('sim'); document.title = 'SIM · ' + document.title; }
 
 poll();
 stream();

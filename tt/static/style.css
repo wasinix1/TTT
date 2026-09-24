@@ -54,6 +54,17 @@ a:hover{color:var(--chalk)}
 
 /* ------------------------------------------------------------------- bar
    No rule under the header. The page is separated by gutters, not lines. */
+/* The sandbox stripe. Loud on purpose: the one thing that must never happen
+   is a real result entered into a simulated evening because the two tabs
+   looked the same. */
+.sim-bar{
+  position:sticky;top:0;z-index:30;
+  background:var(--chalk);color:var(--ground);
+  padding:8px var(--pad);font-size:13px;font-weight:600;letter-spacing:.02em;
+}
+.sim-bar.over{background:var(--signal);color:var(--on-signal)}
+body.sim .bar{top:34px}          /* clear the stripe, which is sticky too */
+
 .bar{
   display:flex;align-items:center;justify-content:space-between;gap:12px;
   padding:14px var(--pad);border-bottom:none;

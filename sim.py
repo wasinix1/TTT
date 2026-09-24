@@ -1,10 +1,11 @@
 """Plays complete events through every format and checks the invariants."""
 
-import http.client, json, os, random, shutil, sys, tempfile, threading
+import http.client, json, os, random, shutil, sys, tempfile, threading, time
 from datetime import datetime, timedelta
 from http.server import ThreadingHTTPServer
 from tt.server import App, Handler
-from tt import dispatch
+from tt import dispatch, simulate
+from tt.simulate import play_one, drain
 
 random.seed(7)
 
@@ -25,42 +26,10 @@ def add_pair(app, n1, s1, n2, s2, label=None, cup=None):
                     "cup_id": cup})["entrant_id"]
 
 
-def play_one(app, table_no, upset=0.15):
-    """Report a plausible result for whatever is on the given table."""
-    s = app.store
-    t = s.tables[table_no]
-    if not t.match_id:
-        return False
-    m = s.matches[t.match_id]
-    sa = sum(s.entrant_strength(e) for e in [m.entrant_a] if e) or \
-        sum(s.players[p].strength for p in m.side_a) / max(1, len(m.side_a))
-    sb = sum(s.entrant_strength(e) for e in [m.entrant_b] if e) or \
-        sum(s.players[p].strength for p in m.side_b) / max(1, len(m.side_b))
-    a_better = sa >= sb
-    if random.random() < upset:
-        a_better = not a_better
-    need = m.scoring.games_to_win()
-    games, wa, wb = [], 0, 0
-    while wa < need and wb < need:
-        a_wins = random.random() < (0.68 if a_better else 0.32)
-        top = m.scoring.points_to
-        lose = random.choice([3, 5, 7, 8, 9, 9])
-        if lose == 9 and random.random() < 0.35:        # deuce
-            top, lose = m.scoring.points_to + 2, m.scoring.points_to
-        games.append([top, lose] if a_wins else [lose, top])
-        wa += a_wins
-        wb += not a_wins
-    app.act("referee", "report", {"match_id": m.id, "games": games})
-    return True
-
-
-def drain(app, limit=600):
-    """Play until no table has a match."""
-    for _ in range(limit):
-        played = any(play_one(app, n) for n in sorted(app.store.tables))
-        if not played:
-            return
-    raise AssertionError("did not settle")
+# The two of these that the server also needs — a plausible result, and
+# playing until the tables are empty — live in tt/simulate.py, which is where
+# the sandbox uses them from. One copy, so a change to how a simulated match
+# goes cannot be true here and false in the preview.
 
 
 def check(cond, msg):
@@ -1957,6 +1926,171 @@ def test_too_many_groups_is_flagged():
     shutil.rmtree(d)
 
 
+# ------------------------------------------------------------------ sandbox
+
+def sim_event(app, kind="groups", entry="single", config=None, tables=3):
+    app.act("admin", "create_event", {
+        "name": "Thursday",
+        "cups": [{"name": "Open", "entry": entry, "kind": kind,
+                  "config": config or {"n_groups": 4, "then_ko": True}}],
+        "tables": [{"name": f"Table {n}"} for n in range(1, tables + 1)]})
+
+
+def test_the_sandbox_copies_the_shape_and_none_of_the_people():
+    print("\n[sandbox]")
+    app, d = fresh()
+    sim_event(app)
+    add_player(app, "Real Person", 6)
+    before = app.store.seq
+
+    sb = simulate.build(app, App, per_cup=12, rounds=3, seed=5)
+    s = sb.app.store
+    check(app.store.seq == before, "nothing about building one reaches the live log")
+    check(len(app.store.entrants) == 1, "the live event still has only its own entrant")
+    check(sb.app.store.db_path != app.store.db_path, "and it is a different file")
+
+    check(len(s.cups) == 1 and s.cups[list(s.cups)[0]].name == "Open",
+          "the sandbox has the same cup")
+    check(len(s.tables) == 3, "and the same tables")
+    check([e.name for e in s.entrants.values()].count("Real Person") == 0,
+          "and nobody real in it")
+    check(len(s.entrants) == 12, "twelve made-up entrants went in")
+    f = s.formats[s.format_order[0]]
+    check(f.status == "running", "the draw is under way")
+    check(simulate.rounds_played(s, f) == 3, "three rounds deep")
+    check(any(t.match_id for t in s.tables.values()), "with matches still on the tables")
+    sb.close()
+    shutil.rmtree(d)
+
+
+def test_the_sandbox_looks_like_time_passed():
+    """The board's times are the median of what matches actually took, so a
+    sandbox where every match started and finished at the same instant is
+    the one thing it must not be."""
+    print("\n[sandbox clock]")
+    app, d = fresh()
+    sim_event(app)
+    sb = simulate.build(app, App, per_cup=12, rounds=3, seed=5)
+    s = sb.app.store
+    med = s.median_match_seconds()
+    check(300 < med < 1500, f"a match took about as long as a match does ({round(med)}s)")
+    now = time.time()
+    done = [m for m in s.matches.values() if m.status == "done"]
+    check(all(m.done_ts <= now + 1 for m in done), "and the evening ends now, not later")
+    check(max(m.done_ts for m in done) > now - 1800,
+          "with the last result a few minutes old")
+    live = [m for m in s.matches.values() if m.status == "live"]
+    check(live and all(0 <= now - m.started_ts < 3600 for m in live),
+          "and whatever is on a table started within the hour")
+    sb.close()
+    shutil.rmtree(d)
+
+
+def test_every_format_stops_where_it_was_told():
+    print("\n[sandbox rounds]")
+    for kind, cfg, entry in (
+            ("open_play", {"mode": "singles"}, "single"),
+            ("groups", {"n_groups": 4, "then_ko": True}, "single"),
+            ("single_elim", {"third_place": True}, "single"),
+            ("swiss", {"rounds": 5}, "single"),
+            ("swiss", {"rounds": 5, "continuous": True, "paced": True}, "pair"),
+    ):
+        app, d = fresh()
+        sim_event(app, kind=kind, entry=entry, config=cfg)
+        sb = simulate.build(app, App, per_cup=16, rounds=3, seed=9)
+        s = sb.app.store
+        f = s.formats[s.format_order[0]]
+        what = f"{kind}{' in pairs' if entry == 'pair' else ''}"
+        n = simulate.rounds_played(s, f)
+        check(n == 3, f"{what} stopped 3 rounds in, at {n}")
+        check(len(s.entrants) == 16, f"{what} got its 16 entrants")
+        sb.close()
+        shutil.rmtree(d)
+
+
+def test_the_sandbox_is_reachable_only_by_asking_for_it():
+    print("\n[sandbox routing]")
+    app, d = fresh()
+    sim_event(app)
+    Handler.app = app
+    srv = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    port = srv.server_address[1]
+    key = app.keys["admin"]
+
+    def call(method, path, body=None):
+        c = http.client.HTTPConnection("127.0.0.1", port)
+        h = {"X-Key": key}
+        if body is not None:
+            h["Content-Type"] = "application/json"
+        c.request(method, path, json.dumps(body) if body is not None else None, h)
+        r = c.getresponse()
+        raw = r.read()
+        try:
+            return r.status, json.loads(raw)
+        except Exception:
+            return r.status, raw.decode()
+
+    check(call("GET", "/api/state?sim=1")[0] == 404,
+          "asking for a sandbox that is not there is a 404, never the real event")
+    check(call("POST", "/api/action",
+               {"op": "sim_start", "data": {"per_cup": 8, "rounds": 2}})[0] == 200,
+          "an admin can build one")
+    sim = call("GET", "/api/state?sim=1")[1]
+    live = call("GET", "/api/state")[1]
+    check(len(sim["entrants"]) == 8 and not live["entrants"],
+          "the flagged request gets the sandbox and the plain one does not")
+    check(live["sim"]["running"] and sim["sim"]["is_sim"],
+          "each one says which it is")
+
+    seq = live["seq"]
+    m = next(t["match"] for t in sim["tables"] if t["match"])
+    check(call("POST", "/api/action?sim=1",
+               {"op": "report", "data": {"match_id": m["id"],
+                                         "games": [[11, 3], [11, 5]]}})[0] == 200,
+          "a result can be entered in the sandbox")
+    check(call("GET", "/api/state")[1]["seq"] == seq,
+          "and the live log did not move")
+    check(call("POST", "/api/action?sim=1", {"op": "sim_start", "data": {}})[0] == 400,
+          "there is no sandbox inside the sandbox")
+    check(call("POST", "/api/action", {"op": "sim_stop", "data": {}})[0] == 200
+          and call("GET", "/api/state?sim=1")[0] == 404,
+          "stopping it takes it away")
+    srv.shutdown()
+    shutil.rmtree(d)
+
+
+def test_nobody_in_a_sandbox_shares_a_name():
+    """Two people with the same name is refused at the door, for a good
+    reason — it is how the wrong strength ends up on the wrong person — so a
+    generated field that draws one twice does not fail the draw, it fails the
+    build. The hat is small and the fields are not."""
+    print("\n[sandbox names]")
+    app, d = fresh()
+    app.act("admin", "create_event", {
+        "name": "Big",
+        "cups": [{"name": f"Cup {i}", "entry": "pair" if i % 2 else "single",
+                  "kind": "swiss", "config": {"rounds": 5}} for i in range(3)],
+        "tables": [{"name": f"Table {n}"} for n in range(1, 5)]})
+    sb = simulate.build(app, App, per_cup=32, rounds=1, seed=2)
+    names = [p.name for p in sb.app.store.players.values()]
+    check(len(names) == 128, f"a big field went in whole ({len(names)} players)")
+    check(len(set(names)) == len(names), "and no two of them are the same person")
+    sb.close()
+    shutil.rmtree(d)
+
+
+def test_a_sandbox_needs_something_to_copy():
+    print("\n[sandbox with nothing to copy]")
+    app, d = fresh()
+    try:
+        simulate.build(app, App)
+        check(False, "an empty event refuses")
+    except ValueError as e:
+        check("nothing to simulate" in str(e), f"an empty event refuses: {e}")
+    shutil.rmtree(d)
+
+
 def test_three_cups_sharing_tables_all_finish():
     """The evening this is actually for: a singles cup and two doubles cups,
     all Swiss into a knockout, contending for one pool of tables."""
@@ -2094,4 +2228,10 @@ if __name__ == "__main__":
     test_an_even_round_count_does_not_warn()
     test_too_many_groups_is_flagged()
     test_three_cups_sharing_tables_all_finish()
+    test_the_sandbox_copies_the_shape_and_none_of_the_people()
+    test_the_sandbox_looks_like_time_passed()
+    test_every_format_stops_where_it_was_told()
+    test_the_sandbox_is_reachable_only_by_asking_for_it()
+    test_nobody_in_a_sandbox_shares_a_name()
+    test_a_sandbox_needs_something_to_copy()
     print("\nall good\n")
