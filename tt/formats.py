@@ -26,6 +26,11 @@ from .models import Scoring
 # random sequence (the simulator's seeded results included)
 _draw = random.Random()
 
+# Strength is parked, same as in the console (SHOW_STRENGTH in app.js): it is
+# still stored, but nothing pairs, seeds or draws on it while this is off.
+# Flip to bring the strength-based matchmaking back.
+USE_STRENGTH = False
+
 
 class Proposal:
     """A match a format is offering to put on a table. Nothing is written
@@ -527,6 +532,8 @@ class OpenPlay(Format):
         meets = store.meetings()
 
         def dist(a, b):
+            if not USE_STRENGTH:
+                return 0.0         # wait time and rematches decide on their own
             return abs(store.entrant_strength(a.entrant_id)
                        - store.entrant_strength(b.entrant_id))
 
@@ -578,9 +585,11 @@ class OpenPlay(Format):
                     for split in ((0, 1, 2, 3), (0, 2, 1, 3), (0, 3, 1, 2)):
                         pa = (four[split[0]], four[split[1]])
                         pb = (four[split[2]], four[split[3]])
-                        sa = eff(*[store.entrant_strength(q.entrant_id) for q in pa])
-                        sb = eff(*[store.entrant_strength(q.entrant_id) for q in pb])
-                        imb = abs(sa - sb)
+                        imb = 0.0
+                        if USE_STRENGTH:
+                            sa = eff(*[store.entrant_strength(q.entrant_id) for q in pa])
+                            sb = eff(*[store.entrant_strength(q.entrant_id) for q in pb])
+                            imb = abs(sa - sb)
                         rep = 0.0
                         for p in (pa, pb):
                             ids = frozenset(
@@ -630,7 +639,10 @@ class GroupStage(Format):
         self.status = "running"
         self.phase = "groups"
         ids = [e for e in self.entrant_ids if not store.withdrawn(e)]
-        ids.sort(key=lambda e: -store.entrant_strength(e))
+        if USE_STRENGTH:
+            ids.sort(key=lambda e: -store.entrant_strength(e))
+        else:
+            _draw.shuffle(ids)                           # no seeds: a straight draw
         n = max(1, int(self.config.get("n_groups", 1)))
         groups = [[] for _ in range(n)]
         for i, eid in enumerate(ids):                    # snake seeding
@@ -749,7 +761,10 @@ class SingleElim(Format):
         self.status = "running"
         self.phase = "ko"
         ids = [e for e in self.entrant_ids if not store.withdrawn(e)]
-        ids.sort(key=lambda e: -store.entrant_strength(e))
+        if USE_STRENGTH:
+            ids.sort(key=lambda e: -store.entrant_strength(e))
+        else:
+            _draw.shuffle(ids)                           # no seeds: a straight draw
         build_bracket(store, self.id, ids, self.scoring(),
                       third_place=bool(self.config.get("third_place")))
 
@@ -859,14 +874,17 @@ class Swiss(Format):
     def _generate_round(self, store, rnd):
         score = self._score(store)
         meets = store.meetings()
-        pool = sorted([e for e in self.entrant_ids if self._eligible(store, e)],
-                      key=lambda e: (-score.get(e, 0), -store.entrant_strength(e)))
-        if rnd == 0:
-            # nobody has a result yet, so there is nothing to pair on: sorting
-            # by strength here just seeded the favourites into each other in
-            # round one. Draw it at random; runs at request time and the
-            # matches go into the log, so replay never re-rolls it.
-            _draw.shuffle(pool)
+        # Shuffled first, so whatever the sort leaves tied is drawn at random —
+        # all of round one, where nobody has a result yet. Sorting round one
+        # by strength just seeded the favourites into each other. Runs at
+        # request time and the matches go into the log, so replay never
+        # re-rolls it.
+        pool = [e for e in self.entrant_ids if self._eligible(store, e)]
+        _draw.shuffle(pool)
+        if USE_STRENGTH and rnd > 0:
+            pool.sort(key=lambda e: (-score.get(e, 0), -store.entrant_strength(e)))
+        else:
+            pool.sort(key=lambda e: -score.get(e, 0))
         byes = {m.meta.get("bye") for m in store.matches.values()
                 if m.format_id == self.id and m.meta.get("bye")}
         if len(pool) % 2:

@@ -236,6 +236,12 @@ If you put anything other than Caddy in front of it, server-sent events must
 not be buffered or updates arrive in batches. `deploy/Caddyfile` sets
 `flush_interval -1` on `/api/stream` for exactly this reason.
 
+**Strength is parked for now.** It is still stored, but the console hides it
+(`SHOW_STRENGTH` in `tt/static/app.js`) and nothing pairs, seeds or draws on it
+(`USE_STRENGTH` in `tt/formats.py`): open play pairs on wait time and rematches,
+groups, knockouts and Swiss round one are drawn at random. Flip both to bring it
+back. The strength sections of this README describe it as it works when on.
+
 Strength is your estimate on a 1–10 scale, editable mid-event. Resist bolting
 Elo onto it: with six or eight games each, a K-factor big enough to move the
 needle is also big enough to be noise. Nudge two or three numbers by eye after
