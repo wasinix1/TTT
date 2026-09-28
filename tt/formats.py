@@ -17,9 +17,14 @@ used to take every table all evening.
 """
 
 import math
+import random
 from collections import defaultdict
 
 from .models import Scoring
+
+# its own generator, so drawing a round never disturbs anybody else's
+# random sequence (the simulator's seeded results included)
+_draw = random.Random()
 
 
 class Proposal:
@@ -856,6 +861,12 @@ class Swiss(Format):
         meets = store.meetings()
         pool = sorted([e for e in self.entrant_ids if self._eligible(store, e)],
                       key=lambda e: (-score.get(e, 0), -store.entrant_strength(e)))
+        if rnd == 0:
+            # nobody has a result yet, so there is nothing to pair on: sorting
+            # by strength here just seeded the favourites into each other in
+            # round one. Draw it at random; runs at request time and the
+            # matches go into the log, so replay never re-rolls it.
+            _draw.shuffle(pool)
         byes = {m.meta.get("bye") for m in store.matches.values()
                 if m.format_id == self.id and m.meta.get("bye")}
         if len(pool) % 2:

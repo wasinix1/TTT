@@ -4,10 +4,11 @@ import http.client, json, os, random, shutil, sys, tempfile, threading, time
 from datetime import datetime, timedelta
 from http.server import ThreadingHTTPServer
 from tt.server import App, Handler
-from tt import dispatch, simulate
+from tt import dispatch, formats, simulate
 from tt.simulate import play_one, drain
 
 random.seed(7)
+formats._draw.seed(1)           # the Swiss round-one draw, so runs repeat
 
 
 def fresh():
