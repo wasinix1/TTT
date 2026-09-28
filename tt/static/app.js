@@ -247,7 +247,6 @@ function renderTables() {
       `<div class="table-card"><div class="empty-table">No tables reserved for this cup — they're all on the other side.</div></div>`;
     return;
   }
-  const stale = S.formats.filter(f => f.bracket_stale && inView(f.cup_id));
   const notes = S.formats.filter(f => inView(f.cup_id))
     .flatMap(f => (f.warnings || []).map(w => [f, w]));
   const idle = (S.idle_tables || []).filter(w => inView(w.cup_id));
@@ -257,11 +256,6 @@ function renderTables() {
         ? `<div class="inline"><button class="primary tiny" data-act="cut-ko"
              data-i="${f.id}">Cut to knockout now</button></div>` : ''}
     </div>`).join('')
-    + stale.map(f => `<div class="warn">
-      ${esc(f.name)}: a result was put right after the knockout was drawn, and the
-      standings no longer agree with the bracket. Nobody's played match has been
-      touched. If it matters, undo the knockout results and cut again; if it does
-      not, carry on — this notice goes when the two agree.</div>`).join('')
     + (idle.length ? idle.map(w => `<div class="warn">
       Table ${w.table} is reserved and standing empty while
       ${esc(w.waiting_for.join(' and '))} ${w.waiting_for.length > 1 ? 'have' : 'has'}
