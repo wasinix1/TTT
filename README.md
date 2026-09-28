@@ -236,6 +236,10 @@ If you put anything other than Caddy in front of it, server-sent events must
 not be buffered or updates arrive in batches. `deploy/Caddyfile` sets
 `flush_interval -1` on `/api/stream` for exactly this reason.
 
+Strength is **parked for now**: it is still stored and the matchmaker reads it at
+its default, but nothing asks for it or shows it (`SHOW_STRENGTH` in `app.js`,
+`ASK_STRENGTH` in `site.js`). Every mention of it here is for when it comes back.
+
 Strength is your estimate on a 1–10 scale, editable mid-event. Resist bolting
 Elo onto it: with six or eight games each, a K-factor big enough to move the
 needle is also big enough to be noise. Nudge two or three numbers by eye after
