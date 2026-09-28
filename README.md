@@ -23,7 +23,11 @@ Formats:
 - **Swiss** — Buchholz, in one of three shapes. *Paced* is the default for a
   new one: pair on demand the moment a table frees up, but only against
   someone who has played the same number of games, and stop at the round
-  count. *Strict rounds* is classic lockstep Swiss. *Free-running* pairs on
+  count. Tiers are strict: the only crossing is somebody left alone in theirs
+  (an odd field, a late entry) playing up into the next one to catch up. Fast
+  finishers can still get two games ahead of a slow match — holding everyone
+  to one would be strict rounds. Within the same wins, a Swiss pairs on set
+  difference, then point difference. *Strict rounds* is classic lockstep Swiss. *Free-running* pairs on
   demand with no round limit and ends when you cut it to a knockout. A Swiss
   set up before paced mode existed keeps running free — an event already
   under way does not change shape because the server was updated.
@@ -300,8 +304,8 @@ sim.py           plays full events through every format
 `python3 sim.py` runs the lot: starvation, rematch bounds, byes, bracket
 byes, Swiss byes scoring a point, two formats sharing tables, replay
 determinism, correcting a result mid-bracket, fair table share between cups,
-a small draw not outrunning a big one, paced Swiss holding the field to
-within one game of itself, somebody walking out mid-match, one person entered
+a small draw not outrunning a big one, paced Swiss only pairing equal
+games played, somebody walking out mid-match, one person entered
 in two cups never being called to two tables at once, and a corrected group
 score redrawing a bracket nobody has played in yet, and the sandbox copying
 the shape of an event without any of its people while the live log does not
