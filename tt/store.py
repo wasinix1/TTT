@@ -154,6 +154,69 @@ class Store:
             self.conn.commit()
             self.replay()
 
+    def past_events(self):
+        """Who actually played at each event in the log, newest first.
+
+        The log is never truncated, so every earlier event is still in it,
+        as the span between two `event_new` markers. Nothing in live state
+        remembers them, so this replays the log into a scratch store and
+        reads the roster off it at the end of each span. Read-only: nothing
+        here writes to the log or to the live state.
+
+        "Played" means on a finished match that was not a walkover, so
+        somebody who registered, turned up and was withdrawn before their
+        first game is not on it."""
+        with self.lock:
+            rows = self.conn.execute(
+                "SELECT seq, type, payload, ts FROM events ORDER BY seq").fetchall()
+        scratch = Store(":memory:")
+        scratch._replaying = True
+        out, first = [], None
+
+        def close(last):
+            sp = scratch.roster_played()
+            if first is None or not (sp or scratch.event.get("id")):
+                return
+            out.append({"id": scratch.event.get("id", ""),
+                        "name": scratch.event.get("name", ""),
+                        "starts_at": scratch.event.get("starts_at", ""),
+                        "first_seq": first, "last_seq": last,
+                        "played": sp})
+
+        prev = 0
+        for seq, etype, payload, ts in rows:
+            if etype == "event_new" and first is not None:
+                close(prev)
+                first = None
+            if first is None:
+                first = seq
+            scratch.apply(etype, json.loads(payload), seq, ts)
+            prev = seq
+        close(prev)
+        if out:
+            out[-1]["current"] = True
+        return out[::-1]
+
+    def roster_played(self):
+        """Players on at least one finished, non-walkover match, with how
+        many they played and won. Sorted by name."""
+        tally = {}
+        for m in self.matches.values():
+            if m.status != "done" or m.meta.get("walkover"):
+                continue
+            for side, ids in (("a", m.side_a), ("b", m.side_b)):
+                for pid in ids:
+                    t = tally.setdefault(pid, [0, 0])
+                    t[0] += 1
+                    t[1] += m.winner == side
+        rows = []
+        for pid, (n, w) in tally.items():
+            pl = self.players.get(pid)
+            if pl:
+                rows.append({"name": pl.name, "strength": pl.strength,
+                             "played": n, "won": w})
+        return sorted(rows, key=lambda r: r["name"].lower())
+
     def history(self, limit=60):
         rows = self.conn.execute(
             "SELECT seq, ts, type, payload FROM events ORDER BY seq DESC LIMIT ?",

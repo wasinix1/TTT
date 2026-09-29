@@ -1825,6 +1825,30 @@ function tabLinks() {
    The things you reach for once a month: who the club knows, the undo of
    last resort, and a rehearsal of the night that costs nothing. */
 
+/* Who played at earlier events. The log keeps every event, but live state
+   only knows tonight, so this asks the server to replay it — read-only, and
+   only when asked, because it walks the whole log. */
+function pastEventsBlock() {
+  const pe = form.past_events;
+  if (!pe) return `<p class="sub">Every earlier event is still in the log. Load the
+    list to see who played at each.</p>
+    <button class="ghost" data-act="past-load">${form.past_busy ? 'Loading…' : 'Load past events'}</button>`;
+  const rows = pe.filter(e => !e.current);
+  if (!rows.length) return '<p class="sub">No earlier events yet.</p>';
+  return `<div class="rows">${rows.map(e => {
+    const open = form['pe_' + e.first_seq];
+    return `<div class="drow" style="--cols:1fr auto">
+      <span style="min-width:0"><b>${esc(e.name || e.id || 'Event')}</b>
+        <span style="color:var(--muted)">${esc((e.starts_at || '').replace('T', ' '))}
+          · ${e.played.length} played</span></span>
+      <span class="acts"><button class="ghost tiny" data-act="past-toggle"
+        data-i="${e.first_seq}">${open ? 'Hide' : 'Players'}</button></span>
+    </div>${open ? `<div style="padding:4px 12px 10px;font-size:13px">${
+      e.played.map(p => `${esc(p.name)} <span style="color:var(--muted)">${
+        p.won}/${p.played}</span>`).join(' · ') || 'Nobody played.'}</div>` : ''}`;
+  }).join('')}</div>`;
+}
+
 function tabMore() {
   return `<div class="form">
     ${sec('Club directory')}
@@ -1840,6 +1864,9 @@ function tabMore() {
         'a regular from here starts them at the number you tuned last time instead of a guess.'
       : 'Everyone the club has seen. This outlives the event — a new event clears ' +
         'tonight’s roster, never this.')}
+
+    ${sec('Past events')}
+    ${pastEventsBlock()}
 
     ${sec('Log')}
     <p class="sub">Every change is an event. Rewinding drops everything after that point and
@@ -2457,6 +2484,19 @@ document.addEventListener('click', async e => {
   if (a === 'cut-ko') {
     if (!confirm('Stop this Swiss now and build the knockout from current standings?')) return;
     return void api('swiss_cut_ko', { id: b.dataset.i });
+  }
+  if (a === 'past-load') {
+    form.past_busy = true; renderSheet();
+    const out = await api('past_events');
+    form.past_busy = false;
+    if (out) form.past_events = out.events;
+    renderSheet();
+    return;
+  }
+  if (a === 'past-toggle') {
+    form['pe_' + b.dataset.i] = !form['pe_' + b.dataset.i];
+    renderSheet();
+    return;
   }
   if (a === 'rewind') {
     if (!confirm('Drop everything after event ' + b.dataset.s + '?')) return;

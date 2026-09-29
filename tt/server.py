@@ -1102,6 +1102,11 @@ class App:
             raise ValueError(f"unknown phase {ph!r}")
         self.store.append("event_meta", {"phase_pin": ph})
 
+    def op_past_events(self, p):
+        """Who played at every earlier event. Read-only: replays the log
+        into a scratch store, so nothing here touches the live event."""
+        return {"events": self.store.past_events()}
+
     def op_rewind(self, p):
         self.store.rewind(int(p["seq"]))
 
@@ -1115,7 +1120,7 @@ OP_LEVEL = {
     "join_queue": 1, "leave_queue": 1,
     "report": 1, "void_match": 1, "reopen_match": 1, "put_back": 2, "assign": 2,
     "manual_match": 2, "manual_result": 1, "event_meta": 2, "rewind": 2,
-    "new_event": 2, "create_event": 2, "set_phase": 2,
+    "new_event": 2, "create_event": 2, "set_phase": 2, "past_events": 2,
     "register": 0, "update_registration": 2,
     "sim_start": 2, "sim_stop": 2,
     "admit": 2, "add_registration": 2, "remove_entrant": 2, "remove_entrants": 2, "update_person": 2, "remove_person": 2, "add_from_directory": 2,
