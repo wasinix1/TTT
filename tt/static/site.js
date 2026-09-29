@@ -149,11 +149,16 @@ function renderJoin() {
     return;
   }
   if (draft.done) {
+    // the entry's own link into the bot: one tap and the table calls for this
+    // entry come to their phone (docs/telegram.md)
+    const tg = draft.done.telegram;
     box.innerHTML = joinShell(`<div class="done-card">
         <h2>Du stehst auf der Liste</h2>
         <p>${esc(draft.done.name)} — ${esc(draft.done.cup)}</p>
         <p>Mehr ist nicht nötig. Wir bestätigen alle am Abend selbst — komm einfach vorbei.</p>
       </div>
+      ${tg ? `<a class="cta tg" href="${esc(tg)}" target="_blank" rel="noopener">Per Telegram Bescheid bekommen</a>
+        <p class="tg-note">Wir schreiben dir, wenn du gleich dran bist und wenn dein Tisch frei ist.</p>` : ''}
       <button class="cta ghost" data-act="again">Noch jemanden anmelden</button>
       ${backLink()}`, open);
     return;
@@ -193,6 +198,8 @@ function renderJoin() {
 
     ${error ? `<div class="err">${esc(error)}</div>` : ''}
     <button class="cta send" data-act="send" ${sending ? 'disabled' : ''}>${sending ? 'Sende …' : 'Abschicken'}</button>
+    ${P.telegram ? `<a class="tg-alt" href="https://t.me/${esc(P.telegram)}?start=join" target="_blank"
+        rel="noopener">Oder mit Telegram anmelden — und Bescheid bekommen, wenn du dran bist →</a>` : ''}
     ${backLink()}</div>`, open);
 }
 
@@ -208,8 +215,8 @@ async function send() {
     const j = await r.json().catch(() => ({ error: 'Da ist etwas schiefgegangen.' }));
     if (!r.ok) { error = j.error || 'Da ist etwas schiefgegangen.'; }
     else {
-      draft.done = { name: draft.name, cup: j.cup };
-      remember({ id: j.registration_id, name: draft.name, cup: j.cup });
+      draft.done = { name: draft.name, cup: j.cup, telegram: j.telegram || '' };
+      remember({ id: j.registration_id, name: draft.name, cup: j.cup, telegram: j.telegram || '' });
     }
   } catch (e) {
     error = 'Gerade keine Verbindung — versuch es gleich noch einmal.';

@@ -2396,4 +2396,6 @@ if __name__ == "__main__":
     test_the_sandbox_is_reachable_only_by_asking_for_it()
     test_nobody_in_a_sandbox_shares_a_name()
     test_a_sandbox_needs_something_to_copy()
+    import sim_telegram           # the Telegram layer, against a fake Bot API
+    sim_telegram.run()
     print("\nall good\n")
