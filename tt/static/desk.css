@@ -138,3 +138,32 @@ kbd{font-family:inherit;font-size:12px;font-weight:700;background:var(--raised);
   .nav .sp{display:none}
   .tally{width:100%}
 }
+
+/* ---- actions (step 3) */
+.btn.primary{background:var(--signal);color:var(--on-signal);font-weight:700}
+.btn.primary:hover{background:var(--chalk);color:var(--ground)}
+.btn:disabled{opacity:.4;cursor:default}
+.push{margin-left:auto}
+input[type=text],select{width:100%;border:1px solid var(--edge);background:var(--raised);border-radius:var(--r-sm);padding:8px 10px;font-size:14px;min-width:0}
+input[type=text]:focus,select:focus{outline:2px solid var(--chalk);outline-offset:-1px;border-color:transparent}
+select:disabled,input:disabled{background:var(--surface);color:var(--muted)}
+label.l{display:block;font-size:11px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;color:var(--muted);margin-bottom:4px}
+.fields{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.fields > div:only-child{grid-column:1 / -1}
+.actions{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.confirm{background:var(--raised);border-radius:var(--r-sm);padding:10px 12px;font-size:14px;display:flex;flex-direction:column;gap:8px;margin:0 16px 10px}
+.detail .confirm{margin:0}
+.confirm.warn{background:var(--warn-wash)}
+.entry .erow{display:flex;align-items:center;gap:8px;justify-content:space-between;margin-top:6px}
+
+.walk{background:var(--raised);margin:0 0 var(--gap);padding:12px 14px;display:flex;flex-direction:column;gap:8px}
+.walk .row{display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap}
+.walk .row > div{flex:1 1 150px;min-width:0}
+.walk .chk{display:flex;gap:6px;align-items:center;font-size:13px;color:var(--muted)}
+.walk .msg{font-size:13px;color:var(--warn);background:var(--warn-wash);padding:8px 10px;border-radius:var(--r-sm);display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.resolved li{display:flex;gap:8px;align-items:center;justify-content:space-between;flex-wrap:wrap}
+
+.toast{position:fixed;left:50%;bottom:calc(20px + env(safe-area-inset-bottom,0px));transform:translateX(-50%);background:var(--chalk);color:var(--ground);padding:10px 12px 10px 16px;border-radius:var(--r);display:flex;gap:14px;align-items:center;font-size:14px;z-index:60;max-width:calc(100% - 32px);box-shadow:0 8px 30px rgba(0,0,0,.2)}
+.toast button{border:0;background:rgba(255,255,255,.16);color:var(--ground);padding:6px 12px;border-radius:var(--r-xs);font-weight:700;cursor:pointer;font:inherit;font-size:13px}
+.toast button:hover{background:rgba(255,255,255,.28)}
+@media (max-width:700px){ .fields{grid-template-columns:1fr} }

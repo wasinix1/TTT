@@ -543,6 +543,67 @@ def test_the_desk_payload():
     shutil.rmtree(d)
 
 
+def test_the_desk_actions_and_their_undo():
+    print("\n[registration desk: every action, and its undo]")
+    app, d = fresh()
+    s = app.store
+    cup = door_event(app)
+    reg = lambda n: app.act("public", "register", {"cup_id": cup, "name": n})["registration_id"]
+    r1, r2 = reg("Mira Scholz"), reg("Mira Scholz")
+
+    e1 = app.act("door", "admit", {"registration_id": r1})["entrant_id"]
+    app.act("door", "remove_entrant", {"id": e1})
+    check(s.registrations[r1].status == "pending" and not s.entrants,
+          "undoing a check-in puts the entry back in Expected")
+    e1 = app.act("door", "admit", {"registration_id": r1})["entrant_id"]
+
+    try:
+        app.act("door", "admit", {"registration_id": r2})
+        ok = False
+    except ValueError:
+        ok = True
+    check(ok, "the second Mira Scholz is still refused by the server")
+    e2 = app.act("door", "admit", {"registration_id": r2, "name": "Mira Scholz (2)"})["entrant_id"]
+    check(s.entrants[e2].name == "Mira Scholz (2)" and s.registrations[r2].status == "confirmed",
+          "and goes in under the name the desk offers")
+
+    app.act("door", "update_registration", {"id": reg("Felix Hahn"), "status": "dropped"})
+    fx = next(r for r in s.registrations.values() if r.name == "Felix Hahn")
+    app.act("door", "update_registration", {"id": fx.id, "status": "pending"})
+    check(fx.status == "pending", "a no-show can be put back")
+
+    pid = s.entrants[e2].player_ids[0]
+    app.act("door", "update_player", {"id": pid, "name": "Mira S."})
+    app.act("door", "update_player", {"id": pid, "name": "Mira Scholz (2)"})
+    check(s.entrants[e2].name == "Mira Scholz (2)", "a rename and its undo")
+
+    app.act("door", "set_resting", {"entrant_id": e1, "resting": True})
+    app.act("door", "set_resting", {"entrant_id": e1, "resting": False})
+    check(e1 not in s.opted_out, "sitting out and back in")
+
+    app.act("door", "withdraw", {"entrant_id": e1, "withdrawn": True})
+    app.act("door", "withdraw", {"entrant_id": e1, "withdrawn": False})
+    check(s.entrants[e1].active, "gone home and brought back")
+
+    person = next(p for p in s.people.values() if p.name == "Mira Scholz")
+    app.act("door", "remove_entrant", {"id": e1})
+    e3 = app.act("door", "add_from_directory", {"person_id": person.id, "cup_id": cup})["entrant_id"]
+    check(s.entrants[e3].name == "Mira Scholz", "somebody can come back in from the directory")
+    # ids are reused after a removal; the activity still names who it was then
+    lines = [x["text"] for x in app.activity(50)]
+    check(lines[0] == "In: Mira Scholz · Cup" and lines[1] == "Removed: Mira Scholz",
+          "the activity reads newest first")
+    gone = app.act("door", "admit", {"cup_id": cup, "name": "Jana Berger"})["entrant_id"]
+    app.act("door", "remove_entrant", {"id": gone})
+    app.act("door", "admit", {"cup_id": cup, "name": "Ilya Marek"})
+    lines = [x["text"] for x in app.activity(3)]
+    check(lines[:2] == ["In: Ilya Marek · Cup", "Removed: Jana Berger"],
+          "and names whoever it was at the time, though the id went to somebody else")
+    check("Renamed Mira Scholz (2) → Mira S." in [x["text"] for x in app.activity(50)],
+          "and says what a rename changed")
+    shutil.rmtree(d)
+
+
 def solo_field(app, n, base=5.0, step=0.0):
     return [add_player(app, f"P{i}", base + i * step) for i in range(n)]
 
@@ -1430,8 +1491,8 @@ def test_routing():
           "the admin link is the console whatever the phase")
     check("app.js" in get("/r/" + app.keys["referee"])[1],
           "so is the referee link")
-    check("app.js" in get("/d/" + app.keys["door"])[1],
-          "and the door link")
+    check("desk.js" in get("/d/" + app.keys["door"])[1],
+          "the door link is the registration desk")
     check("site.js" in get("/join")[1], "/join is the site")
     check(get("/api/public")[0] == 200, "/api/public answers")
     app.act("admin", "set_phase", {"phase": "live"})
@@ -2399,6 +2460,7 @@ if __name__ == "__main__":
     test_the_door_pairs()
     test_the_door_key()
     test_the_desk_payload()
+    test_the_desk_actions_and_their_undo()
     test_the_door_after_the_draw_starts()
     test_directory()
     test_routing()

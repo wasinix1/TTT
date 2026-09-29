@@ -274,6 +274,7 @@ class App:
                 ents.append({
                     "id": e.id, "name": e.name, "cup_id": e.cup_id,
                     "players": [s.players[p].name for p in e.player_ids if p in s.players],
+                    "player_ids": [p for p in e.player_ids if p in s.players],
                     "status": self.entrant_status(e),
                     "table": t[0] if t else None, "vs": t[1] if t else "",
                     "removable": not self._why_not_removable(e),
@@ -297,17 +298,27 @@ class App:
         """The log, told as the desk would say it. Only what is about who is
         in the event; results and dispatching are the console's story."""
         s = self.store
-        hist = s.history(400)
-        # names as they were written, so somebody removed since still has one
-        ent_name = {h["payload"].get("id"): h["payload"].get("name", "")
-                    for h in hist if h["type"] == "entrant_add"}
-        ent_name.update({e.id: e.name for e in s.entrants.values()})
+        # Told in the order it happened, so every line uses the names as they
+        # were at that moment. Ids are reused once somebody is removed: read
+        # backwards, "Removed: E4" would name whoever holds E4 now.
+        hist = list(reversed(s.history(400)))
+        ents, players = {}, {}
+        ent_name = lambda i: ents.get(i) or (s.entrants[i].name if i in s.entrants else "somebody")
         cup_name = lambda c: s.cups[c].name if c in s.cups else ""
         reg = lambda i: s.registrations.get(i)
         who = lambda r: r.name + (f" & {r.partner_name}" if r.partner_name else "")
         out = []
         for h in hist:
             p, ty, line = h["payload"], h["type"], ""
+            if ty == "entrant_add" or (ty == "entrant_update" and "name" in p):
+                ents[p.get("id")] = p.get("name", "")
+            if ty == "player_update" and "name" in p:
+                was = players.get(p.get("id")) or (s.players[p["id"]].name
+                                                   if p.get("id") in s.players else "")
+                line = f"Renamed {was} → {p['name']}" if was and was != p["name"] \
+                    else f"Renamed to {p['name']}"
+            if ty in ("player_add", "player_update") and "name" in p:
+                players[p.get("id")] = p["name"]
             if ty == "registration_add":
                 line = f"New entry: {p.get('name', '')}" + (
                     f" & {p['partner_name']}" if p.get("partner_name") else "") + (
@@ -321,22 +332,21 @@ class App:
                 line = f"In: {p.get('name', '')}" + (
                     f" · {cup_name(p.get('cup_id'))}" if cup_name(p.get("cup_id")) else "")
             elif ty == "entrant_remove":
-                line = f"Removed: {ent_name.get(p.get('id'), 'somebody')}"
+                line = f"Removed: {ent_name(p.get('id'))}"
+                ents.pop(p.get("id"), None)       # the id is free for the next one
             elif ty == "rest_set":
-                n = ent_name.get(p.get("entrant_id"), "somebody")
+                n = ent_name(p.get("entrant_id"))
                 line = f"{n} sits out" if p.get("resting", True) else f"{n} back in"
             elif ty == "entrant_update" and "active" in p:
-                n = ent_name.get(p.get("id"), "somebody")
+                n = ent_name(p.get("id"))
                 line = f"{n} gone home" if not p["active"] else f"{n} is back"
             elif ty == "entrant_update" and p.get("cup_id"):
-                line = f"{ent_name.get(p.get('id'), 'somebody')} moved to {cup_name(p['cup_id'])}"
-            elif ty == "player_update" and "name" in p:
-                line = f"Renamed to {p['name']}"
+                line = f"{ent_name(p.get('id'))} moved to {cup_name(p['cup_id'])}"
+            elif ty == "entrant_update" and "name" in p:
+                line = f"Team name: {p['name']}"
             if line:
                 out.append({"seq": h["seq"], "ts": h["ts"], "by": h["by"], "text": line})
-                if len(out) >= limit:
-                    break
-        return out
+        return out[::-1][:limit]
 
     def state(self, role):
         s = self.store
@@ -1334,9 +1344,10 @@ class Handler(BaseHTTPRequestHandler):
                 return
             return self._send(200, body, etag=tag)
 
-        # The registration desk: its own page, on the admin or the door key.
-        # The key is checked by /api/desk, not here — the page is only markup.
-        if re.fullmatch(r"/[ad]/[^/]+/desk", path):
+        # The registration desk: its own page, on the admin or the door key —
+        # and the whole of what the door link opens. The key is checked by
+        # /api/desk and /api/action, not here; the page is only markup.
+        if re.fullmatch(r"/[ad]/[^/]+/desk|/d/[^/]+/?", path):
             return self._static("desk.html")
 
         if path == "/api/stream":
@@ -1365,7 +1376,7 @@ class Handler(BaseHTTPRequestHandler):
         #
         # The bare root is phase-driven: the site before the doors open, the
         # console once they have.
-        if path.startswith(("/a/", "/r/", "/d/")) or self.app.store.shows_console():
+        if path.startswith(("/a/", "/r/")) or self.app.store.shows_console():
             return self._static("index.html")
         return self._site_page()
 

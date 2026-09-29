@@ -65,18 +65,16 @@ Every logged event records who wrote it (`admin`, `door`, `referee`,
 activity list and More → Log can say who did it. Events from before this
 existed carry no author and are shown without one, rather than guessed.
 
-Until the desk exists (step 2), the door link opens the console with a single
-Door tab: today's check-in list, minus the admin-only Merge into… and Remove
-all. The server refuses everything else to that key regardless of what the
-page shows.
+The door link opens the desk and nothing else; there is no console for it.
+The server refuses everything outside the list above to that key regardless
+of what any page shows.
 
 ## The desk page
 
-`tt/static/desk.html` + `desk.js` + `desk.css`, served at `/d/<key>/desk` and
-`/a/<key>/desk`, in the console's palette and type. Once the desk can check
-people in (step 3), the bare door link `/d/<key>` opens it directly instead of
-the console's Door tab. It is the same
-kind of standalone page as `/board` and the public site.
+`tt/static/desk.html` + `desk.js` + `desk.css`, served at `/d/<key>` (the
+door link) and `/a/<key>/desk` (the admin's way in), in the console's palette
+and type. It is the same kind of standalone page as `/board` and the public
+site.
 
 It reads its own payload, `/api/desk`: cups, registrations (without their
 secret tokens), entrants with status and table, the directory, the last
@@ -190,12 +188,16 @@ wieder anmelden** after cancelling (while registration is open).
 Each step ships on its own and keeps the old Door tab working.
 
 1. **Door role and `by`.** Third key, op sets, `by` on events, Links tab
-   entry. Nothing visible changes except the new link.
-2. **Desk, read-only.** `/d/<key>`, `/api/desk`, the three columns with real
-   data, filter across cups. Proves the payload and the layout on a laptop.
+   entry. Nothing visible changes except the new link. *Done.*
+2. **Desk, read-only.** `/api/desk`, the three columns with real data,
+   filter across cups. Proves the payload and the layout on a laptop. *Done.*
 3. **Desk actions.** Check in, walk-ins, no-show, detail panel edits, sit
-   out / gone home, undo toasts, directory tab, keys. From here the desk can
-   run an evening.
+   out / gone home, undo toasts, directory tab, keys; `/d/<key>` opens the
+   desk. From here the desk can run an evening. *Done.* Two things from step
+   4 came along because they fell out of it: **Put back** under "Taken off
+   the list", and the "already here" choice on a second entry with the same
+   name (same person — take it off, or someone else — check in as
+   "Name (2)").
 4. **Duplicates.** Grouping, leftovers, Same team / Different team,
    Resolved with Put back, near-match hints.
 5. **Public additions.** The team-form line, the duplicate question,

@@ -39,8 +39,8 @@ Roles are four URLs, no accounts:
 |---|---|
 | `/` | watch |
 | `/r/<key>` | enter results, manage the queue |
-| `/d/<key>` | the door: check-in, walk-ins and the roster — no scores, draws or setup |
-| `/a/<key>` | everything |
+| `/d/<key>` | the registration desk: check-in, walk-ins and the roster — no scores, draws or setup |
+| `/a/<key>` | everything; `/a/<key>/desk` is the same desk for the admin |
 | `/board` | the wall display |
 
 ## Sharing tables between cups
