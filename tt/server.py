@@ -1137,7 +1137,11 @@ class App:
         return {"url": tg.door_link(p.get("person_id") or "")}
 
     def op_tg_read(self, p):
-        self._tg().wire.mark_read(p.get("chat_id"))
+        w = self._tg().wire
+        if p.get("all"):
+            w.mark_all_read()
+        else:
+            w.mark_read(p.get("chat_id"))
         self.store.touch()
 
     def op_tg_register(self, p):

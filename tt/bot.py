@@ -653,6 +653,7 @@ class Conversation:
                 self.bot.system("set_resting", {"entrant_id": e.id, "resting": rest})
                 if on_card:
                     return self.refresh(uid, mid)
+                self.wire.keep(uid, mid)
                 if rest:
                     self.edit(uid, mid, "⏸ Okay, Pause — wir rufen dich nicht auf.",
                               [[button("▶ Ich bin wieder da", f"p:{e.id}:0")]])
@@ -848,9 +849,11 @@ class Conversation:
                     self.wire.close_claim(c["id"], "agreed")
                     return self._write(m.id, m.queued_seq, games) or True
                 self.wire.close_claim(c["id"], "disputed")
-                self._disputed(m, t, games, c["games"], me_name, opp)
-                self.say(uid, "Das passt nicht zu dem, was die andere Seite gemeldet hat. "
-                              "Bitte meldet euch beim Schiri.")
+                self._disputed(t, [(opp, games_line(_mine(c["games"], c["side"]))),
+                                   (me_name, games_line(games_mine))])
+                for chat in (uid, c["chat_id"]):
+                    self.say(chat, "Eure Ergebnisse passen nicht zusammen — "
+                                   "bitte meldet euch beim Schiri.")
                 return True
             self.wire.close_claim(c["id"], "replaced")
         if not theirs:
@@ -895,7 +898,8 @@ class Conversation:
             self.edit(uid, mid, "✓ Bestätigt und eingetragen.")
             return "Eingetragen ✓"
         self.wire.close_claim(cid, "disputed")
-        self._disputed(m, t, c["games"], None, names[0], names[1])
+        self._disputed(t, [(names[0], games_line(_mine(c["games"], c["side"]))),
+                           (names[1], "that is wrong")])
         self.edit(uid, mid, "Okay — bitte meldet euch beim Schiri.")
         self.say(c["chat_id"], f"{esc(names[1])} sagt, das Ergebnis stimmt nicht. "
                                "Bitte meldet euch beim Schiri.")
@@ -910,10 +914,10 @@ class Conversation:
             return self.bot.system("report", {"match_id": match_id, "games": games,
                                               "by": "players"})
 
-    def _disputed(self, m, t, games, other, a_name, b_name):
-        where = table_de(t) if t else "Ein Tisch"
-        self.wire.note(None, "sys",
-                       f"{where}: {a_name} und {b_name} sind sich beim Ergebnis nicht "
-                       f"einig ({games_line(games)}"
-                       + (f" gegen {games_line(other)}" if other else "") + ").")
+    def _disputed(self, t, says):
+        """Tell the organisers a table needs a referee — in the console's
+        language, each side's score as they typed it."""
+        where = (t.name or f"Table {t.number}") if t else "A table"
+        self.wire.note(None, "sys", f"{where} needs a referee: " + ", ".join(
+            f"{name} says {what}" for name, what in says) + ".")
         self.bot.changed()

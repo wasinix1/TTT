@@ -149,7 +149,9 @@ function render() {
       ? base + ' · ' + S.phase : base;
   const waiting = (S.registrations || []).filter(r => r.status === 'pending').length;
   $('setup-btn').hidden = !isAdmin();
-  $('setup-btn').textContent = waiting ? `Setup · ${waiting}` : 'Setup';
+  const unread = tgOn() ? S.telegram.unread : 0;
+  $('setup-btn').innerHTML = esc(waiting ? `Setup · ${waiting}` : 'Setup') + (unread
+    ? ` <span class="count" title="${unread} unread on Telegram">${unread}</span>` : '');
 
   renderCupTabs();
   renderTables();
@@ -642,8 +644,11 @@ function renderRecent() {
    the edge that mattered most — which draw the door feeds — was reachable
    from none of them. */
 
-const TABS = [['door', 'Door'], ['event', 'Event'],
-              ['links', 'Links'], ['more', 'More']];
+/* Chat only exists once a Telegram bot is connected: an optional layer
+   stays out of sight until it is switched on. */
+const sheetTabs = () => [['door', 'Door'], ['event', 'Event']]
+  .concat(tgOn() ? [['chat', 'Chat']] : [])
+  .concat([['links', 'Links'], ['more', 'More']]);
 
 /* Before the doors the job is setting the thing up; after them it is
    letting people in. Open on whichever that is. */
@@ -658,15 +663,18 @@ function renderSheet() {
   // never rebuild the sheet out from under a half-typed field
   if (dirtyFocus()) return;
   const waiting = (S.registrations || []).filter(r => r.status === 'pending').length;
-  $('tabs').innerHTML = TABS.map(([k, l]) =>
+  const unread = tgOn() ? S.telegram.unread : 0;
+  if (sheetTab === 'chat' && !tgOn()) sheetTab = 'links';
+  $('tabs').innerHTML = sheetTabs().map(([k, l]) =>
     `<button class="${sheetTab === k ? 'on' : ''}" data-tab="${k}">${l}${
-      k === 'door' && waiting ? ` <span class="count">${waiting}</span>` : ''}</button>`).join('');
+      k === 'door' && waiting ? ` <span class="count">${waiting}</span>` : ''}${
+      k === 'chat' && unread ? ` <span class="count">${unread}</span>` : ''}</button>`).join('');
   // a result coming in on another table re-renders everything, and without
   // this the sheet jumps back to the top under whoever is reading it
   const body = $('sheet-body');
   const top = body.scrollTop;
   body.innerHTML = ({
-    door: tabDoor, event: tabEvent, links: tabLinks, more: tabMore,
+    door: tabDoor, event: tabEvent, chat: tabChat, links: tabLinks, more: tabMore,
   }[sheetTab] || tabDoor)();
   body.scrollTop = top;
 }
@@ -1493,9 +1501,13 @@ function regRow(r) {
       : r.kind === 'pair'
         ? `<span class="chip state">TEAM</span>${r.team_name
           ? ` <span class="sub"><b>${esc(r.team_name)}</b></span>` : ''}` : '';
+  const tg = r.tg_id ? tgChip(r.person_id ? 'Entered on Telegram, and known'
+    : 'Entered on Telegram — confirming links the account to this person') : '';
+  const rsvp = r.rsvp === 'yes'
+    ? '<span class="chip state" title="Said yes to the reminder">coming</span>' : '';
   return `<div class="entry" id="reg-${r.id}">
-    ${tag || twice ? `<div class="tag">${tag}${twice
-      ? ' <span class="chip dim">registered twice</span>' : ''}</div>` : ''}
+    ${tag || twice || tg || rsvp ? `<div class="tag">${tag}${twice
+      ? ' <span class="chip dim">registered twice</span>' : ''}${tg}${rsvp}</div>` : ''}
     <div class="drow" style="--cols:${SHOW_STRENGTH ? '1fr 76px 150px auto' : '1fr auto'}">
       <input id="rn-${r.id}" value="${esc(d.name)}" data-f="rn-${r.id}">
       ${SHOW_STRENGTH ? `<input id="rs-${r.id}" value="${esc(d.strength)}" data-f="rs-${r.id}" inputmode="decimal">
@@ -1665,7 +1677,7 @@ function personRow(e) {
   const [label, cls, tip] = STATUS[e.status] || [e.status, '', ''];
   const many = S.cups.length > 1;
   const out = e.status === 'withdrawn';
-  const cols = (SHOW_STRENGTH ? '1fr 60px ' : '1fr ') + (many ? '92px 130px auto' : '92px auto');
+  const cols = (SHOW_STRENGTH ? '1fr 60px ' : '1fr ') + (many ? '112px 130px auto' : '112px auto');
   return `<div class="entry"><div class="drow" style="--cols:${cols}"${
       e.resting || out ? ' data-dim="1"' : ''}>
     ${solo ? auto('pn-' + solo.id, 'update_player:' + solo.id, 'name', solo.name)
@@ -1675,10 +1687,11 @@ function personRow(e) {
         ? auto('ps-' + solo.id, 'update_player:' + solo.id, 'strength', solo.strength,
                'inputmode="decimal"')
         : `<span class="num" title="The average of the two">${e.strength}</span>`}
-    <span class="chip ${cls}" title="${esc(tip)}">${esc(label)}</span>
+    <span class="stat"><span class="chip ${cls}" title="${esc(tip)}">${esc(label)}</span>${
+      tgLinked(e).length ? '<span class="tgmark" title="Gets table calls on Telegram">✈︎</span>' : ''}</span>
     ${many ? pick('ec-' + e.id, 'update_entrant:' + e.id, 'cup_id', e.cup_id || '',
         S.cups.map(c => [c.id, c.name]), 'title="Move to another cup"') : ''}
-    <span class="acts">${out
+    <span class="acts">${tgButton(e)}${out
       ? `<button class="tiny" data-act="rejoin" data-e="${e.id}">Bring back</button>`
       : `${e.resting
           ? `<button class="tiny" data-act="unrest" data-e="${e.id}">Back in</button>`
@@ -1803,6 +1816,8 @@ function tabLinks() {
           'anyone can reach. It answers “when am I playing” by itself: who is on ' +
           'which table now, then the running order with a rough time against each one.')}
 
+    ${tgSection()}
+
     ${sec('Print and show')}
     <div class="inline">
       <a href="/print?mode=event&base=${encodeURIComponent(base + '/')}" target="_blank"
@@ -1818,6 +1833,163 @@ function tabLinks() {
           'Pasting that URL into a chat shows the event name, date and blurb as a card, so ' +
           'the link does the advertising on its own.')}
   </div>`;
+}
+
+/* ------------------------------------------------------------- Telegram
+
+   An optional layer. None of this shows until a bot is connected, and
+   nothing else in the console depends on it. Players get two messages per
+   match, enter with one tap and can write back; see docs/telegram.md. */
+
+const tgOn = () => !!(S && S.telegram && S.telegram.on);
+const tgChip = title => `<span class="chip tg" title="${esc(title)}">Telegram</span>`;
+
+/* The people an entrant is made of, as the directory knows them. */
+function peopleOf(e) {
+  return e.player_ids.map(id => {
+    const p = S.players.find(x => x.id === id);
+    return p && (S.people || []).find(n => n.id === p.person_id);
+  }).filter(Boolean);
+}
+const tgLinked = e => peopleOf(e).filter(p => p.tg_id);
+
+/* One button per row, whichever is the useful one: link somebody who is
+   not on Telegram yet, or write to somebody who is. */
+function tgButton(e) {
+  if (!tgOn() || e.status === 'withdrawn') return '';
+  const ppl = peopleOf(e);
+  const todo = ppl.find(p => !p.tg_id);
+  const night = S.phase === 'doors' || S.phase === 'live';
+  if (todo && night) return `<button class="ghost tiny" data-act="tg-link" data-n="${todo.id}"
+    title="Show ${esc(todo.name)} a code to scan — their table calls come to their phone">Link</button>`;
+  if (ppl.some(p => p.tg_id)) return `<button class="ghost tiny" data-act="tg-msg" data-e="${e.id}"
+    title="Write to ${esc(e.name)} on Telegram">Message</button>`;
+  return '';
+}
+
+function tgSection() {
+  const t = S.telegram || {};
+  if (!t.on) return `${sec('Telegram')}
+    <p class="sub">Players get two messages per match on their phone — up next, and your
+      table — enter with one tap, and can write to you. Optional: without it nothing changes.</p>
+    <div class="inline" style="align-items:flex-end">
+      <div class="field"><label for="tg-token">Bot token</label>
+        <input id="tg-token" value="${esc(form.tg_token || '')}" data-f="tg_token"
+               placeholder="123456789:AAE…" autocomplete="off" spellcheck="false"></div>
+      <button class="primary" data-act="tg-connect" ${form.tg_busy ? 'disabled' : ''}>${
+        form.tg_busy ? 'Connecting…' : 'Connect'}</button>
+    </div>
+    ${why('In Telegram, open @BotFather, send /newbot and give it a name. It answers with a ' +
+          'token — a long line with a colon in it. Paste that here. That is all the setup there is: ' +
+          'the server talks to Telegram itself, so there is nothing to change on the server or in DNS.',
+          'The token is kept in telegram.json beside your keys and never shown again, not even here.')}`;
+  const health = t.ok === false
+    ? `<span class="chip warn">${esc(t.error || 'Telegram is not reachable')}</span>`
+    : `<span class="chip state">working</span>`;
+  return `${sec('Telegram', `<button class="ghost tiny" data-act="tg-disconnect">Disconnect</button>`)}
+    <div class="rows">
+      <div class="drow" style="--cols:170px 1fr"><span>Bot</span>
+        <span><b>@${esc(t.username)}</b> ${health}</span></div>
+      <div class="drow" style="--cols:170px 1fr"><span>Following</span>
+        <span>${t.followers}${t.queued ? ` <span class="sub" style="display:inline">· ${t.queued} waiting to go out</span>` : ''}</span></div>
+      <div class="drow" style="--cols:170px 1fr"><span>Link for posters and chats</span>
+        <span class="key">${esc(t.link)}</span></div>
+    </div>
+    <label class="pick"><input type="checkbox" id="tg-scores" data-tgscores="1"
+      ${S.event.player_scores ? 'checked' : ''}> Players enter their own scores — the other side confirms</label>
+    ${why('Anyone who opens the link starts following: they hear about new events and can ' +
+          'enter with one tap. Somebody is only linked to a player — and gets their table calls — ' +
+          'when the door has seen them: by confirming an entry they made in Telegram, or by them ' +
+          'scanning the code on their row at the door. A name alone is never enough.',
+          'With players entering scores, the table call tells them to type the result into the ' +
+          'chat. The other side is asked to confirm, and only then is it written. Two different ' +
+          'answers write nothing and show up in Chat as a table that needs a referee.')}`;
+}
+
+function tabChat() {
+  const t = S.telegram || {};
+  const auds = t.audiences || [];
+  const live = S.phase === 'doors' || S.phase === 'live';
+  const aud = form.tg_aud || (live ? 'tonight' : 'followers');
+  const canAnnounce = !live && S.cups.some(c => c.registration === 'open');
+  const n = (auds.find(a => a.id === aud) || {}).n || 0;
+  const threads = t.threads || [];
+  return `<div class="form">
+    ${sec('Send')}
+    <div class="inline" style="align-items:flex-end">
+      <div class="field" style="max-width:300px"><label for="tg-aud">To</label>
+        <select id="tg-aud" data-f="tg_aud">${auds.map(a =>
+          `<option value="${a.id}" ${a.id === aud ? 'selected' : ''}>${esc(a.label)} · ${a.n}</option>`).join('')}</select></div>
+    </div>
+    <div class="field"><label for="tg-text">Message</label>
+      <textarea id="tg-text" rows="3" data-f="tg_text"
+        placeholder="${live ? 'Table 3 is out of balls — back in five.' : 'Friday is on — doors at seven.'}">${esc(form.tg_text || '')}</textarea></div>
+    <div class="inline">
+      <button class="primary" data-act="tg-send" ${n ? '' : 'disabled'}>Send to ${n}</button>
+      ${canAnnounce ? `<button data-act="tg-announce" title="Each follower gets the event with its own entry buttons">Announce the event</button>` : ''}
+    </div>
+    ${why('Following is everyone who opened the bot and did not switch the news off. ' +
+          'Tonight’s players and a cup reach whoever is playing and linked, news or not — ' +
+          'that is the evening talking, not a newsletter.',
+          canAnnounce ? 'Announce sends the event itself — name, date, place and an entry button ' +
+            'per open cup — with your message on top, so entering is one tap from the announcement.' : '')}
+
+    ${sec('Messages')}
+    ${threads.length ? threads.map(threadCard).join('')
+      : `<p class="blank">Nothing yet. Whatever players write to @${esc(t.username)} lands here.</p>`}
+  </div>`;
+}
+
+const hhmm = ts => new Date(ts * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+function threadCard(th) {
+  const key = th.chat_id == null ? 'sys' : th.chat_id;
+  const all = !!form['th_' + key];
+  const msgs = all ? th.messages : th.messages.slice(-4);
+  return `<div class="card thread${th.unread ? ' unread' : ''}"><div class="card-body">
+    <div class="thead"><b>${esc(th.name)}</b>${th.handle && th.handle !== th.name
+      ? ` <span class="sub">${esc(th.handle)}</span>` : ''}${th.unread
+      ? ` <span class="count">${th.unread}</span>` : ''}<span class="sub when">${ago(th.last)}</span></div>
+    ${th.messages.length > 4 ? `<button class="ghost tiny" data-act="th-more" data-c="${key}">${
+      all ? 'Only the latest' : `Earlier (${th.messages.length - 4})`}</button>` : ''}
+    <div class="msgs">${msgs.map(m => `<div class="msg ${m.dir}"><span>${esc(m.text)}</span>
+      <i>${hhmm(m.ts)}</i></div>`).join('')}</div>
+    ${th.system ? '' : !th.reachable ? `<p class="sub">Not reachable — they blocked the bot.</p>`
+      : `<div class="inline reply">
+      <div class="field"><input id="rep-${key}" data-f="rep_${key}" value="${esc(form['rep_' + key] || '')}"
+        placeholder="Reply to ${esc(th.name)}" aria-label="Reply to ${esc(th.name)}" enterkeyhint="send"></div>
+      <button data-act="tg-reply" data-c="${key}">Send</button></div>`}
+  </div></div>`;
+}
+
+/* The two small layers the door opens: a code to scan, or a message. */
+function renderTgModal() {
+  const el = $('tg-modal');
+  const m = form.tgm;
+  if (!m) { el.hidden = true; el.innerHTML = ''; return; }
+  el.hidden = false;
+  const body = m.kind === 'link' ? `
+      <div class="qr"><img src="/api/qr.svg?u=${encodeURIComponent(m.url)}" alt="QR code"
+        onerror="this.parentNode.hidden=true"></div>
+      <p class="sub">${esc(m.name)} scans this with their phone camera, Telegram opens, they tap
+        Start — from then on their table calls come to their phone. Works once, tonight.</p>
+      <div class="key">${esc(m.url)}</div>
+      <div class="inline" style="justify-content:flex-end">
+        <button class="primary" data-act="tgm-close">Done</button></div>` : `
+      <div class="field"><label for="tgm-text">Message</label>
+        <textarea id="tgm-text" rows="3" data-f="tgm_text">${esc(form.tgm_text || '')}</textarea></div>
+      <div class="inline" style="justify-content:flex-end">
+        <button class="ghost" data-act="tgm-close">Cancel</button>
+        <button class="primary" data-act="tgm-send">Send</button></div>`;
+  el.innerHTML = `<div class="sheet-inner narrow">
+    <div class="sheet-head">
+      <h2 style="margin:0;font-size:15px">${m.kind === 'link' ? 'Link ' + esc(m.name) + ' to Telegram'
+        : 'Write to ' + esc(m.name)}</h2>
+      <button class="ghost" data-act="tgm-close">Close</button>
+    </div>
+    <div class="sheet-body"><div class="form">${body}</div></div></div>`;
+  const t = $('tgm-text');
+  if (t) t.focus();
 }
 
 /* -------------------------------------------------------------- More tab
@@ -2083,6 +2255,10 @@ document.addEventListener('change', e => {
     return;
   }
   if (wizInput(e)) return;
+  if (e.target.dataset.tgscores) {
+    api('event_meta', { player_scores: e.target.checked });
+    return;
+  }
   // selects commit the moment they change — there is nothing to finish typing
   if (e.target.dataset.save) { autoSave(e.target); return; }
   const f = e.target.dataset.f;
@@ -2107,7 +2283,11 @@ document.addEventListener('change', e => {
 
 document.addEventListener('click', async e => {
   const tab = e.target.dataset.tab;
-  if (tab) { sheetTab = tab; renderSheet(); return; }
+  if (tab) {
+    sheetTab = tab; renderSheet();
+    if (tab === 'chat' && tgOn() && S.telegram.unread) api('tg_read', { all: true });
+    return;
+  }
   const wstep = e.target.dataset.wstep;
   if (wstep && wiz) { wiz.step = +wstep; renderSheet(); return; }
   const cup = e.target.closest('button[data-cup]');
@@ -2477,6 +2657,66 @@ document.addEventListener('click', async e => {
   }
   if (a === 'sim-open') { window.open(simUrl(), 'tt-sim'); return; }
   if (a === 'sim-board') { window.open('/board?sim=1', 'tt-sim-board'); return; }
+  if (a === 'tg-connect') {
+    if (!(form.tg_token || '').trim()) return toast('Paste the token from @BotFather first');
+    form.tg_busy = true; renderSheet();
+    const out = await api('tg_connect', { token: form.tg_token, url: location.origin + '/' });
+    form.tg_busy = false;
+    if (out) { form.tg_token = ''; toast(`Connected as @${out.username}`); }
+    renderSheet();
+    return;
+  }
+  if (a === 'tg-disconnect') {
+    if (!confirm('Disconnect the bot? Players stop getting table calls until you connect it ' +
+      'again. Who is linked to whom is kept.')) return;
+    return void api('tg_disconnect', {});
+  }
+  if (a === 'tg-send' || a === 'tg-announce') {
+    const t = S.telegram || {};
+    const aud = form.tg_aud || ((S.phase === 'doors' || S.phase === 'live') ? 'tonight' : 'followers');
+    const announce = a === 'tg-announce';
+    const text = (form.tg_text || '').trim();
+    if (!announce && !text) return toast('Write something first');
+    const n = (((t.audiences || []).find(x => x.id === (announce ? 'followers' : aud))) || {}).n || 0;
+    if (!confirm(announce ? `Send the event with its entry buttons to ${n} following?`
+                          : `Send this to ${n}?`)) return;
+    const out = await api('tg_send', { audience: announce ? 'followers' : aud, text,
+                                       announce, url: location.origin + '/' });
+    if (out) { form.tg_text = ''; toast(`On its way to ${out.sent}`); renderSheet(); }
+    return;
+  }
+  if (a === 'tg-reply') {
+    const key = b.dataset.c;
+    const text = (form['rep_' + key] || '').trim();
+    if (!text) return;
+    const out = await api('tg_send', { audience: 'chat', chat_id: +key, text });
+    if (out) { form['rep_' + key] = ''; renderSheet(); }
+    return;
+  }
+  if (a === 'th-more') { form['th_' + b.dataset.c] = !form['th_' + b.dataset.c]; return renderSheet(); }
+  if (a === 'tg-link') {
+    const who = (S.people || []).find(p => p.id === b.dataset.n);
+    const out = await api('tg_door_link', { person_id: b.dataset.n, url: location.origin + '/' });
+    if (out) { form.tgm = { kind: 'link', name: who ? who.name : '', url: out.url }; renderTgModal(); }
+    return;
+  }
+  if (a === 'tg-msg') {
+    const e = S.entrants.find(x => x.id === b.dataset.e);
+    if (!e) return;
+    form.tgm = { kind: 'msg', name: e.name, chats: tgLinked(e).map(p => p.tg_id) };
+    form.tgm_text = '';
+    renderTgModal();
+    return;
+  }
+  if (a === 'tgm-close') { form.tgm = null; renderTgModal(); return; }
+  if (a === 'tgm-send') {
+    const text = (form.tgm_text || '').trim();
+    if (!text) return toast('Write something first');
+    for (const c of form.tgm.chats) await api('tg_send', { audience: 'chat', chat_id: c, text });
+    toast(`Sent to ${form.tgm.name}`);
+    form.tgm = null; renderTgModal();
+    return;
+  }
   if (a === 'sim-stop') {
     if (!confirm('Stop the sim? Any tab showing it goes dead.')) return;
     return void api('sim_stop', {});
@@ -2500,9 +2740,19 @@ function closeTeamModal() {
 $('team-modal').addEventListener('click', e => {
   if (e.target.id === 'team-modal') closeTeamModal();
 });
+$('tg-modal').addEventListener('click', e => {
+  if (e.target.id === 'tg-modal') { form.tgm = null; renderTgModal(); }
+});
 
 document.addEventListener('keydown', e => {
+  const rep = e.key === 'Enter' && e.target.id && /^rep-/.test(e.target.id);
+  if (rep) {
+    const btn = e.target.closest('.reply') && e.target.closest('.reply').querySelector('[data-act="tg-reply"]');
+    if (btn) { e.preventDefault(); btn.click(); }
+    return;
+  }
   if (e.key !== 'Escape') return;
+  if (form.tgm) { form.tgm = null; return renderTgModal(); }
   if (form.team_open) return closeTeamModal();
   if (editing) return closeEditor();
   if (sheetOpen) { sheetOpen = false; $('sheet').hidden = true; }

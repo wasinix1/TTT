@@ -179,6 +179,32 @@ under it. *Undo result* takes it back altogether and leaves the match to be
 played again, taking the player it advanced back out of the next round with
 it. Setup → Log still rewinds the whole evening to any point.
 
+## Telegram
+
+Optional, and nothing changes without it. Connect a bot under Setup → Links
+→ Telegram (from @BotFather: `/newbot`, paste the token) and the players'
+phones join in:
+
+- **Two messages per match.** *Gleich bist du dran* when they are in the
+  next wave, *Du bist dran — Tisch 2* when the table is theirs. Afterwards
+  the table call turns into the result in place; nothing else is pushed.
+- **One-tap entry.** The bot shows what is open with a button per cup.
+  Somebody the door has linked before is entered as themselves in one tap.
+- **A live card.** Where they are tonight — on a table, roughly when, sat
+  out — kept current by editing, with *Pause* and *going home* one tap away.
+- **Talking to the room.** Announce the event (the announcement carries the
+  entry buttons), message tonight's players or one cup, and read and answer
+  what players write back in Setup → Chat.
+- **Players entering scores**, if you switch it on: one side types it, the
+  other confirms, and only then is it written. Disagreements show up in Chat
+  as a table that needs a referee.
+
+Identity is the part that matters. A Telegram account is attached to a
+player only by something the door saw happen — confirming an entry made from
+that account, or the player scanning the code on their row — never by name.
+The server long-polls Telegram, so there is no webhook and nothing to open
+on the server. All of it is in [docs/telegram.md](docs/telegram.md).
+
 ## Hosting
 
 One small server, one permanent URL, HTTPS handled for you.

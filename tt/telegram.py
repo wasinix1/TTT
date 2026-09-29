@@ -213,6 +213,12 @@ class Wire:
     def close(self, row_id):
         self._q("UPDATE outbox SET closed=1 WHERE id=?", (row_id,))
 
+    def keep(self, chat_id, message_id):
+        """A player acted on this message, so it is theirs now: never tidy
+        it away underneath them."""
+        self._q("UPDATE outbox SET closed=1 WHERE chat_id=? AND message_id=?",
+                (chat_id, message_id))
+
     def queued_count(self):
         with self.lock:
             return self.conn.execute(
@@ -228,6 +234,9 @@ class Wire:
             self._q("UPDATE inbox SET read=1 WHERE chat_id IS NULL")
         else:
             self._q("UPDATE inbox SET read=1 WHERE chat_id=?", (chat_id,))
+
+    def mark_all_read(self):
+        self._q("UPDATE inbox SET read=1")
 
     def inbox(self, limit=400):
         return self._all("SELECT * FROM inbox ORDER BY id DESC LIMIT ?", (limit,))
@@ -297,6 +306,8 @@ class Bot:
         self._stop = threading.Event()
         self._kick = threading.Event()
         self._threads = []
+        self._gen = 0             # bumped on every start: an old thread still in a
+                                  # long poll sees it has been replaced and leaves
         self._last_plan = (None, 0.0)
 
     # ------------------------------------------------------------ config
@@ -329,7 +340,11 @@ class Bot:
         return f"https://t.me/{self.username}" + (f"?start={payload}" if payload else "")
 
     def public_url(self):
-        return self.cfg.get("url", "")
+        """The console's public address, for the Live button. Only a public
+        https one: Telegram refuses a button pointing at a LAN address, and
+        would take the whole message down with it."""
+        url = self.cfg.get("url", "")
+        return url if url.startswith("https://") else ""
 
     def connect(self, token, url=""):
         """Check the token with Telegram, keep it, and start listening."""
@@ -351,7 +366,7 @@ class Bot:
             raise ValueError(f"could not reach Telegram: {e.desc or e}")
         self.stop()
         self.cfg = {"token": token, "username": me.get("username", ""),
-                    "url": url or self.cfg.get("url", "")}
+                    "url": url if url.startswith("https://") else self.cfg.get("url", "")}
         self._save()
         self.call = call
         self.status = {"ok": True, "error": "", "last_ok": time.time()}
@@ -371,7 +386,7 @@ class Bot:
         self.changed()
 
     def remember_url(self, url):
-        if url and url.startswith(("http://", "https://")) and url != self.cfg.get("url") \
+        if url and url.startswith("https://") and url != self.cfg.get("url") \
                 and self.cfg.get("token"):
             self.cfg["url"] = url.rstrip("/") + "/"
             self._save()
@@ -425,8 +440,10 @@ class Bot:
         if self._threads or not self.on:
             return
         self._stop.clear()
+        self._gen += 1
         for fn in (self._poll_loop, self._plan_loop, self._send_loop):
-            t = threading.Thread(target=fn, daemon=True, name="tg-" + fn.__name__)
+            t = threading.Thread(target=fn, args=(self._gen,), daemon=True,
+                                 name="tg-" + fn.__name__)
             t.start()
             self._threads.append(t)
         log(f"listening as @{self.username}")
@@ -439,11 +456,15 @@ class Bot:
         self._threads = []
         self._kick.clear()
 
-    def _poll_loop(self):
+    def _live(self, gen):
+        return gen == self._gen and not self._stop.is_set()
+
+    def _poll_loop(self, gen):
         back = 1
-        while not self._stop.is_set():
+        while self._live(gen):
             try:
-                self.poll(timeout=25)
+                if not self.poll(timeout=25, gen=gen) and not self.on:
+                    self._stop.wait(1)
                 back = 1
             except TgError as e:
                 if e.code in (401, 404):
@@ -461,16 +482,16 @@ class Bot:
                 log("poll:", repr(e))
                 self._stop.wait(5)
 
-    def _plan_loop(self):
-        while not self._stop.is_set():
+    def _plan_loop(self, gen):
+        while self._live(gen):
             try:
                 self.plan()
             except Exception as e:
                 log("plan:", repr(e))
             self._stop.wait(0.5)
 
-    def _send_loop(self):
-        while not self._stop.is_set():
+    def _send_loop(self, gen):
+        while self._live(gen):
             try:
                 if not self.flush():
                     self._kick.wait(1)
@@ -481,7 +502,7 @@ class Bot:
 
     # ------------------------------------------------------------ the work
 
-    def poll(self, timeout=0):
+    def poll(self, timeout=0, gen=None):
         """Fetch and handle whatever players sent since last time."""
         if not self.on:
             return 0
@@ -490,6 +511,8 @@ class Bot:
             "offset": off, "timeout": timeout,
             "allowed_updates": ["message", "callback_query", "my_chat_member"]},
             timeout=timeout + 10)
+        if gen is not None and gen != self._gen:
+            return 0              # replaced while waiting; the new listener has these
         self._ok()
         for u in ups:
             try:
@@ -585,8 +608,6 @@ class Bot:
                 self._ok()
                 mid = out.get("message_id") if isinstance(out, dict) else None
                 self.wire.mark(row["id"], "sent", message_id=mid)
-                if row["key"].startswith("bc:"):
-                    self.wire.note(row["chat_id"], "out", row["params"].get("text", ""))
                 sent += 1
             except TgError as e:
                 if e.code == 429:
@@ -681,6 +702,8 @@ class Bot:
             self.wire.enqueue(f"bc:{batch}:{c}", c, "sendMessage", params,
                               prio=1 if kind in ("chat", "tonight", "cup") else 2)
         if kind == "chat":
+            # the thread shows what was written, not how it was dressed up
+            self.wire.note(chat_id, "out", text)
             self.wire.mark_read(chat_id)
         self._kick.set()
         self.changed()
@@ -707,7 +730,7 @@ class Bot:
                 handle = ("@" + c["username"]) if c.get("username") else ""
                 name = who.name if who else (c.get("name") or " ".join(
                     x for x in (c.get("first_name"), c.get("last_name")) if x) or handle)
-                th = threads[k] = {"chat_id": k, "name": name if k else "Telegram",
+                th = threads[k] = {"chat_id": k, "name": name if k else "From the tables",
                                    "handle": handle, "person_id": who.id if who else None,
                                    "unread": 0, "last": m["ts"], "messages": [],
                                    "system": k is None,

@@ -493,6 +493,27 @@ def test_players_speak_only_for_themselves():
     shutil.rmtree(d)
 
 
+def test_cant_right_now():
+    print("\n[can't play right now, from the get-ready message]")
+    app, fake, d = fresh()
+    s = app.store
+    cup = event(app, tables=1, phase="doors")
+    us = linked_players(app, fake, cup, ["Ana", "Bea", "Cai", "Dev"])
+    start_draw(app, cup)
+    app.telegram.pump()
+    u = next(u for u in us if fake.seen(u, "Gleich bist du dran"))
+    check(not fake.seen(u, "gegen"), "out of a queue, get-ready names no opponent it cannot promise")
+    fake.tap(u, "Kann gerade nicht")
+    app.telegram.pump()
+    check(u["eid"] in s.opted_out, "one tap sits them out")
+    check(fake.seen(u, "Okay, Pause"), "the message says so, and stays")
+    app.telegram.pump()
+    fake.tap(u, "Ich bin wieder da")
+    app.telegram.pump()
+    check(u["eid"] not in s.opted_out, "and the way back is on the same message")
+    shutil.rmtree(d)
+
+
 def test_players_enter_scores():
     print("\n[scores from both sides]")
     app, fake, d = fresh()
@@ -541,7 +562,8 @@ def test_disagreement_goes_to_the_organisers():
     app.telegram.pump()
     check(m.status == "live", "two different results write nothing")
     tg = app.state("admin")["telegram"]
-    check(any(t["system"] and "nicht einig" in t["messages"][-1]["text"] for t in tg["threads"]),
+    check(any(t["system"] and "Table 1 needs a referee" in t["messages"][-1]["text"]
+              for t in tg["threads"]),
           "and the organisers are told which table")
     fake.say(ana, "11:9 11:9")
     fake.say(bea, "9:11 9:11")
@@ -659,6 +681,7 @@ def run():
     test_the_card_keeps_itself_true()
     test_the_sandbox_never_messages()
     test_players_speak_only_for_themselves()
+    test_cant_right_now()
     test_players_enter_scores()
     test_disagreement_goes_to_the_organisers()
     test_talking_to_the_room()

@@ -102,7 +102,11 @@ def plan(app, ok_chats, now):
                     if stint is None:
                         continue
                     tag = f"q:{eid}:{stint}"
-                opp = [s.entrant_name(x) for x in ents if x != eid]
+                # A fixture's opponent is fixed. Out of a queue it is only
+                # the likeliest pairing, and a message cannot take it back,
+                # so it names nobody (docs/telegram.md, principle 6)
+                opp = ([s.entrant_name(x) for x in ents if x != eid]
+                       if r["kind"] == "fixture" else [])
                 for pid in e.player_ids:
                     chat = reach.get(pid)
                     if not chat:

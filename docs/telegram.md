@@ -76,7 +76,7 @@ and takes it off anybody else, so an account is always exactly one person.
 
 | When | Message | Afterwards |
 |---|---|---|
-| Your match is in the next wave (the board's *get ready*) | ⏳ **Gleich bist du dran** — opponent if known, rough time, which tables. Button: *Kann gerade nicht* (sits you out). | Deleted when the table call arrives, or when you are no longer waiting. |
+| Your match is in the next wave (the board's *get ready*) | ⏳ **Gleich bist du dran** — rough time, which tables, and the opponent when it is a fixed fixture. Button: *Kann gerade nicht* (sits you out, and the same message then offers the way back). | Deleted when the table call arrives, or when you are no longer waiting. |
 | Your match is seated | 🏓 **Du bist dran! Tisch 2** — opponent, partner, best of. | Edited to the result when it is in; to *zurückgestellt* if it is put back. |
 
 Keys: the table call is keyed on the match and the moment it was seated
@@ -86,6 +86,27 @@ the entrant's current stint in the queue for open play and Swiss.
 
 A table call older than fifteen minutes is not sent: a server that was down
 should not tell somebody to go to a table they have long since left.
+
+Out of a queue (open play, a paced Swiss) the get-ready message names no
+opponent. The board shows the likeliest pairing, but results still to come
+can change it, and a pushed message cannot take a promise back.
+
+A notice that was taken back — a table call edited to *put back* — and then
+becomes true again, because a rewind reinstated the seating, is said again
+under a new key rather than swallowed by the old one.
+
+## The card
+
+`/start` shows one message that is the player's view of the evening: the
+event, their entries and an entry button per open cup before the night;
+where they are tonight during it (on a table, roughly when, sat out); their
+record after. It keeps itself current by editing, silently, whenever what it
+says about them changes — so it is a live status, not a snapshot, and never
+a stream of messages. Asking for it again replaces the old one.
+
+Everything a player can do is on it, one level deep at most: *Pause*, and
+behind a pause *Ich gehe heim*; *abmelden* behind a confirmation; news and
+unlinking behind ⚙️.
 
 ## Coms
 
@@ -98,8 +119,9 @@ that advertises the night.
 tab. One person, from their row at the door.
 
 **Back.** Anything a player types that is not a score is a message to the
-organisers. It lands in the Chat tab with their name on it, and a reply from
-there goes straight back.
+organisers. It lands in Setup → Chat with their name on it, and a reply from
+there goes straight back. A table whose players disagree on the score shows
+up there too, as *From the tables*.
 
 **Reminder.** The day before, everybody registered through Telegram is asked
 *Kommst du?* — yes, or drop the entry in one tap. The door sees who said yes.
@@ -162,3 +184,10 @@ Order, each step shipping something usable:
   ahead of newsletters in the queue.
 - `player_scores` is an event setting carried forward by `event_new`, like
   the tables — a club decides this once.
+- The Live button on the card only appears for a public `https://` address:
+  Telegram refuses buttons pointing at a LAN address, and would reject the
+  whole message with them.
+- Linking at the door (the QR code on a person's row) is offered only while
+  the doors are open or the event is live — that is when it can be witnessed.
+  The code works once and for twelve hours. The QR image needs `segno`, which
+  `deploy/install.sh` already installs; without it the link is shown as text.
