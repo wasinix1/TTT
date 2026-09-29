@@ -121,6 +121,7 @@ def cup_board(store, cup_id, app):
         for m in f.pending_fixtures(store):
             rows.append({
                 "kind": "fixture", "id": m.id, "format_name": f.name,
+                "entrants": [m.entrant_a, m.entrant_b],
                 "a": app.side_name(m, "a"), "b": app.side_name(m, "b"),
                 "label": m.label, "scoring": m.scoring.to_dict(),
                 "deferred": int(m.meta.get("deferred", 0)),
@@ -142,6 +143,7 @@ def cup_board(store, cup_id, app):
                 a, b = prop.entrants
                 rows.append({
                     "kind": "pairing", "id": f"{f.id}:{a}:{b}", "format_name": f.name,
+                    "entrants": [a, b],
                     "a": store.entrant_name(a), "b": store.entrant_name(b),
                     "label": f.name, "blocked": False,
                 })
@@ -149,6 +151,7 @@ def cup_board(store, cup_id, app):
         for q in qs:
             rows.append({
                 "kind": "waiting", "id": q.entrant_id, "format_name": f.name,
+                "entrants": [q.entrant_id],
                 "a": store.entrant_name(q.entrant_id), "b": None,
                 "label": f.name,
                 "blocked": not store.entrant_available(q.entrant_id, busy),

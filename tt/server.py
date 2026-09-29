@@ -22,7 +22,10 @@ from . import dispatch, board, simulate
 HERE = os.path.dirname(os.path.abspath(__file__))
 STATIC = os.path.join(HERE, "static")
 
-ROLES = {"public": 0, "referee": 1, "admin": 2}
+# `system` is the bot acting for a player it has already checked is the one
+# asking (tt/bot.py). No URL key maps to it, so nothing outside the process
+# can reach the ops that need it.
+ROLES = {"public": 0, "referee": 1, "admin": 2, "system": 3}
 
 
 class App:
@@ -38,6 +41,9 @@ class App:
         self.sim = None
         self._cache = {}          # (version, role) -> encoded state JSON
         self._reg_hits = {}       # ip -> recent registration timestamps
+        # the Telegram layer (tt/telegram.py): only ever set on the live App
+        # by serve(), so the sandbox cannot message anybody
+        self.telegram = None
         if not self.store.tables:
             for n in (1, 2, 3):
                 self.store.append("table_set", {"number": n, "name": f"Table {n}"})
@@ -180,9 +186,14 @@ class App:
                 "ends_at": s.event.get("ends_at") or "",
                 "starts_ts": s.starts_at_ts(),
                 "open": phase == "registration",
+                "telegram": self._tg_name(),
                 "cups": [self._public_cup(c, phase)
                          for c in (s.cups[i] for i in s.cup_order if i in s.cups)],
             }
+
+    def _tg_name(self):
+        tg = self.telegram
+        return tg.username if tg and tg.on else ""
 
     def _public_cup(self, c, phase):
         s = self.store
@@ -285,6 +296,10 @@ class App:
                     if i in s.registrations)] if role == "admin" else [],
                 "history": s.history(40) if role == "admin" else [],
                 "keys": self.keys if role == "admin" else {},
+                "telegram": (self.telegram.admin_state()
+                             if role == "admin" and self.telegram
+                             else {"on": bool(self._tg_name()),
+                                   "username": self._tg_name()}),
                 "sim": self.sim_state() if role == "admin" else None,
             }
 
@@ -298,6 +313,10 @@ class App:
             raise KeyError(f"unknown action {op!r}")
         if lvl < need:
             raise PermissionError(f"{role} cannot {op}")
+        if op in UNLOCKED:
+            # talks to Telegram, which can take seconds; the tables must
+            # not wait for it
+            return getattr(self, "op_" + op)(p) or {}
         with s.lock:
             fn = getattr(self, "op_" + op)
             out = fn(p)
@@ -593,8 +612,10 @@ class App:
             raise ValueError("that score does not decide the match")
         involved = list(dict.fromkeys(
             (m.meta.get("queued") or []) + [x for x in (m.entrant_a, m.entrant_b) if x]))
-        s.append("match_result", {"match_id": m.id, "games": games,
-                                  "winner": winner})
+        res = {"match_id": m.id, "games": games, "winner": winner}
+        if p.get("by") == "players":
+            res["by"] = "players"          # both sides agreed over Telegram
+        s.append("match_result", res)
         # everyone is back in the queue by default — that is just what being
         # free means now. Unticking "back in queue" is sitting them out.
         if not p.get("requeue", True):
@@ -795,7 +816,14 @@ class App:
             raise ValueError("pick which cup you are entering")
         if cup.registration != "open" or self.store.shows_console():
             raise ValueError("that cup is not taking entries")
-        return self._take_registration(cup, p)
+        out = self._take_registration(cup, p)
+        tg = self.telegram
+        if tg and tg.on:
+            # the entry's own private link into the bot: opening it is how a
+            # web registration gets its table calls (docs/telegram.md)
+            out["telegram"] = tg.link("r_" + self.store.registrations[
+                out["registration_id"]].token)
+        return out
 
     def op_add_registration(self, p):
         """The door putting somebody down as looking for a partner: the same
@@ -808,7 +836,7 @@ class App:
         p = dict(p, kind="seeking")
         return self._take_registration(cup, p)
 
-    def _take_registration(self, cup, p):
+    def _take_registration(self, cup, p, tg_id=None, person_id=None):
         s = self.store
         text = lambda v, n: " ".join(str(v or "").split())[:n]
         name = text(p.get("name"), 60)
@@ -845,6 +873,8 @@ class App:
             "team_name": text(p.get("team_name"), 60) if kind == "pair" else "",
             "note": text(p.get("note"), 500),
             "ts": time.time(),
+            "token": secrets.token_urlsafe(9),
+            "tg_id": tg_id, "person_id": person_id,
         })
         self._match_seekers(cup.id)
         mate = s.registrations.get(s.registrations[rid].matched_with or "")
@@ -944,11 +974,18 @@ class App:
         if not (cup and cup.entry == "pair" and kind != "pair"):   # doubles: no name check
             self._refuse_duplicate(kind, name, partner)
 
-        ids = [self._make_player(name, strength, p.get("person_id"))]
+        ids = [self._make_player(name, strength, p.get("person_id")
+                                 or (reg.person_id if reg else None))]
         if kind == "pair":
             ps = num(p.get("partner_strength"),
                      mate.strength if mate else reg.partner_strength if reg else 5.0)
-            ids.append(self._make_player(partner, ps, p.get("partner_person_id")))
+            ids.append(self._make_player(partner, ps, p.get("partner_person_id")
+                                         or (mate.person_id if mate else None)))
+        # The door is the witness: whoever this registration came from on
+        # Telegram is now, for good, the person just let in.
+        for r, pid in ((reg, ids[0]), (mate, ids[-1])):
+            if r and r.tg_id:
+                self._link_tg(s.players[pid].person_id, r.tg_id)
 
         label = (p.get("team_name") or (reg.team_name if reg else "")
                  or (mate.team_name if mate else "")
@@ -966,6 +1003,16 @@ class App:
                                              "entrant_id": eid})
         return {"entrant_id": eid, "where": where, "why": why,
                 "cup": cup.name if cup else ""}
+
+    def _link_tg(self, person_id, tg_id, tg_name=None):
+        s = self.store
+        if not person_id or person_id not in s.people:
+            return
+        if tg_name is None:
+            chat = self.telegram.wire.chat(tg_id) if self.telegram else None
+            tg_name = (("@" + chat["username"]) if chat and chat.get("username")
+                       else (chat or {}).get("first_name") or "")
+        s.append("person_link", {"id": person_id, "tg_id": tg_id, "tg_name": tg_name})
 
     def _refuse_duplicate(self, kind, name, partner=""):
         """Two people with the same name is how the wrong strength ends up
@@ -1058,6 +1105,87 @@ class App:
         if reg:
             self._match_seekers(reg.cup_id)     # whoever was left alone may have a new match
 
+    # ------------------------------------------------------------ telegram
+    #
+    # Two kinds. The console's (level 2) set the bot up and talk through it;
+    # they reach the network, so they run outside the store lock. The bot's
+    # (system, level 3) are players acting for themselves, called only after
+    # tt/bot.py has checked they are.
+
+    def _tg(self):
+        if not self.telegram:
+            raise ValueError("Telegram is not available here")
+        return self.telegram
+
+    def op_tg_connect(self, p):
+        tg = self._tg()
+        return {"username": tg.connect(p.get("token"), p.get("url", ""))}
+
+    def op_tg_disconnect(self, p):
+        self._tg().disconnect()
+
+    def op_tg_send(self, p):
+        tg = self._tg()
+        tg.remember_url(p.get("url", ""))
+        return {"sent": tg.broadcast(p.get("audience") or "", p.get("text") or "",
+                                     announce=bool(p.get("announce")),
+                                     chat_id=p.get("chat_id"))}
+
+    def op_tg_door_link(self, p):
+        tg = self._tg()
+        tg.remember_url(p.get("url", ""))
+        return {"url": tg.door_link(p.get("person_id") or "")}
+
+    def op_tg_read(self, p):
+        self._tg().wire.mark_read(p.get("chat_id"))
+        self.store.touch()
+
+    def op_tg_register(self, p):
+        """An entry from the bot. The same registration the landing page
+        makes, carrying the account it came from — and the person, if the
+        door ever linked that account — for the door to see."""
+        cup = self.store.cups.get(p.get("cup_id") or "")
+        if not cup:
+            raise ValueError("Das gibt es nicht mehr.")
+        if cup.registration != "open" or self.store.shows_console():
+            raise ValueError("Dafür ist die Anmeldung gerade zu.")
+        person = self.store.person_by_tg(p.get("tg_id"))
+        return self._take_registration(cup, p, tg_id=p["tg_id"],
+                                       person_id=person.id if person else None)
+
+    def op_tg_attach(self, p):
+        """The web form's private link, opened in Telegram. Before the door
+        it marks the entry; after, the entry was already witnessed, so the
+        account becomes the person it was confirmed as."""
+        s = self.store
+        tok = p.get("token") or ""
+        reg = next((r for r in s.registrations.values()
+                    if tok and r.token == tok and r.status != "dropped"), None)
+        if not reg:
+            raise ValueError("unknown link")
+        cup = s.cups.get(reg.cup_id)
+        s.append("registration_update", {"id": reg.id, "tg_id": p["tg_id"]})
+        e = s.entrants.get(reg.entrant_id or "")
+        if reg.status == "confirmed" and e and e.player_ids[0] in s.players:
+            self._link_tg(s.players[e.player_ids[0]].person_id, p["tg_id"],
+                          p.get("tg_name", ""))
+        return {"name": reg.name, "cup": cup.name if cup else ""}
+
+    def op_tg_link(self, p):
+        if p.get("person_id") not in self.store.people:
+            raise ValueError("unknown person")
+        if p.get("tg_id"):
+            self._link_tg(p["person_id"], p["tg_id"], p.get("tg_name", ""))
+        else:
+            self.store.append("person_link", {"id": p["person_id"], "tg_id": None})
+
+    def op_tg_detach(self, p):
+        self.store.append("registration_update", {"id": p["id"], "tg_id": None})
+
+    def op_tg_rsvp(self, p):
+        self.store.append("registration_update", {"id": p["id"],
+                                                  "rsvp": p.get("rsvp") or ""})
+
     # ------------------------------------------------------------- sandbox
 
     def sim_state(self):
@@ -1119,7 +1247,12 @@ OP_LEVEL = {
     "register": 0, "update_registration": 2,
     "sim_start": 2, "sim_stop": 2,
     "admit": 2, "add_registration": 2, "remove_entrant": 2, "remove_entrants": 2, "update_person": 2, "remove_person": 2, "add_from_directory": 2,
+    "tg_connect": 2, "tg_disconnect": 2, "tg_send": 2, "tg_door_link": 2, "tg_read": 2,
+    "tg_register": 3, "tg_attach": 3, "tg_link": 3, "tg_detach": 3, "tg_rsvp": 3,
 }
+
+# Ops that talk to Telegram and so must not hold the store lock while they wait.
+UNLOCKED = {"tg_connect", "tg_disconnect", "tg_send", "tg_door_link", "tg_read"}
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -1402,7 +1535,10 @@ def lan_ip():
 
 
 def serve(data_dir="data", host="0.0.0.0", port=8000):
+    from .telegram import Bot
     app = App(data_dir)
+    app.telegram = Bot(app, data_dir)
+    app.telegram.start()             # does nothing until a token is set
     Handler.app = app
     srv = ThreadingHTTPServer((host, port), Handler)
     ip = lan_ip()

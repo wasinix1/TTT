@@ -33,7 +33,12 @@ BLANK_EVENT = {
     "starts_at": "",        # naive local "YYYY-MM-DDTHH:MM", "" = unscheduled
     "ends_at": "",          # optional "HH:MM", shown as a range on the landing
     "phase_pin": "",        # admin override; "" = derive from the clock
+    "player_scores": False, # players may enter results over Telegram, both sides agreeing
 }
+
+# Event fields that are really the club's habits rather than one evening's,
+# so a new event keeps them — decided once, like the tables.
+CARRIED = ("player_scores",)
 
 
 class Store:
@@ -181,6 +186,7 @@ class Store:
             id=p["id"], name=p["name"],
             strength=float(p.get("strength", 5.0)),
             note=p.get("note", ""), last_seen=p.get("last_seen", ""),
+            tg_id=p.get("tg_id"), tg_name=p.get("tg_name", ""),
         )
         if p["id"] not in self.people_order:
             self.people_order.append(p["id"])
@@ -194,6 +200,23 @@ class Store:
                 setattr(who, k, p[k])
         if "strength" in p:
             who.strength = float(p["strength"])
+
+    def _ev_person_link(self, p, seq):
+        """Attach a Telegram account to a person, or take it off them.
+
+        An account is exactly one person: linking it here takes it off
+        whoever had it before, so a phone handed to a new member last month
+        stops getting the old one's table calls."""
+        who = self.people.get(p["id"])
+        if not who:
+            return
+        tg = p.get("tg_id")
+        if tg:
+            for other in self.people.values():
+                if other.tg_id == tg and other.id != who.id:
+                    other.tg_id, other.tg_name = None, ""
+        who.tg_id = tg or None
+        who.tg_name = p.get("tg_name", "") if tg else ""
 
     def _ev_person_remove(self, p, seq):
         self.people.pop(p["id"], None)
@@ -406,7 +429,8 @@ class Store:
         if not p.get("keep_cups", True):
             self.cups = {}
             self.cup_order = []
-        self.event = dict(BLANK_EVENT)
+        carried = {k: self.event.get(k, BLANK_EVENT[k]) for k in CARRIED}
+        self.event = dict(BLANK_EVENT, **carried)
         self.event["id"] = p.get("id") or f"EV{seq}"
         for k in ("name", "note", "blurb", "venue", "starts_at", "ends_at", "phase_pin"):
             if k in p:
@@ -414,7 +438,7 @@ class Store:
 
     REG_FIELDS = ("cup_id", "kind", "name", "strength", "partner_name",
                   "partner_strength", "team_name", "note", "status", "entrant_id",
-                  "matched_with")
+                  "matched_with", "tg_id", "person_id", "token", "rsvp")
 
     def _ev_registration_add(self, p, seq):
         r = Registration(id=p["id"], cup_id=p.get("cup_id", ""),
@@ -773,6 +797,16 @@ class Store:
                     self.name_key(self.players[i].name) for i in e.player_ids
                     if i in self.players) == want:
                 return e
+        return None
+
+    def person_by_tg(self, tg_id):
+        """The person this Telegram account was linked to at the door."""
+        if not tg_id:
+            return None
+        for i in self.people_order:
+            who = self.people.get(i)
+            if who and who.tg_id == tg_id:
+                return who
         return None
 
     def person_playing(self, person_id):

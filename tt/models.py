@@ -40,6 +40,10 @@ class Person:
     strength: float = 5.0
     note: str = ""
     last_seen: str = ""            # the event id they last played in
+    # the Telegram account that is this person — only ever set by something
+    # the door witnessed (see docs/telegram.md), never matched up by name
+    tg_id: Optional[int] = None
+    tg_name: str = ""              # how the console shows it: @handle or first name
 
     def to_dict(self):
         return asdict(self)
@@ -157,6 +161,13 @@ class Registration:
     entrant_id: Optional[str] = None
     matched_with: Optional[str] = None   # kind = seeking: the other one looking
     created_ts: float = 0.0
+    # Telegram: the account it came from (or was carried onto by `token`),
+    # and the person that account already is, if the door ever linked it.
+    # Both are claims until confirmation, like everything else here.
+    tg_id: Optional[int] = None
+    person_id: Optional[str] = None
+    token: str = ""                # private: opens this entry in the bot
+    rsvp: str = ""                 # "yes" once they answered the reminder
 
     def to_dict(self):
         return asdict(self)
