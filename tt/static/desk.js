@@ -22,7 +22,7 @@ let D = null;              // last payload
 let etag = '';
 const V = {                // what this viewer is looking at; never sent anywhere
   view: 'desk', cup: '', q: '', filter: 'all', sel: null, phone: 'exp',
-  kb: -1, dirQ: '', dirAdd: '', confirm: '', stale: false,
+  kb: -1, dirQ: '', dirAdd: '', confirm: '', stale: false, pick: {},
   walk: { name: '', partner: '', seek: false },
 };
 try { V.cup = localStorage.getItem('tt_desk_cup') || ''; } catch (e) { }
@@ -206,20 +206,46 @@ function freeName(n) {
 /* ------------------------------------------------------------- Expected */
 
 /* A matched pair of people looking for a partner is one team and one card.
-   Anybody still looking has their own section. Everyone else is one card
-   per entry; grouping the duplicates behind one card comes with step 4. */
+   Anybody still looking has their own section.
+
+   Entries with the same names in the same cup are grouped behind one card:
+   shown together, never merged. Checking in uses one of them, and the rest
+   stay, marked, until somebody at the desk says whether they are the same
+   team or another one — so no entry disappears as a side effect. An entry
+   somebody said is a different team is never grouped. */
 function cardsFor(cup) {
   const pend = D.registrations.filter(r => r.cup_id === cup && r.status === 'pending');
-  const seen = new Set(), cards = [], seekers = [];
+  const seen = new Set(), groups = new Map(), cards = [], seekers = [];
   for (const r of pend) {
     if (seen.has(r.id)) continue;
     seen.add(r.id);
     const mate = r.matched_with && pend.find(x => x.id === r.matched_with);
     if (mate) { seen.add(mate.id); cards.push({ key: r.id, cup, regs: [r, mate], names: [r.name, mate.name], matched: true }); }
     else if (r.kind === 'seeking') seekers.push({ key: r.id, cup, regs: [r], names: [r.name], seeking: true });
-    else cards.push({ key: r.id, cup, regs: [r], names: regNames(r) });
+    else {
+      const k = r.distinct ? 'x:' + r.id : regNames(r).map(nk).sort().join('|');
+      if (groups.has(k)) { groups.get(k).regs.push(r); continue; }
+      const card = { key: r.id, cup, regs: [r], names: regNames(r), distinct: !!r.distinct };
+      groups.set(k, card);
+      cards.push(card);
+    }
   }
+  for (const c of cards) {
+    c.stack = !c.matched && c.regs.length > 1;
+    if (c.stack) c.names = regNames(c.regs[c.regs.length - 1]);
+    c.here = clashFor(cup, c.names) || null;
+    c.leftover = !!c.here && !c.distinct;
+  }
+  // what needs a decision comes first
+  cards.sort((a, b) => b.leftover - a.leftover);
   return { cards, seekers };
+}
+
+/* Which entry of a card a check-in uses: the one picked in the panel, else
+   the newest, since a second entry is usually the correction. */
+function pickedReg(card) {
+  if (card.matched) return card.regs[0];
+  return card.regs.find(r => r.id === V.pick[card.key]) || card.regs[card.regs.length - 1];
 }
 const allCards = () => D.cups.flatMap(c => { const p = cardsFor(c.id); return p.cards.concat(p.seekers); });
 const cardByKey = k => allCards().find(c => c.key === k);
@@ -236,37 +262,54 @@ function readyCards(cup) {
   });
 }
 
-function twice(card) {
-  const r = card.regs[0];
-  return !card.matched && D.registrations.some(o => o.id !== r.id && o.status === 'pending'
-    && o.cup_id === r.cup_id && nk(o.name) === nk(r.name));
+/* Near matches get a hint and nothing else: somebody looking for a partner
+   who is already named in a team's entry, or an entry kept apart from
+   another with the same names. */
+function hintsFor(card) {
+  const out = [];
+  if (card.seeking) {
+    const other = D.registrations.find(x => x.cup_id === card.cup && x.status === 'pending'
+      && x.kind === 'pair' && regNames(x).some(n => nk(n) === nk(card.names[0])));
+    if (other) out.push(`Also named in ${label(regNames(other))}`);
+  }
+  if (card.distinct && !card.here) {
+    const want = card.names.map(nk).sort().join('|');
+    if (D.registrations.some(x => x.id !== card.key && x.cup_id === card.cup && x.status === 'pending'
+        && regNames(x).map(nk).sort().join('|') === want))
+      out.push(card.names.length > 1 ? 'Same names as another entry — kept as a separate team.'
+        : 'Same name as another entry — kept as a separate person.');
+  }
+  return out;
 }
 
 function cardHTML(card) {
-  const r = card.regs[0];
-  const team = card.regs.map(x => x.team_name).find(Boolean);
+  const team = card.regs.map(x => x.team_name).filter(Boolean).pop();
   const note = card.regs.map(x => x.note).filter(Boolean).pop();
   const sel = V.sel && V.sel.key === card.key ? ' sel' : '';
-  const here = !card.seeking && clashFor(card.cup, card.names);
   const chips = [
     cupChip(card.cup),
     card.matched ? '<span class="chip dark">matched as partners</span>' : '',
     card.seeking ? '<span class="chip">looking for a partner</span>' : '',
-    here ? '<span class="chip warn">already here</span>' : twice(card) ? '<span class="chip warn">registered twice</span>' : '',
+    card.leftover ? '<span class="chip warn">already here — same?</span>'
+      : card.stack ? `<span class="chip warn">registered ${card.regs.length}×</span>`
+      : card.distinct ? `<span class="chip dim">separate ${card.names.length > 1 ? 'team' : 'person'}</span>` : '',
     alsoIn(card.names, card.cup),
-    `<span>${esc(when(r.created_ts))}</span>`,
+    `<span>${card.regs.map(r => esc(when(r.created_ts))).join(' · ')}</span>`,
   ].filter(Boolean).join('');
   const k = esc(card.key);
-  const acts = beforeDoors()
-    ? `<button class="btn ghost tiny" data-act="drop" data-k="${k}">Remove</button>`
+  // anything that needs deciding is decided in the panel, where all of it shows
+  const acts = card.leftover || (card.distinct && card.here) ? ''
+    : beforeDoors() ? (card.stack ? '' : `<button class="btn ghost tiny" data-act="drop" data-k="${k}">Remove</button>`)
     : card.seeking ? `<button class="btn ghost tiny" data-act="drop" data-k="${k}">No show</button>`
-    : `${card.matched ? '' : `<button class="btn ghost tiny" data-act="drop" data-k="${k}">No show</button>`}
+    : `${card.matched || card.stack ? '' : `<button class="btn ghost tiny" data-act="drop" data-k="${k}">No show</button>`}
        <button class="btn primary tiny" data-act="checkin" data-k="${k}">Check in</button>`;
-  return `<div class="card${sel}" data-sel-reg="${k}">
+  const cls = [card.stack ? ' stack' : '', card.leftover ? ' leftover' : ''].join('');
+  return `<div class="card${sel}${cls}" data-sel-reg="${k}">
     <div class="who">${esc(label(card.names))}${team ? `<span class="team">${esc(team)}</span>` : ''}</div>
     <div class="side">${acts}</div>
     <div class="meta">${chips}</div>
     ${note ? `<div class="note">“${esc(note)}”</div>` : ''}
+    ${hintsFor(card).map(h => `<div class="hint">${esc(h)}</div>`).join('')}
   </div>`;
 }
 
@@ -279,8 +322,8 @@ function renderExpected() {
   const total = parts.reduce((n, p) => n + p.cards.length + p.seekers.length, 0);
   V._cards = cards.concat(seekers);
   const pair = !filtering() && (cupById(V.cup) || {}).entry === 'pair';
-  const gone = D.registrations.filter(r => cups.includes(r.cup_id) && r.status === 'dropped'
-    && matchQ(regNames(r)));
+  const gone = D.registrations.filter(r => cups.includes(r.cup_id)
+    && (r.status === 'dropped' || r.status === 'duplicate') && matchQ(regNames(r)));
   const ready = !filtering() && !beforeDoors() ? readyCards(V.cup) : [];
   const all = V.confirm === 'all:' + V.cup;
   return `<section class="col ${V.phone === 'here' ? 'hideP' : ''}">
@@ -298,9 +341,10 @@ function renderExpected() {
     ${pair ? `<div class="sub">Looking for a partner <span class="chip dim">matched automatically</span></div>
       <div class="list">${seekers.map(cardHTML).join('') || '<div class="empty">Nobody waiting for a partner.</div>'}</div>` : ''}
     <details class="resolved" id="resolved"${V.openRes ? ' open' : ''}><summary>Taken off the list · ${gone.length}</summary>
-      ${gone.length ? `<ul>${gone.map(r => `<li><span>${cupChip(r.cup_id)} <b>${esc(label(regNames(r)))}</b> · sent ${esc(when(r.created_ts))}</span>
+      ${gone.length ? `<ul>${gone.map(r => `<li><span>${cupChip(r.cup_id)} <b>${esc(label(regNames(r)))}</b> · sent ${esc(when(r.created_ts))}
+        · ${r.status === 'duplicate' ? 'duplicate' : beforeDoors() ? 'removed' : 'no show'}</span>
         <button class="btn ghost tiny" data-act="putback" data-r="${r.id}">Put back</button></li>`).join('')}</ul>`
-        : '<p style="margin:8px 0 0">Nothing yet. No-shows and removed entries land here, and can be put back.</p>'}
+        : '<p style="margin:8px 0 0">Nothing yet. No-shows, removed entries and cleared duplicates land here, and can be put back.</p>'}
     </details>
   </section>`;
 }
@@ -437,22 +481,36 @@ function entrantDetail(e, close) {
 }
 
 function cardDetail(card, close) {
-  const here = !card.seeking && clashFor(card.cup, card.names);
+  const here = card.here;
   const k = esc(card.key);
   const doors = !beforeDoors();
-  return `<div class="top"><h3>${esc(label(card.names))}</h3>${close}</div>
+  const who = esc(label(card.names)), same = card.names.length > 1 ? 'team' : 'person';
+  const n = card.regs.length;
+  const where = here ? `in at ${esc(clock(here.added_ts))}${D.cups.length > 1 ? ' · ' + esc(cupName(here.cup_id)) : ''}` : '';
+  const pick = card.stack && !card.leftover;
+  const chosen = pickedReg(card);
+  return `<div class="top"><h3>${who}</h3>${close}</div>
     <div class="kv">${esc(cupName(card.cup))} · ${card.matched
       ? 'two people who were looking for a partner, matched automatically'
       : card.seeking ? 'looking for a partner — matched with the next person who is'
-      : card.regs[0].kind === 'pair' ? 'a team' : 'one entry'}</div>
-    ${here && doors ? `<div class="confirm warn"><span><b>${esc(label(card.names))}</b> ${here.players.length > 1 ? 'are' : 'is'} already here,
-        in at ${esc(clock(here.added_ts))}${D.cups.length > 1 ? ' · ' + esc(cupName(here.cup_id)) : ''}.</span>
+      : n > 1 ? `${n} entries with these names` : card.regs[0].kind === 'pair' ? 'a team' : 'one entry'}</div>
+    ${card.leftover ? `<div class="confirm warn"><span><b>${who}</b> ${here.players.length > 1 ? 'are' : 'is'} already here, ${where}.
+        Is ${n > 1 ? 'what is left here' : 'this entry'} the same ${same}, sent twice, or another ${same} with the same names?</span>
       <div class="actions">
-        <button class="btn tiny" data-act="drop" data-k="${k}">Same ${card.names.length > 1 ? 'team' : 'person'} — take this entry off</button>
-        <button class="btn tiny" data-act="checkin-as" data-k="${k}">Someone else — check in as “${esc(freeName(card.names[0]))}”</button>
+        <button class="btn tiny" data-act="dup" data-k="${k}">Same ${same} — clear it</button>
+        <button class="btn tiny" data-act="distinct" data-k="${k}">Different ${same} — keep it</button>
         <button class="btn ghost tiny" data-sel-ent="${here.id}">Show</button>
       </div></div>` : ''}
-    <div class="entries">${card.regs.map(r => `<div class="entry">
+    ${card.distinct && here && doors ? `<div class="confirm warn"><span>Another <b>${who}</b> is already here, ${where}.
+        This entry was kept as a separate ${same}, so it goes in under a name that tells them apart.</span>
+      <div class="actions">
+        <button class="btn primary tiny" data-act="checkin-as" data-k="${k}">Check in as “${esc(freeName(card.names[0]))}”</button>
+        <button class="btn tiny" data-act="dup" data-k="${k}">Same ${same} after all — clear it</button>
+        <button class="btn ghost tiny" data-sel-ent="${here.id}">Show</button>
+      </div></div>` : ''}
+    <div class="entries">${card.regs.map(r => `<div class="entry${pick && r.id === chosen.id ? ' chosen' : ''}">
+      ${pick ? `<label class="pick"><input type="radio" name="pick-${k}" data-pick="${k}" value="${r.id}"
+        ${r.id === chosen.id ? 'checked' : ''}> Use this entry</label>` : ''}
       <div class="fields">
         ${field(`r-n-${r.id}`, r.kind === 'pair' ? 'Player 1' : 'Name', r.name, `data-edit="reg" data-f="name" data-r="${r.id}"`)}
         ${r.kind === 'pair' ? field(`r-p-${r.id}`, 'Partner', r.partner_name, `data-edit="reg" data-f="partner_name" data-r="${r.id}"`)
@@ -462,7 +520,10 @@ function cardDetail(card, close) {
         <button class="btn ghost tiny" data-act="drop-one" data-r="${r.id}">${doors ? 'No show' : 'Remove'}</button></div>
       ${r.note ? `<span class="nt">“${esc(r.note)}”</span>` : ''}
     </div>`).join('')}</div>
-    ${twice(card) && !here ? '<p class="small muted" style="margin:0">Somebody with this name sent another entry to this cup. Usually one of the two is a correction.</p>' : ''}
+    ${pick ? `<p class="small muted" style="margin:0">Checking in uses the entry picked above — the newest
+      unless you choose another, because a second entry is usually the correction. The other${n > 2 ? 's stay' : ' stays'}
+      here, marked, until you say whether ${n > 2 ? 'they are' : 'it is'} the same ${same}.</p>` : ''}
+    ${hintsFor(card).map(h => `<p class="small muted" style="margin:0">${esc(h)}</p>`).join('')}
     ${card.seeking ? '<p class="small muted" style="margin:0">The next person looking for a partner in this cup is matched with them automatically. Then they check in together as one team.</p>' : ''}
     ${doors && !card.seeking && !here ? `<div class="actions"><button class="btn primary" data-act="checkin" data-k="${k}">Check in${card.matched ? ' as a team' : ''}</button></div>` : ''}
     ${doors ? '' : '<p class="small muted" style="margin:0">Check-in opens with the doors.</p>'}`;
@@ -573,20 +634,25 @@ function render() {
 /* -------------------------------------------------------------- actions */
 
 async function checkIn(card, asName) {
-  const data = { registration_id: card.regs[0].id };
+  const r = pickedReg(card);
+  const data = { registration_id: r.id };
   if (asName) data.name = asName;
   const out = await api('admit', data);
   if (!out) return;
-  if (V.sel && V.sel.key === card.key) V.sel = null;
+  // a stack keeps its other entries, now marked: keep them in view. The card
+  // is keyed by its oldest entry, which may be the one that just went in.
+  if (V.sel && V.sel.key === card.key)
+    V.sel = card.stack ? { key: card.regs.find(x => x.id !== r.id).id } : null;
   V.kb = -1;
-  const who = asName ? label([asName, ...card.names.slice(1)]) : label(card.names);
+  const names = card.matched ? card.names : regNames(r);
+  const who = asName ? label([asName, ...names.slice(1)]) : label(names);
   toast(out.where === 'roster' ? `${who} checked in, but ${out.why}.` : `${who} checked in`,
     () => api('remove_entrant', { id: out.entrant_id }));
 }
 
-async function dropRegs(regs, what) {
+async function dropRegs(regs, what, status = 'dropped') {
   const done = [];
-  for (const r of regs) if (await api('update_registration', { id: r.id, status: 'dropped' })) done.push(r.id);
+  for (const r of regs) if (await api('update_registration', { id: r.id, status })) done.push(r.id);
   if (!done.length) return;
   if (V.sel && regs.some(r => V.sel.key === r.id)) V.sel = null;
   toast(`${what} the list`, async () => {
@@ -600,7 +666,7 @@ async function checkInAll() {
   const ids = [];
   let roster = 0, why = '';
   for (const c of cards) {
-    const out = await api('admit', { registration_id: c.regs[0].id });
+    const out = await api('admit', { registration_id: pickedReg(c).id });
     if (out) { ids.push(out.entrant_id); if (out.where === 'roster') { roster++; why = out.why; } }
   }
   if (!ids.length) return;
@@ -699,6 +765,15 @@ document.addEventListener('click', async ev => {
     }
     if (act === 'checkin-as' && card) return checkIn(card, freeName(card.names[0]));
     if (act === 'drop' && card) return dropRegs(card.regs, `${label(card.names)} taken off`);
+    if (act === 'dup' && card)
+      return dropRegs(card.regs, `${label(card.names)} cleared as a duplicate — taken off`, 'duplicate');
+    if (act === 'distinct' && card) {
+      const done = [];
+      for (const r of card.regs) if (await api('update_registration', { id: r.id, distinct: true })) done.push(r.id);
+      if (done.length) toast(`${label(card.names)} kept as a separate ${card.names.length > 1 ? 'team' : 'person'}`,
+        async () => { for (const id of done) await api('update_registration', { id, distinct: false }); });
+      return;
+    }
     if (act === 'drop-one') { const r = regById(d.r); return r && dropRegs([r], `${label(regNames(r))} taken off`); }
     if (act === 'putback') {
       const r = regById(d.r);
@@ -792,6 +867,7 @@ document.addEventListener('input', ev => {
 });
 document.addEventListener('change', ev => {
   const t = ev.target;
+  if (t.dataset.pick) { V.pick[t.dataset.pick] = t.value; render(); return; }
   if (t.id === 'w-seek') { V.walk.seek = t.checked; render(); const n = $('w-name'); if (n) n.focus(); return; }
   if (t.dataset.edit) edit(t);
 });

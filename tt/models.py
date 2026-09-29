@@ -154,10 +154,13 @@ class Registration:
     partner_strength: float = 5.0
     team_name: str = ""
     note: str = ""
-    status: str = "pending"        # pending | confirmed | dropped
+    status: str = "pending"        # pending | confirmed | dropped | duplicate
     entrant_id: Optional[str] = None
     matched_with: Optional[str] = None   # kind = seeking: the other one looking
     created_ts: float = 0.0
+    # the same names as another entry, and somebody said they are a different
+    # team: never grouped with it at the door
+    distinct: bool = False
 
     def to_dict(self):
         return asdict(self)

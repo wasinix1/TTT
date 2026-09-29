@@ -325,6 +325,14 @@ class App:
                     f" · {cup_name(p.get('cup_id'))}" if cup_name(p.get("cup_id")) else "")
             elif ty == "registration_update" and p.get("status") == "dropped" and reg(p["id"]):
                 line = f"Taken off the list: {who(reg(p['id']))}"
+            elif ty == "registration_update" and p.get("status") == "duplicate" and reg(p["id"]):
+                line = f"Cleared as a duplicate: {who(reg(p['id']))}"
+            elif ty == "registration_update" and p.get("status") == "pending" and reg(p["id"]) \
+                    and "entrant_id" not in p:
+                line = f"Put back on the list: {who(reg(p['id']))}"
+            elif ty == "registration_update" and p.get("distinct") and reg(p["id"]):
+                line = (f"Kept as a separate {'team' if reg(p['id']).partner_name else 'person'}: "
+                        f"{who(reg(p['id']))}")
             elif ty == "registration_update" and p.get("matched_with") and reg(p["id"]) \
                     and reg(p["matched_with"]) and p["id"] < p["matched_with"]:
                 line = f"{reg(p['id']).name} and {reg(p['matched_with']).name} matched as partners"
@@ -1180,8 +1188,21 @@ class App:
         return {"entrant_id": eid, "where": where, "why": why}
 
     def op_update_registration(self, p):
+        """Correct an entry, take it off the list, or put it back.
+
+        Taken off is either a no-show (dropped) or the second copy of an entry
+        somebody sent twice (duplicate); both keep the entry, so Put back can
+        undo either. Confirmed is not settable here: that is what admit does,
+        and undoing it is removing the entrant, which puts the entry back."""
         s = self.store
         reg = s.registrations.get(p.get("id") or "")
+        if "status" in p:
+            if p["status"] not in ("pending", "dropped", "duplicate"):
+                raise ValueError("an entry is only ever waiting, taken off, or a duplicate")
+            if reg and reg.status == "confirmed":
+                raise ValueError(f"{reg.name} is already checked in — undo the check-in instead")
+        if "distinct" in p:
+            p = dict(p, distinct=bool(p["distinct"]))
         s.append("registration_update", p)
         if reg:
             self._match_seekers(reg.cup_id)     # whoever was left alone may have a new match

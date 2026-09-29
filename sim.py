@@ -604,6 +604,55 @@ def test_the_desk_actions_and_their_undo():
     shutil.rmtree(d)
 
 
+def test_duplicates_are_grouped_never_lost():
+    print("\n[registration desk: an entry sent twice]")
+    app, d = fresh()
+    s = app.store
+    cup = door_event(app, entry="pair", kind="open_play")
+    reg = lambda **k: app.act("public", "register", {"cup_id": cup, "kind": "pair", **k})["registration_id"]
+    a = reg(name="Lea Hoffmann", partner_name="Ben Krüger")
+    b = reg(name="Ben Krüger", partner_name="Lea Hoffmann", note="sicherheitshalber")
+
+    app.act("door", "admit", {"registration_id": b})
+    check(s.registrations[a].status == "pending",
+          "checking in one entry leaves the other where it was, for somebody to decide")
+    app.act("door", "update_registration", {"id": a, "status": "duplicate"})
+    check(s.registrations[a].status == "duplicate" and s.registrations[a].entrant_id is None,
+          "same team: it is cleared as a duplicate, and kept")
+    app.act("door", "update_registration", {"id": a, "status": "pending"})
+    check(s.registrations[a].status == "pending", "and can be put back")
+
+    app.act("door", "update_registration", {"id": a, "distinct": 1})
+    check(s.registrations[a].distinct is True, "different team: it is kept apart from the other")
+    app.act("door", "admit", {"registration_id": a, "name": "Lea Hoffmann (2)"})
+    check(len(s.entrants) == 2, "and comes in as a second team under a name that tells them apart")
+
+    def refused(data):
+        try:
+            app.act("door", "update_registration", data)
+        except ValueError:
+            return True
+        return False
+    check(refused({"id": a, "status": "pending"}),
+          "a checked-in entry cannot be put back on the list behind the pool's back")
+    check(refused({"id": reg(name="X", partner_name="Y"), "status": "confirmed"}),
+          "and confirming is only ever done by checking in")
+
+    texts = [x["text"] for x in app.activity(20)]
+    check("Cleared as a duplicate: Lea Hoffmann & Ben Krüger" in texts
+          and "Put back on the list: Lea Hoffmann & Ben Krüger" in texts
+          and "Kept as a separate team: Lea Hoffmann & Ben Krüger" in texts,
+          "the activity says what was decided")
+
+    # a seeker whose match is cleared as a duplicate goes back to looking
+    k = app.act("public", "register", {"cup_id": cup, "kind": "seeking", "name": "Kim"})["registration_id"]
+    o = app.act("public", "register", {"cup_id": cup, "kind": "seeking", "name": "Ole"})["registration_id"]
+    check(s.registrations[k].matched_with == o, "two people looking are matched")
+    app.act("door", "update_registration", {"id": o, "status": "duplicate"})
+    check(s.registrations[k].matched_with is None, "clearing one of them sets the other looking again")
+    shutil.rmtree(d)
+
+
 def solo_field(app, n, base=5.0, step=0.0):
     return [add_player(app, f"P{i}", base + i * step) for i in range(n)]
 
@@ -2461,6 +2510,7 @@ if __name__ == "__main__":
     test_the_door_key()
     test_the_desk_payload()
     test_the_desk_actions_and_their_undo()
+    test_duplicates_are_grouped_never_lost()
     test_the_door_after_the_draw_starts()
     test_directory()
     test_routing()

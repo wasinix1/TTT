@@ -199,7 +199,15 @@ Each step ships on its own and keeps the old Door tab working.
    name (same person — take it off, or someone else — check in as
    "Name (2)").
 4. **Duplicates.** Grouping, leftovers, Same team / Different team,
-   Resolved with Put back, near-match hints.
+   Resolved with Put back, near-match hints. *Done.* Entries are grouped by
+   the same names in the same cup (either order for a team); the panel picks
+   which entry a check-in uses, newest by default. What is left once one is
+   in is washed amber and asks: same — cleared as `duplicate`, kept under
+   Taken off the list; or different — `distinct`, never grouped again, and
+   checked in under "Name (2)" if the other is already here. Check in all
+   takes one entry per name and skips anything already here.
+   `update_registration` now refuses to set `confirmed` or to reopen a
+   checked-in entry; undoing a check-in is removing the entrant.
 5. **Public additions.** The team-form line, the duplicate question,
    `distinct`.
 6. **Personal link.** Token, `/me/<token>`, the public reg ops,

@@ -167,3 +167,15 @@ label.l{display:block;font-size:11px;font-weight:700;letter-spacing:.07em;text-t
 .toast button{border:0;background:rgba(255,255,255,.16);color:var(--ground);padding:6px 12px;border-radius:var(--r-xs);font-weight:700;cursor:pointer;font:inherit;font-size:13px}
 .toast button:hover{background:rgba(255,255,255,.28)}
 @media (max-width:700px){ .fields{grid-template-columns:1fr} }
+
+/* ---- duplicates (step 4)
+   A stack is one card with a second edge behind it: entries shown together,
+   never merged. A leftover — the rest of a stack once one of them is in —
+   is washed amber until somebody says what it is. */
+.card.stack{box-shadow:4px 4px 0 -1px var(--raised),4px 4px 0 0 var(--edge);margin-right:4px}
+.card.leftover{background:var(--warn-wash)}
+.card.leftover:hover,.card.leftover.sel{background:var(--warn-wash)}
+.card .hint{grid-column:1 / -1;font-size:13px;color:var(--warn)}
+.entry.chosen{box-shadow:inset 0 0 0 2px var(--chalk)}
+.entry .pick{display:flex;gap:6px;align-items:center;font-size:12px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:var(--muted);margin-bottom:6px;cursor:pointer}
+.entry .pick input{accent-color:var(--chalk);margin:0}

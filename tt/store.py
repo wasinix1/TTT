@@ -422,7 +422,7 @@ class Store:
 
     REG_FIELDS = ("cup_id", "kind", "name", "strength", "partner_name",
                   "partner_strength", "team_name", "note", "status", "entrant_id",
-                  "matched_with")
+                  "matched_with", "distinct")
 
     def _ev_registration_add(self, p, seq):
         r = Registration(id=p["id"], cup_id=p.get("cup_id", ""),
@@ -441,7 +441,7 @@ class Store:
         for k in self.REG_FIELDS:
             if k in p:
                 setattr(r, k, p[k])
-        if r.status == "dropped" and r.matched_with:
+        if r.status in ("dropped", "duplicate") and r.matched_with:
             # the one who was matched with them is looking again
             mate = self.registrations.get(r.matched_with)
             if mate and mate.matched_with == r.id:
