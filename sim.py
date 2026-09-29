@@ -4,10 +4,11 @@ import http.client, json, os, random, shutil, sys, tempfile, threading, time
 from datetime import datetime, timedelta
 from http.server import ThreadingHTTPServer
 from tt.server import App, Handler
-from tt import dispatch, simulate
+from tt import dispatch, formats, simulate
 from tt.simulate import play_one, drain
 
 random.seed(7)
+formats._draw.seed(1)           # the Swiss round-one draw, so runs repeat
 
 
 def fresh():
@@ -71,8 +72,9 @@ def test_open_play():
     print(f"   mean strength gap {sum(gaps)/len(gaps):.2f}, worst {max(gaps):.1f}")
     check(min(counts.values()) > 0, "nobody starved, including the 1 and the 9")
     check(max(counts.values()) - min(counts.values()) <= 16, "play is roughly evenly spread")
-    check(sum(gaps) / len(gaps) < 1.8, "average pairing stays close in strength")
-    check(max(gaps) <= 5.0, "even the worst pairing stays inside a sane spread")
+    if formats.USE_STRENGTH:            # parked: nothing pairs on strength yet
+        check(sum(gaps) / len(gaps) < 1.8, "average pairing stays close in strength")
+        check(max(gaps) <= 5.0, "even the worst pairing stays inside a sane spread")
 
     meets = {}
     for m in s.done_matches():
@@ -340,6 +342,70 @@ def test_format_cleanup():
     shutil.rmtree(d)
 
 
+def test_paced_swiss_odd_field_catches_up():
+    print("\n[paced Swiss, odd field: whoever is alone in a tier plays up]")
+    app, d = fresh()
+    solo_field(app, 7)
+    f = app.act("admin", "add_format", {"kind": "swiss", "name": "Swiss",
+        "config": {"continuous": True, "paced": True, "rounds": 4},
+        "entrant_ids": entrant_ids(app)})["format_id"]
+    app.act("admin", "start_format", {"id": f})
+    for e in entrant_ids(app):
+        app.act("admin", "join_queue", {"entrant_id": e, "format_id": f})
+    seen, gaps = set(), []
+
+    def look():
+        pl = app.store.formats[f]._played(app.store)
+        for t in app.store.tables.values():
+            if t.match_id and t.match_id not in seen:
+                seen.add(t.match_id)
+                m = app.store.matches[t.match_id]
+                gaps.append(abs(pl[m.entrant_a] - pl[m.entrant_b]))
+
+    look()
+    for _ in range(120):
+        moved = False
+        for n in sorted(app.store.tables):
+            if app.store.tables[n].match_id:
+                play_one(app, n)
+                moved = True
+        look()
+        if not moved:
+            break
+    fmt = app.store.formats[f]
+    played = fmt._played(app.store)
+    print("   games played per entrant:", sorted(played.values()))
+    check(fmt.is_complete(app.store), "the odd one out is never left waiting for ever")
+    check(set(played.values()) == {4}, "and everyone still gets their four")
+    check(max(gaps) <= 1, "playing up is only ever into the next tier")
+    shutil.rmtree(d)
+
+
+def test_swiss_pairs_on_sets_then_points():
+    print("\n[Swiss: level on wins, paired on sets, then points]")
+    app, d = fresh()
+    solo_field(app, 6)
+    fid = app.act("admin", "add_format", {"kind": "swiss", "name": "Swiss",
+        "config": {"rounds": 2, "scoring": {"best_of": 3, "points_to": 11}},
+        "entrant_ids": entrant_ids(app)})["format_id"]
+    app.act("admin", "start_format", {"id": fid})
+    s = app.store
+    r1 = sorted((m for m in s.matches.values() if m.format_id == fid), key=lambda m: m.seq)
+    for m, games in zip(r1, ([[11, 0], [11, 0]],                   # 2-0
+                             [[11, 9], [9, 11], [11, 9]],          # 2-1, close
+                             [[11, 2], [2, 11], [11, 2]])):        # 2-1, wide
+        app.act("referee", "report", {"match_id": m.id, "games": games})
+    (w1, l1), (w2, l2), (w3, l3) = [(m.entrant_a, m.entrant_b) for m in r1]
+    s.formats[fid].tick(s)
+    r2 = {frozenset((m.entrant_a, m.entrant_b)) for m in s.matches.values()
+          if m.format_id == fid and m.meta.get("round") == 1}
+    # order: w1 (+2 sets), w3 (+1, wide), w2 (+1, close), l2, l3, l1;
+    # w2 v l2 is a rematch, so w2 takes the next loser down
+    check(r2 == {frozenset((w1, w3)), frozenset((w2, l3)), frozenset((l2, l1))},
+          "round two follows wins, then sets, then points")
+    shutil.rmtree(d)
+
+
 def test_swiss_ko():
     print("\n[Swiss into a knockout once rounds finish]")
     app, d = fresh()
@@ -525,7 +591,7 @@ def test_swiss_does_not_outrun_a_bigger_cup():
 
 
 def test_paced_swiss_keeps_the_field_level():
-    print("\n[paced Swiss: on demand, but nobody gets ahead]")
+    print("\n[paced Swiss: on demand, strict tiers]")
     app, d = fresh()
     solo_field(app, 8, 5.0, 0.2)
     f = app.act("admin", "add_format", {"kind": "swiss", "name": "Swiss",
@@ -534,21 +600,32 @@ def test_paced_swiss_keeps_the_field_level():
     app.act("admin", "start_format", {"id": f})
     for e in entrant_ids(app):
         app.act("admin", "join_queue", {"entrant_id": e, "format_id": f})
-    worst = 0
+    seen, crossed = set(), []
+
+    def look():
+        # a match's two entrants were busy from the moment it was seated, so
+        # their games played now is what it was when they were paired
+        pl = app.store.formats[f]._played(app.store)
+        for t in app.store.tables.values():
+            if t.match_id and t.match_id not in seen:
+                seen.add(t.match_id)
+                m = app.store.matches[t.match_id]
+                if pl[m.entrant_a] != pl[m.entrant_b]:
+                    crossed.append((pl[m.entrant_a], pl[m.entrant_b]))
+
+    look()
     for _ in range(120):
         moved = False
         for n in sorted(app.store.tables):
             if app.store.tables[n].match_id:
                 play_one(app, n)
                 moved = True
-        pl = app.store.formats[f]._played(app.store)
-        if pl:
-            worst = max(worst, max(pl.values()) - min(pl.values()))
+        look()
         if not moved:
             break
     played = app.store.formats[f]._played(app.store)
     print("   games played per entrant:", sorted(played.values()))
-    check(worst <= 1, f"nobody ever got more than one game ahead (worst {worst})")
+    check(not crossed, f"every match was between equal games played {crossed}")
     check(set(played.values()) == {4}, "everyone played exactly the round budget")
     check(app.store.formats[f].is_complete(app.store), "it knows when it is done")
     shutil.rmtree(d)
@@ -2265,6 +2342,8 @@ if __name__ == "__main__":
     test_fair_cup_share()
     test_swiss_does_not_outrun_a_bigger_cup()
     test_paced_swiss_keeps_the_field_level()
+    test_paced_swiss_odd_field_catches_up()
+    test_swiss_pairs_on_sets_then_points()
     test_swiss_ko_drops_the_queue()
     test_put_back_returns_players()
     test_put_back_frees_the_table()

@@ -1293,15 +1293,16 @@ const fieldsFor = pfx => {
         <input id="${id('c-rounds')}" value="${esc(v('c_rounds', 5))}" data-f="${k('c_rounds')}" inputmode="numeric"></div>
       <div class="field"><label for="${id('c-pace')}">Pairing</label>
         <select id="${id('c-pace')}" data-f="${k('c_pace')}">
-          <option value="paced" ${v('c_pace', 'paced') === 'paced' ? 'selected' : ''}>Paced — on demand, nobody gets ahead</option>
+          <option value="paced" ${v('c_pace', 'paced') === 'paced' ? 'selected' : ''}>Paced — on demand, same games played only</option>
           <option value="strict" ${v('c_pace') === 'strict' ? 'selected' : ''}>Strict rounds — everyone waits for the round</option>
           <option value="free" ${v('c_pace') === 'free' ? 'selected' : ''}>Free-running — on demand, no round limit</option>
         </select></div>
     </div>
     ${why('<b>Paced</b> pairs people the moment a table frees up, but only against ' +
           'someone who has played the same number of games, and stops them at the round ' +
-          'count. No table ever waits on the one match that went to deuce in the fifth, ' +
-          'and the field stays level — which also matters when you are sharing tables, ' +
+          'count — never across tiers, except someone left alone in theirs playing up to ' +
+          'catch up. No table ever waits on the one match that went to deuce in the fifth, ' +
+          'and the field stays close — which also matters when you are sharing tables, ' +
           'because a draw that races ahead takes tables from the one that hasn\'t.',
           '<b>Strict rounds</b> is classic Swiss and will idle tables at the end of every ' +
           'round. <b>Free-running</b> never ends on its own — cut it to a knockout when ' +

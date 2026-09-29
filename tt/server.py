@@ -120,7 +120,7 @@ class App:
         ids = m.side_a if which == "a" else m.side_b
         return " / ".join(s.players[p].name for p in ids if p in s.players) or "—"
     FORMAT_LINE = {
-        "open_play": "Open play — a queue, paired on strength",
+        "open_play": "Open play — a queue, longest wait plays next",
         "groups": "Group stage, then a knockout",
         "single_elim": "Straight knockout",
         "swiss": "Swiss — everyone plays every round",

@@ -23,7 +23,11 @@ Formats:
 - **Swiss** — Buchholz, in one of three shapes. *Paced* is the default for a
   new one: pair on demand the moment a table frees up, but only against
   someone who has played the same number of games, and stop at the round
-  count. *Strict rounds* is classic lockstep Swiss. *Free-running* pairs on
+  count. Tiers are strict: the only crossing is somebody left alone in theirs
+  (an odd field, a late entry) playing up into the next one to catch up. Fast
+  finishers can still get two games ahead of a slow match — holding everyone
+  to one would be strict rounds. Within the same wins, a Swiss pairs on set
+  difference, then point difference. *Strict rounds* is classic lockstep Swiss. *Free-running* pairs on
   demand with no round limit and ends when you cut it to a knockout. A Swiss
   set up before paced mode existed keeps running free — an event already
   under way does not change shape because the server was updated.
@@ -236,6 +240,12 @@ If you put anything other than Caddy in front of it, server-sent events must
 not be buffered or updates arrive in batches. `deploy/Caddyfile` sets
 `flush_interval -1` on `/api/stream` for exactly this reason.
 
+**Strength is parked for now.** It is still stored, but the console hides it
+(`SHOW_STRENGTH` in `tt/static/app.js`) and nothing pairs, seeds or draws on it
+(`USE_STRENGTH` in `tt/formats.py`): open play pairs on wait time and rematches,
+groups, knockouts and Swiss round one are drawn at random. Flip both to bring it
+back. The strength sections of this README describe it as it works when on.
+
 Strength is your estimate on a 1–10 scale, editable mid-event. Resist bolting
 Elo onto it: with six or eight games each, a K-factor big enough to move the
 needle is also big enough to be noise. Nudge two or three numbers by eye after
@@ -294,8 +304,8 @@ sim.py           plays full events through every format
 `python3 sim.py` runs the lot: starvation, rematch bounds, byes, bracket
 byes, Swiss byes scoring a point, two formats sharing tables, replay
 determinism, correcting a result mid-bracket, fair table share between cups,
-a small draw not outrunning a big one, paced Swiss holding the field to
-within one game of itself, somebody walking out mid-match, one person entered
+a small draw not outrunning a big one, paced Swiss only pairing equal
+games played, somebody walking out mid-match, one person entered
 in two cups never being called to two tables at once, and a corrected group
 score redrawing a bracket nobody has played in yet, and the sandbox copying
 the shape of an event without any of its people while the live log does not
