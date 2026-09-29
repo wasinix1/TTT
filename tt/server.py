@@ -8,6 +8,7 @@ on the night.
 import json
 import mimetypes
 import os
+import re
 import secrets
 import socket
 import threading
@@ -37,6 +38,7 @@ class App:
         self.is_sim = False
         self.sim = None
         self._cache = {}          # (version, role) -> encoded state JSON
+        self._desk_cache = {}     # the same for the registration desk
         self._reg_hits = {}       # ip -> recent registration timestamps
         if not self.store.tables:
             for n in (1, 2, 3):
@@ -231,6 +233,110 @@ class App:
             hit = json.dumps(self.state(role)).encode()
             self._cache = {(v, role): hit}      # only the current version matters
         return v, hit
+
+    # ------------------------------------------------------------ the desk
+
+    def desk_json(self, role):
+        """The registration desk's payload, cached per version like
+        state_json. Only admin and door ever get here."""
+        v = self.store.version
+        key = ("desk", v, role)
+        hit = self._desk_cache.get(key)
+        if hit is None:
+            hit = json.dumps(self.desk_state(role)).encode()
+            self._desk_cache = {key: hit}
+        return v, hit
+
+    def desk_state(self, role):
+        """Everything about who is in the event and nothing about how it is
+        played: cups, entries, the pool with where each of them is right now,
+        the directory, and a readable account of the last things done.
+
+        Its own payload rather than /api/state, so the desk redraws when
+        somebody is checked in and not every time a point is scored — and so
+        it carries nothing the door key has no business seeing."""
+        s = self.store
+        with s.lock:
+            seat = {}          # entrant id -> (table, opponent)
+            for n, t in s.tables.items():
+                m = s.matches.get(t.match_id) if t.match_id else None
+                if not m:
+                    continue
+                for me, them in (("a", "b"), ("b", "a")):
+                    eid = getattr(m, "entrant_" + me)
+                    if eid:
+                        seat[eid] = (n, self.side_name(m, them))
+            regs = [s.registrations[i] for i in s.registration_order if i in s.registrations]
+            from_reg = {r.entrant_id: r.id for r in regs if r.entrant_id}
+            ents = []
+            for e in s.entrants.values():
+                t = seat.get(e.id)
+                ents.append({
+                    "id": e.id, "name": e.name, "cup_id": e.cup_id,
+                    "players": [s.players[p].name for p in e.player_ids if p in s.players],
+                    "status": self.entrant_status(e),
+                    "table": t[0] if t else None, "vs": t[1] if t else "",
+                    "removable": not self._why_not_removable(e),
+                    "added_ts": e.added_ts, "registration_id": from_reg.get(e.id, ""),
+                })
+            ents.sort(key=lambda e: e["name"].casefold())
+            return {
+                "version": s.version, "role": role,
+                "event": {k: s.event.get(k, "") for k in ("name", "starts_at", "venue")},
+                "phase": s.phase(), "now": time.time(),
+                "cups": [{k: c[k] for k in ("id", "name", "entry", "registration")}
+                         for c in (s.cups[i].to_dict() for i in s.cup_order if i in s.cups)],
+                "registrations": [r.to_dict() for r in regs],
+                "entrants": ents,
+                "people": [{"id": p.id, "name": p.name, "playing": bool(s.person_playing(p.id))}
+                           for p in (s.people[i] for i in s.people_order if i in s.people)],
+                "activity": self.activity(40),
+            }
+
+    def activity(self, limit):
+        """The log, told as the desk would say it. Only what is about who is
+        in the event; results and dispatching are the console's story."""
+        s = self.store
+        hist = s.history(400)
+        # names as they were written, so somebody removed since still has one
+        ent_name = {h["payload"].get("id"): h["payload"].get("name", "")
+                    for h in hist if h["type"] == "entrant_add"}
+        ent_name.update({e.id: e.name for e in s.entrants.values()})
+        cup_name = lambda c: s.cups[c].name if c in s.cups else ""
+        reg = lambda i: s.registrations.get(i)
+        who = lambda r: r.name + (f" & {r.partner_name}" if r.partner_name else "")
+        out = []
+        for h in hist:
+            p, ty, line = h["payload"], h["type"], ""
+            if ty == "registration_add":
+                line = f"New entry: {p.get('name', '')}" + (
+                    f" & {p['partner_name']}" if p.get("partner_name") else "") + (
+                    f" · {cup_name(p.get('cup_id'))}" if cup_name(p.get("cup_id")) else "")
+            elif ty == "registration_update" and p.get("status") == "dropped" and reg(p["id"]):
+                line = f"Taken off the list: {who(reg(p['id']))}"
+            elif ty == "registration_update" and p.get("matched_with") and reg(p["id"]) \
+                    and reg(p["matched_with"]) and p["id"] < p["matched_with"]:
+                line = f"{reg(p['id']).name} and {reg(p['matched_with']).name} matched as partners"
+            elif ty == "entrant_add":
+                line = f"In: {p.get('name', '')}" + (
+                    f" · {cup_name(p.get('cup_id'))}" if cup_name(p.get("cup_id")) else "")
+            elif ty == "entrant_remove":
+                line = f"Removed: {ent_name.get(p.get('id'), 'somebody')}"
+            elif ty == "rest_set":
+                n = ent_name.get(p.get("entrant_id"), "somebody")
+                line = f"{n} sits out" if p.get("resting", True) else f"{n} back in"
+            elif ty == "entrant_update" and "active" in p:
+                n = ent_name.get(p.get("id"), "somebody")
+                line = f"{n} gone home" if not p["active"] else f"{n} is back"
+            elif ty == "entrant_update" and p.get("cup_id"):
+                line = f"{ent_name.get(p.get('id'), 'somebody')} moved to {cup_name(p['cup_id'])}"
+            elif ty == "player_update" and "name" in p:
+                line = f"Renamed to {p['name']}"
+            if line:
+                out.append({"seq": h["seq"], "ts": h["ts"], "by": h["by"], "text": line})
+                if len(out) >= limit:
+                    break
+        return out
 
     def state(self, role):
         s = self.store
@@ -1213,6 +1319,25 @@ class Handler(BaseHTTPRequestHandler):
 
         if path == "/api/public":
             return self._send(200, self.app.public_state())
+
+        if path == "/api/desk":
+            role = self.app.role_for(self._token(q))
+            if role not in ("admin", "door"):
+                return self._send(403, {"error": "the desk needs the admin or door link"})
+            v, body = self.app.desk_json(role)
+            tag = f'W/"desk-{v}-{role}"'
+            if self.headers.get("If-None-Match") == tag:
+                self.send_response(304)
+                self.send_header("ETag", tag)
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+                return
+            return self._send(200, body, etag=tag)
+
+        # The registration desk: its own page, on the admin or the door key.
+        # The key is checked by /api/desk, not here — the page is only markup.
+        if re.fullmatch(r"/[ad]/[^/]+/desk", path):
+            return self._static("desk.html")
 
         if path == "/api/stream":
             return self._stream()

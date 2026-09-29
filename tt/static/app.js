@@ -1565,7 +1565,9 @@ function tabDoor() {
   const walkOpen = !!form.walk_open || !S.entrants.length && !pending.length;
   const q = nameKey(form.door_q);
   return `<div class="form">
-    ${sec('At the door', `<button class="${walkOpen ? 'ghost' : ''} tiny" data-act="walk-toggle">${
+    ${sec('At the door', `<a class="desk-link" href="${location.pathname.replace(/\/$/, '')}/desk${simq('?')}"
+        target="_blank"><button class="ghost tiny">Open the desk ↗</button></a>
+      <button class="${walkOpen ? 'ghost' : ''} tiny" data-act="walk-toggle">${
       walkOpen ? 'Hide' : 'Add somebody'}</button>`)}
     ${walkOpen ? walkInForm() : ''}
     ${S.entrants.length || pending.length ? `<div class="field door-search">
@@ -1806,6 +1808,8 @@ function tabLinks() {
         <span class="key">${base}/r/${esc(S.keys.referee || '')}</span></div>
       <div class="drow" style="--cols:170px 1fr"><span>Door — check-in only</span>
         <span class="key">${base}/d/${esc(S.keys.door || '')}</span></div>
+      <div class="drow" style="--cols:170px 1fr"><span>Registration desk</span>
+        <span class="key">${base}/d/${esc(S.keys.door || '')}/desk</span></div>
       <div class="drow" style="--cols:170px 1fr"><span>Admin — this page</span>
         <span class="key">${base}/a/${esc(S.keys.admin || '')}</span></div>
       <div class="drow" style="--cols:170px 1fr"><span>Wall display</span>

@@ -484,6 +484,65 @@ def test_the_door_key():
     shutil.rmtree(d)
 
 
+def test_the_desk_payload():
+    print("\n[registration desk]")
+    app, d = fresh()
+    s = app.store
+    cup = door_event(app)
+    rid = app.act("public", "register", {"cup_id": cup, "name": "Jana Berger",
+                                         "note": "komme später"})["registration_id"]
+    app.act("public", "register", {"cup_id": cup, "name": "Tobias Wendt"})
+    eid = app.act("door", "admit", {"registration_id": rid})["entrant_id"]
+    app.act("door", "admit", {"cup_id": cup, "name": "Ilya Marek"})
+    app.act("door", "set_resting", {"entrant_id": eid, "resting": True})
+
+    desk = app.desk_state("door")
+    check(desk["cups"][0]["id"] == cup and set(desk["cups"][0]) == {"id", "name", "entry", "registration"},
+          "the desk gets the cups and only what it needs of them")
+    check(sum(r["status"] == "pending" for r in desk["registrations"]) == 1,
+          "the one entry still expected")
+    jana = next(e for e in desk["entrants"] if e["id"] == eid)
+    check(jana["registration_id"] == rid and jana["status"] == "resting" and jana["added_ts"] > 0,
+          "who is here, where they came from, when, and where they are now")
+    check(next(e for e in desk["entrants"] if e["name"] == "Ilya Marek")["registration_id"] == "",
+          "a walk-in says so")
+    texts = [a["text"] for a in desk["activity"]]
+    check("Jana Berger sits out" in texts and any(t.startswith("In: Ilya Marek") for t in texts),
+          "the activity reads as sentences")
+    check(all(a["by"] in ("door", "public", "admin", "system", "") for a in desk["activity"])
+          and next(a for a in desk["activity"] if a["text"] == "Jana Berger sits out")["by"] == "door",
+          "and says who did it")
+    check("keys" not in desk and "history" not in desk and "matches" not in desk,
+          "no keys, no raw log, no scores")
+
+    # over HTTP: the key decides, not the page
+    Handler.app = app
+    srv = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    port = srv.server_address[1]
+
+    def get(path, key="", tag=""):
+        c = http.client.HTTPConnection("127.0.0.1", port)
+        h = {"X-Key": key}
+        if tag:
+            h["If-None-Match"] = tag
+        c.request("GET", path, headers=h)
+        r = c.getresponse()
+        return r.status, r.read().decode(), r.getheader("ETag")
+
+    check("desk.js" in get("/d/" + app.keys["door"] + "/desk")[1], "the door link has a desk")
+    check("desk.js" in get("/a/" + app.keys["admin"] + "/desk")[1], "so does the admin link")
+    check(get("/api/desk")[0] == 403 and get("/api/desk", app.keys["referee"])[0] == 403,
+          "the public and the referees get nothing from the desk")
+    code, body, tag = get("/api/desk", app.keys["door"])
+    check(code == 200 and json.loads(body)["role"] == "door", "the door key does")
+    check(get("/api/desk", app.keys["door"], tag)[0] == 304, "and asking again unchanged costs nothing")
+    app.act("door", "set_resting", {"entrant_id": eid, "resting": False})
+    check(get("/api/desk", app.keys["door"], tag)[0] == 200, "until something changes")
+    srv.shutdown()
+    shutil.rmtree(d)
+
+
 def solo_field(app, n, base=5.0, step=0.0):
     return [add_player(app, f"P{i}", base + i * step) for i in range(n)]
 
@@ -2339,6 +2398,7 @@ if __name__ == "__main__":
     test_the_door()
     test_the_door_pairs()
     test_the_door_key()
+    test_the_desk_payload()
     test_the_door_after_the_draw_starts()
     test_directory()
     test_routing()

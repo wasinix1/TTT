@@ -72,8 +72,10 @@ page shows.
 
 ## The desk page
 
-`tt/static/desk.html` + `desk.js`, served at `/d/<key>` and `/a/<key>/desk`,
-styled with the console's `style.css` plus a small desk block. It is the same
+`tt/static/desk.html` + `desk.js` + `desk.css`, served at `/d/<key>/desk` and
+`/a/<key>/desk`, in the console's palette and type. Once the desk can check
+people in (step 3), the bare door link `/d/<key>` opens it directly instead of
+the console's Door tab. It is the same
 kind of standalone page as `/board` and the public site.
 
 It reads its own payload, `/api/desk`: cups, registrations (without their

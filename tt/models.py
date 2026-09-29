@@ -65,6 +65,7 @@ class Entrant:
     player_ids: list[str]
     active: bool = True
     cup_id: str = ""        # the pool they were admitted to; "" = no cup
+    added_ts: float = 0.0   # when they came in — the door's "in at 18:32"
 
     def to_dict(self):
         return asdict(self)

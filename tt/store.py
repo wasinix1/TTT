@@ -251,6 +251,7 @@ class Store:
         self.entrants[p["id"]] = Entrant(
             id=p["id"], name=p["name"], player_ids=list(p["player_ids"]),
             active=p.get("active", True), cup_id=p.get("cup_id") or "",
+            added_ts=self._now,
         )
 
     def _ev_entrant_update(self, p, seq):
