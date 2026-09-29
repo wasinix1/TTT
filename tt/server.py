@@ -1346,6 +1346,12 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/join":
             return self._site_page()
 
+        if path == "/tg":
+            return self._static("me.html")
+
+        if path == "/api/me":
+            return self._me()
+
         # Role-scoped entry points always get the console: an admin holding
         # the key wants the console whatever phase the event is in. The key
         # is in the path on this first load — the client only starts sending
@@ -1361,6 +1367,8 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         u = urlparse(self.path)
         q = parse_qs(u.query)
+        if u.path == "/api/me":
+            return self._me(post=True)
         if u.path != "/api/action":
             return self._send(404, {"error": "not found"})
         n = int(self.headers.get("Content-Length", 0))
@@ -1385,6 +1393,34 @@ class Handler(BaseHTTPRequestHandler):
         except Exception as e:
             return self._send(400, {"error": str(e)})
         return self._send(200, {"ok": True, **out})
+
+    def _me(self, post=False):
+        """The Mini App's own door: whoever Telegram signed this request for,
+        and only them. Always the live event — the sandbox has no bot."""
+        from . import me
+        tg = type(self).app.telegram
+        if not tg or not tg.on:
+            return self._send(404, {"error": "Telegram ist hier nicht eingerichtet."})
+        user = me.verify(self.headers.get("X-Tg-Init") or "", tg.cfg.get("token", ""))
+        if not user:
+            return self._send(401, {"error": "Öffne das bitte über Telegram."})
+        if tg.wire.chat(user["id"]) is None:
+            tg.wire.upsert_chat(user)          # opened the app before the chat
+            tg.changed()
+        if not post:
+            return self._send(200, me.view(tg, user["id"]))
+        n = int(self.headers.get("Content-Length", 0))
+        try:
+            body = json.loads(self.rfile.read(n) or b"{}")
+        except Exception:
+            return self._send(400, {"error": "bad json"})
+        try:
+            return self._send(200, me.act(tg, user, body.get("op") or "", body.get("data")))
+        except (ValueError, KeyError, PermissionError) as e:
+            return self._send(400, {"error": str(e).strip("'\"")})
+        except Exception as e:             # a player's phone gets a sentence, not a reset
+            print("[me]", repr(e), flush=True)
+            return self._send(500, {"error": "Da ist etwas schiefgegangen."})
 
     def _stream(self):
         """Server-sent events. Pushes a version number the moment anything

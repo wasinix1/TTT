@@ -1,0 +1,224 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Mein Abend</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Syne:wght@400..800&display=swap" rel="stylesheet">
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<style>
+/* The Mini App: one player's evening. Same language as the site and the
+   console — white paper, black ink, one red — and Telegram's own light or
+   dark, so it sits inside the app rather than on top of it.
+
+   Red means one thing here, as everywhere: it is your turn. */
+
+:root{
+  --ground:#ffffff; --surface:#f2f2f0; --raised:#ffffff; --edge:#e4e4e0;
+  --chalk:#0a0a0a; --muted:#5f5f5f; --faint:#8a8a85;
+  --signal:#d8241a; --signal-wash:rgba(216,36,26,.08); --on-signal:#ffffff;
+  --ink-card:#0a0a0a; --on-ink:#ffffff;
+  --sans:"Syne",ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  --r:16px; --r-sm:12px;
+  color-scheme:light;
+}
+:root[data-theme="dark"]{
+  --ground:#0e0e0e; --surface:#1a1a19; --raised:#242423; --edge:#2e2e2c;
+  --chalk:#f4f4f1; --muted:#a3a39e; --faint:#75756f;
+  --signal:#ff4033; --signal-wash:rgba(255,64,51,.14); --on-signal:#ffffff;
+  --ink-card:#f4f4f1; --on-ink:#0e0e0e;
+  color-scheme:dark;
+}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{margin:0;background:var(--ground);color:var(--chalk)}
+body{font-family:var(--sans);font-size:16px;line-height:1.4;
+  font-variant-numeric:tabular-nums;-webkit-text-size-adjust:100%;
+  padding:0 0 calc(28px + env(safe-area-inset-bottom))}
+button,input,textarea{font:inherit;color:inherit}
+[hidden]{display:none!important}
+.wrap{max-width:520px;margin:0 auto;padding:14px 16px 0}
+
+/* ------------------------------------------------------------ top */
+.top{display:flex;align-items:center;gap:12px;padding:4px 2px 14px}
+.mark{font-weight:800;font-size:18px;letter-spacing:-.02em}
+.mark i{font-style:normal;color:var(--signal)}
+.top .ev{min-width:0;display:flex;flex-direction:column;line-height:1.2}
+.top .ev b{font-size:15px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.top .ev span{font-size:13px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.live-dot{margin-left:auto;width:8px;height:8px;border-radius:50%;background:var(--edge);flex:none;
+  transition:background .3s}
+.live-dot.on{background:var(--signal)}
+
+/* ------------------------------------------------------------ hero */
+.hero{border-radius:var(--r);padding:22px 20px 20px;background:var(--surface);
+  display:flex;flex-direction:column;gap:6px;position:relative;overflow:hidden}
+.hero .kick{font-size:12px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--muted)}
+.hero .big{font-size:clamp(44px,14vw,64px);font-weight:800;letter-spacing:-.04em;line-height:.95;margin:4px 0 2px}
+.hero .big.mid{font-size:clamp(34px,10vw,44px);line-height:1}
+.hero .line{font-size:20px;font-weight:700;letter-spacing:-.01em}
+.hero .sub{font-size:14px;color:var(--muted)}
+.hero .row{display:flex;gap:8px;margin-top:14px;flex-wrap:wrap}
+.hero.turn{background:var(--signal);color:var(--on-signal)}
+.hero.turn .kick,.hero.turn .sub{color:rgba(255,255,255,.82)}
+.hero.ready{background:var(--ink-card);color:var(--on-ink)}
+.hero.ready .kick{color:var(--signal)}
+.hero.ready .sub{color:color-mix(in srgb,var(--on-ink) 70%,transparent)}
+.hero.quiet .big{color:var(--muted)}
+.hero .more{margin-top:10px;padding-top:12px;border-top:1px solid color-mix(in srgb,currentColor 18%,transparent);
+  font-size:14px;display:flex;flex-direction:column;gap:3px}
+.hero .more span{opacity:.8}
+.pulse{position:absolute;right:18px;top:20px;width:10px;height:10px;border-radius:50%;background:currentColor;
+  animation:pulse 1.6s ease-in-out infinite}
+@keyframes pulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.35;transform:scale(.75)}}
+@media (prefers-reduced-motion:reduce){.pulse{animation:none}}
+.count{display:flex;gap:18px;margin-top:10px}
+.count div{display:flex;flex-direction:column}
+.count b{font-size:28px;font-weight:800;letter-spacing:-.03em;line-height:1}
+.count span{font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.08em;font-weight:700}
+
+/* ------------------------------------------------------------ buttons */
+.btn{appearance:none;border:none;border-radius:var(--r-sm);padding:13px 18px;font-weight:700;font-size:16px;
+  background:var(--surface);color:var(--chalk);cursor:pointer;display:inline-flex;align-items:center;
+  justify-content:center;gap:8px;min-height:48px;transition:transform .08s,opacity .15s}
+.btn:active{transform:scale(.98)}
+.btn:disabled,.btn.red:disabled,.btn.ink:disabled{background:var(--edge);color:var(--faint);cursor:default}
+.btn.red{background:var(--signal);color:var(--on-signal)}
+.btn.ink{background:var(--chalk);color:var(--ground)}
+.btn.white{background:#fff;color:#0a0a0a}
+.btn.clear{background:transparent;color:inherit;box-shadow:inset 0 0 0 1.5px color-mix(in srgb,currentColor 30%,transparent)}
+.btn.wide{width:100%}
+.btn.small{min-height:36px;padding:7px 12px;font-size:14px;border-radius:10px}
+.link{appearance:none;background:none;border:none;padding:6px 0;color:var(--muted);font-size:14px;
+  font-weight:600;cursor:pointer;text-decoration:underline;text-underline-offset:3px;text-decoration-color:var(--edge)}
+.actions{display:flex;gap:8px;margin-top:10px}
+.actions .btn{flex:1}
+
+/* ------------------------------------------------------------ blocks */
+.block{margin-top:26px}
+.block h2{font-size:12px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);
+  margin:0 2px 10px;display:flex;gap:8px;align-items:baseline}
+.block h2 span{letter-spacing:0;text-transform:none;font-weight:600;color:var(--faint)}
+.card{background:var(--surface);border-radius:var(--r);padding:16px}
+.card + .card{margin-top:8px}
+.card h3{margin:0;font-size:20px;font-weight:800;letter-spacing:-.02em}
+.card .about{font-size:14px;color:var(--muted);margin-top:2px}
+.card .note{font-size:14px;color:var(--muted);margin:8px 0 0}
+.card .go{display:flex;flex-direction:column;gap:8px;margin-top:14px}
+.done-mark{display:flex;align-items:center;gap:8px;font-weight:700;margin-top:10px}
+.done-mark .tick{width:24px;height:24px;border-radius:50%;background:var(--chalk);color:var(--ground);
+  display:inline-flex;align-items:center;justify-content:center;font-size:14px}
+.field{display:flex;flex-direction:column;gap:5px}
+.field label{font-size:12px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+.input{width:100%;border:none;border-radius:var(--r-sm);padding:13px 14px;background:var(--raised);
+  font-size:16px;outline:none;box-shadow:inset 0 0 0 1.5px var(--edge)}
+.input:focus{box-shadow:inset 0 0 0 2px var(--chalk)}
+textarea.input{resize:vertical;min-height:88px;line-height:1.4}
+.seg{display:grid;grid-template-columns:1fr 1fr;gap:4px;background:var(--raised);border-radius:var(--r-sm);padding:4px;
+  box-shadow:inset 0 0 0 1.5px var(--edge)}
+.seg button{appearance:none;border:none;background:transparent;border-radius:9px;padding:10px 6px;font-weight:700;
+  font-size:14px;color:var(--muted);cursor:pointer}
+.seg button.on{background:var(--chalk);color:var(--ground)}
+
+/* results */
+.list{background:var(--surface);border-radius:var(--r);overflow:hidden}
+.res{display:grid;grid-template-columns:30px 1fr auto;gap:12px;align-items:center;padding:12px 14px}
+.res + .res{border-top:1px solid var(--edge)}
+.res .wl{width:30px;height:30px;border-radius:9px;display:flex;align-items:center;justify-content:center;
+  font-weight:800;font-size:13px;box-shadow:inset 0 0 0 1.5px var(--edge);color:var(--muted)}
+.res .wl.w{background:var(--signal);color:var(--on-signal);box-shadow:none}
+.res.left{grid-template-columns:1fr;padding:12px 14px}
+.res.left b{display:block;font-size:12px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);margin-bottom:2px}
+.res.left span{font-size:15px}
+.res .who{min-width:0}
+.res .who b{display:block;font-size:16px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.res .who span{font-size:13px;color:var(--muted)}
+.res .sc{font-size:14px;font-weight:700;text-align:right;white-space:nowrap}
+.res .sc i{font-style:normal;color:var(--muted);font-weight:600}
+
+/* standings */
+.st{display:grid;grid-template-columns:28px 1fr auto;gap:10px;align-items:center;padding:10px 14px;font-size:15px}
+.st + .st{border-top:1px solid var(--edge)}
+.st .rk{color:var(--muted);font-weight:700;text-align:right}
+.st .nm{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.st .wl2{font-weight:700}
+.st.me{background:var(--signal-wash);box-shadow:inset 3px 0 0 var(--signal)}
+.st.me .nm{font-weight:800}
+.st.gap{border-top:1px dashed var(--edge)}
+
+/* tables */
+.tables{display:grid;grid-template-columns:repeat(2,1fr);gap:8px}
+.tbl{background:var(--surface);border-radius:var(--r);padding:12px 14px;min-width:0;display:flex;gap:10px;align-items:flex-start}
+.tbl .n{font-size:30px;font-weight:800;letter-spacing:-.04em;line-height:1;min-width:22px}
+.tbl .p{font-size:13px;line-height:1.35;min-width:0;display:flex;flex-direction:column}
+.tbl .p span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tbl .p i{font-style:normal;color:var(--faint);font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.08em}
+.tbl.free .n{color:var(--faint)}
+.tbl.mine{background:var(--signal);color:var(--on-signal)}
+.tbl.mine .p i{color:rgba(255,255,255,.75)}
+
+/* the question from the other side */
+.ask{border-radius:var(--r);padding:18px;background:var(--ink-card);color:var(--on-ink);margin-bottom:10px}
+.ask .kick{font-size:12px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--signal)}
+.ask .score{font-size:30px;font-weight:800;letter-spacing:-.03em;margin:6px 0 2px}
+.ask .row{display:flex;gap:8px;margin-top:14px}
+.ask .row .btn{flex:1}
+.ask .btn.clear{color:var(--on-ink)}
+
+/* settings */
+.settings{margin-top:34px;display:flex;flex-direction:column;gap:2px}
+.set{display:flex;align-items:center;gap:12px;background:var(--surface);padding:14px 16px}
+.set:first-child{border-radius:var(--r) var(--r) 0 0}
+.set:last-child{border-radius:0 0 var(--r) var(--r)}
+.set:only-child{border-radius:var(--r)}
+.set .t{flex:1;min-width:0}
+.set .t b{display:block;font-size:15px}
+.set .t span{font-size:13px;color:var(--muted)}
+.switch{appearance:none;width:50px;height:30px;border-radius:15px;background:var(--edge);position:relative;
+  border:none;cursor:pointer;flex:none;transition:background .15s}
+.switch::after{content:"";position:absolute;top:3px;left:3px;width:24px;height:24px;border-radius:50%;
+  background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.25);transition:transform .15s}
+.switch.on{background:var(--signal)}
+.switch.on::after{transform:translateX(20px)}
+.foot{text-align:center;color:var(--faint);font-size:13px;margin-top:22px}
+
+/* ------------------------------------------------------------ sheet */
+.veil{position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:20;display:flex;align-items:flex-end;justify-content:center;
+  animation:fade .15s ease-out}
+.sheet{background:var(--ground);width:100%;max-width:520px;border-radius:20px 20px 0 0;
+  padding:18px 18px calc(18px + env(safe-area-inset-bottom));animation:up .2s ease-out;max-height:92vh;overflow:auto}
+@keyframes fade{from{opacity:0}}
+@keyframes up{from{transform:translateY(40px);opacity:.6}}
+.sheet .grab{width:38px;height:4px;border-radius:2px;background:var(--edge);margin:0 auto 14px}
+.sheet h3{margin:0;font-size:24px;font-weight:800;letter-spacing:-.02em}
+.sheet .sub{color:var(--muted);font-size:14px;margin-top:2px}
+.pad{margin-top:16px;display:flex;flex-direction:column;gap:8px}
+.pad .head,.pad .game{display:grid;grid-template-columns:64px 1fr 18px 1fr;gap:8px;align-items:center}
+.pad .head span{font-size:12px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);
+  text-align:center;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pad .game label{font-size:13px;font-weight:700;color:var(--muted)}
+.pad .game input{text-align:center;font-size:26px;font-weight:800;padding:10px 4px}
+.pad .colon{text-align:center;font-weight:800;color:var(--faint)}
+.verdict{margin-top:14px;font-size:18px;font-weight:800;min-height:26px}
+.verdict.win{color:var(--signal)}
+
+/* ------------------------------------------------------------ misc */
+.toast{position:fixed;left:50%;bottom:calc(20px + env(safe-area-inset-bottom));transform:translateX(-50%);
+  background:var(--chalk);color:var(--ground);padding:11px 18px;border-radius:999px;font-weight:700;font-size:14px;
+  z-index:40;max-width:calc(100vw - 32px);text-align:center;box-shadow:0 6px 24px rgba(0,0,0,.18);
+  animation:up .18s ease-out}
+.toast.bad{background:var(--signal);color:var(--on-signal)}
+.empty{text-align:center;padding:60px 20px;color:var(--muted)}
+.empty h1{color:var(--chalk);font-size:30px;font-weight:800;letter-spacing:-.03em;margin:0 0 8px}
+.skel{height:180px;border-radius:var(--r);background:var(--surface);animation:breathe 1.2s ease-in-out infinite}
+@keyframes breathe{50%{opacity:.55}}
+</style>
+</head>
+<body>
+<div class="wrap" id="app"><div class="skel"></div></div>
+<div id="sheet"></div>
+<div id="toast" class="toast" hidden></div>
+<script src="/static/me.js"></script>
+</body>
+</html>

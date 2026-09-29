@@ -190,6 +190,10 @@ phones join in:
   the table call turns into the result in place; nothing else is pushed.
 - **One-tap entry.** The bot shows what is open with a button per cup.
   Somebody the door has linked before is entered as themselves in one tap.
+- **Their own app.** *Mein Abend* beside the message box opens a page inside
+  Telegram: *Tisch 2* in red when it is their turn, their place in the
+  running order, their results and table, entering in one tap, a score pad.
+  Signed by Telegram, so there is nothing to log in to.
 - **A live card.** Where they are tonight — on a table, roughly when, sat
   out — kept current by editing, with *Pause* and *going home* one tap away.
 - **Talking to the room.** Announce the event (the announcement carries the

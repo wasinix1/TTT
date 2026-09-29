@@ -89,7 +89,8 @@ CREATE TABLE IF NOT EXISTS inbox (
   dir TEXT, text TEXT, read INTEGER DEFAULT 0);
 CREATE TABLE IF NOT EXISTS claims (
   id INTEGER PRIMARY KEY AUTOINCREMENT, match_id TEXT, qseq INTEGER,
-  side TEXT, chat_id INTEGER, games TEXT, ts REAL, state TEXT DEFAULT 'open');
+  side TEXT, chat_id INTEGER, games TEXT, ts REAL, state TEXT DEFAULT 'open',
+  msgs TEXT DEFAULT '[]');
 CREATE TABLE IF NOT EXISTS tokens (token TEXT PRIMARY KEY, person_id TEXT, created REAL);
 CREATE TABLE IF NOT EXISTS kv (k TEXT PRIMARY KEY, v TEXT);
 """
@@ -111,7 +112,8 @@ class Wire:
     def _migrate(self):
         """Columns added after a telegram.db was first created. Adding is the
         only change ever made, so an older file just gains them."""
-        want = {"chats": {"card_hash": "TEXT DEFAULT ''", "last_ack": "REAL DEFAULT 0"}}
+        want = {"chats": {"card_hash": "TEXT DEFAULT ''", "last_ack": "REAL DEFAULT 0"},
+                "claims": {"msgs": "TEXT DEFAULT '[]'"}}
         for table, cols in want.items():
             have = {r[1] for r in self.conn.execute(f"PRAGMA table_info({table})")}
             for col, decl in cols.items():
@@ -249,7 +251,11 @@ class Wire:
 
     def _claim(self, r):
         r["games"] = json.loads(r["games"])
+        r["msgs"] = json.loads(r.get("msgs") or "[]")
         return r
+
+    def set_claim_msgs(self, cid, msgs):
+        self._q("UPDATE claims SET msgs=? WHERE id=?", (json.dumps(msgs), cid))
 
     def claim(self, cid):
         rows = self._all("SELECT * FROM claims WHERE id=?", (cid,))
@@ -370,6 +376,7 @@ class Bot:
         self._save()
         self.call = call
         self.status = {"ok": True, "error": "", "last_ok": time.time()}
+        self.set_menu()
         if not self._transport:
             self.start()
         self.changed()
@@ -385,11 +392,25 @@ class Bot:
         self.call = None
         self.changed()
 
+    def app_url(self):
+        """The Mini App, if there is a public address to serve it from."""
+        url = self.public_url()
+        return url + "tg" if url else ""
+
+    def set_menu(self):
+        """The button beside every player's message box: the Mini App when
+        there is one to open, Telegram's own command list when there is not."""
+        url = self.app_url()
+        self.api("setChatMenuButton", {"menu_button": {
+            "type": "web_app", "text": "Mein Abend", "web_app": {"url": url}}
+            if url else {"type": "commands"}}, quiet=True)
+
     def remember_url(self, url):
         if url and url.startswith("https://") and url != self.cfg.get("url") \
                 and self.cfg.get("token"):
             self.cfg["url"] = url.rstrip("/") + "/"
             self._save()
+            self.set_menu()
 
     # ------------------------------------------------------------- calls
 
@@ -447,6 +468,7 @@ class Bot:
             t.start()
             self._threads.append(t)
         log(f"listening as @{self.username}")
+        threading.Thread(target=self.set_menu, daemon=True).start()
 
     def stop(self):
         self._stop.set()

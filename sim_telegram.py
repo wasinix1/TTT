@@ -46,7 +46,8 @@ class FakeTelegram:
             raise e
         if method == "getMe":
             return {"id": 1, "is_bot": True, "username": self.username}
-        if method in ("deleteWebhook", "setMyCommands", "answerCallbackQuery"):
+        if method in ("deleteWebhook", "setMyCommands", "answerCallbackQuery",
+                      "setChatMenuButton"):
             return True
         if method == "getUpdates":
             off = params.get("offset", 0)
@@ -669,6 +670,136 @@ def test_network_trouble_loses_nothing():
     shutil.rmtree(d)
 
 
+# ------------------------------------------------------------- the mini app
+
+def test_the_mini_app_knows_who_is_asking():
+    print("\n[the Mini App trusts only what Telegram signed]")
+    from tt import me
+    user = {"id": 42, "first_name": "Jana"}
+    good = me.sign(user, "123:abc")
+    check(me.verify(good, "123:abc")["id"] == 42, "a signed request is somebody")
+    check(me.verify(good, "999:zzz") is None, "signed for another bot, it is nobody")
+    check(me.verify(good.replace("Jana", "Tom"), "123:abc") is None,
+          "changing a single letter breaks it")
+    old = me.sign(user, "123:abc", auth_date=time.time() - 2 * 86400)
+    check(me.verify(old, "123:abc") is None, "and it does not last for ever")
+    check(me.verify("", "123:abc") is None and me.verify("hash=x", "123:abc") is None,
+          "nothing, or junk, is nobody")
+
+
+def http(app):
+    import http.client, threading
+    from http.server import ThreadingHTTPServer
+    from tt.server import Handler
+    Handler.app = app
+    srv = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    port = srv.server_address[1]
+
+    def req(method, path, init="", body=None):
+        c = http.client.HTTPConnection("127.0.0.1", port)
+        h = {"X-Tg-Init": init, "Content-Type": "application/json"}
+        c.request(method, path, json.dumps(body) if body is not None else None, h)
+        r = c.getresponse()
+        out = r.status, json.loads(r.read() or b"{}")
+        c.close()
+        return out
+    return srv, req
+
+
+def test_the_mini_app_door():
+    print("\n[the Mini App over HTTP]")
+    from tt import me
+    app, fake, d = fresh()
+    cup = event(app)
+    srv, req = http(app)
+    jana = fake.user("Jana", "Berger")
+    init = me.sign(jana, "123:abc")
+    check(req("GET", "/api/me")[0] == 401, "without Telegram's signature there is nothing to see")
+    check(req("GET", "/api/me", me.sign(jana, "1:wrong"))[0] == 401,
+          "nor with a forged one")
+    st, v = req("GET", "/api/me", init)
+    check(st == 200 and v["open"][0]["id"] == cup, "signed, it shows what is open")
+    check(app.telegram.wire.chat(jana["id"]) is not None,
+          "opening the app before the chat still makes them somebody the bot can reach")
+    st, out = req("POST", "/api/me", init, {"op": "enter", "data": {
+        "cup_id": cup, "kind": "s", "name": "Jana Berger"}})
+    check(st == 200 and out["view"]["entries"][0]["cup"] == "Einzel",
+          "entering is one request, and the view comes back with it")
+    check(app.store.pending_regs()[0].tg_id == jana["id"], "carrying the account, like the bot")
+    st, out = req("POST", "/api/me", init, {"op": "rest", "data": {"eid": "E1", "on": True}})
+    check(st == 400, "nobody can act for an entrant that is not theirs")
+    app.act("admin", "tg_disconnect", {})
+    check(req("GET", "/api/me", init)[0] == 404, "with the bot switched off, the app is gone")
+    srv.shutdown()
+    shutil.rmtree(d)
+
+
+def test_the_mini_app_on_the_night():
+    print("\n[the Mini App on the night: status, score, confirm]")
+    from tt import me
+    app, fake, d = fresh()
+    s = app.store
+    cup = event(app, tables=1, phase="doors")
+    app.act("admin", "event_meta", {"player_scores": True})
+    ana, bea, cai = linked_players(app, fake, cup, ["Ana", "Bea", "Cai"])
+    start_draw(app, cup)
+    app.telegram.pump()
+    m = s.matches[s.tables[1].match_id]
+    on = [u for u in (ana, bea, cai) if u["eid"] in (m.entrant_a, m.entrant_b)]
+    off = next(u for u in (ana, bea, cai) if u not in on)
+    x = me.view(app.telegram, on[0]["id"])["tonight"][0]
+    check(x["state"] == "playing" and x["table"] == "Tisch 1" and x["need"] == 2,
+          "a player on a table sees which, and what it takes to win")
+    w = me.view(app.telegram, off["id"])
+    check(w["tonight"][0]["state"] in ("waiting", "drawn") and w["tables"][0]["a"],
+          "the one waiting sees their place and who is on the table")
+
+    out = me.act(app.telegram, on[0], "score", {"games": [[11, 4], [11, 6]]})
+    check("bestätigt" in out["toast"], "a score from the app asks the other side")
+    ask = me.view(app.telegram, on[1]["id"])["confirm"]
+    check(len(ask) == 1 and ask[0]["games"] == [[4, 11], [6, 11]],
+          "who sees it in their app, the right way round")
+    check(fake.seen(on[1], "Stimmt das?"), "and in their chat, in case the app is closed")
+    out = me.act(app.telegram, on[1], "confirm", {"id": ask[0]["id"], "yes": True})
+    check(m.status == "done", "confirming in the app writes it")
+    check(fake.seen(on[1], "Bestätigt und eingetragen") and not fake.seen(on[1], "Stimmt das?"),
+          "and the question in the chat turns into the answer")
+    check(me.view(app.telegram, on[0]["id"])["matches"][0]["won"],
+          "the result is in the reporter's evening")
+
+    try:
+        me.act(app.telegram, off, "score", {"games": [[11, 0], [11, 0]]})
+        ok = False
+    except ValueError:
+        ok = True
+    check(ok or app.entrant_status(s.entrants[off["eid"]]) == "playing",
+          "somebody not on a table cannot report a score")
+    shutil.rmtree(d)
+
+
+def test_the_menu_button_opens_the_app():
+    print("\n[the Mini App is one tap from the chat]")
+    app, fake, d = fresh()
+    menus = fake.sent("setChatMenuButton")
+    check(menus and menus[-1]["menu_button"]["web_app"]["url"] == "https://tt.example/tg",
+          "connecting puts the app beside every player's message box")
+    event(app)
+    u = fake.user("Ida")
+    fake.say(u, "/start")
+    app.telegram.pump()
+    box = fake.chats[u["id"]]
+    kb = box[max(box)]["kb"]
+    check(any(b.get("web_app", {}).get("url") == "https://tt.example/tg" for row in kb for b in row),
+          "and the card opens it too")
+    shutil.rmtree(d)
+    app2, fake2, d2 = fresh(connect=False)
+    app2.act("admin", "tg_connect", {"token": "1:a", "url": "http://192.168.1.5:8000/"})
+    check(fake2.sent("setChatMenuButton")[-1]["menu_button"] == {"type": "commands"},
+          "on a hall LAN with no public address, the button stays Telegram's own")
+    shutil.rmtree(d2)
+
+
 def run():
     test_off_changes_nothing()
     test_connecting()
@@ -687,6 +818,10 @@ def run():
     test_talking_to_the_room()
     test_the_reminder()
     test_network_trouble_loses_nothing()
+    test_the_mini_app_knows_who_is_asking()
+    test_the_mini_app_door()
+    test_the_mini_app_on_the_night()
+    test_the_menu_button_opens_the_app()
 
 
 if __name__ == "__main__":

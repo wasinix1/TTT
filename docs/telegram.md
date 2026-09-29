@@ -108,6 +108,35 @@ Everything a player can do is on it, one level deep at most: *Pause*, and
 behind a pause *Ich gehe heim*; *abmelden* behind a confirmation; news and
 unlinking behind ⚙️.
 
+## The Mini App
+
+The same person the bot knows, as a page inside Telegram: `/tg`, opened from
+the *Mein Abend* button beside the message box (set for every player with
+`setChatMenuButton`) or from the card. It shows the one thing that matters
+most right now, big — *Tisch 2* on red when it is your turn, *Mach dich
+bereit* on black when you are next, your place in the running order, or the
+event and its entry buttons before the night — and under it your evening,
+your table in the standings, who is on which table, a line to the organisers
+and your settings. It follows Telegram's light or dark theme and updates
+live off the same stream the console uses.
+
+It is a view of the bot, not a second console. Every action goes through the
+Conversation's own checks and the same ops (`tt/me.py`), so the chat and the
+page cannot disagree. Entering a score has a proper pad here — a row per
+game, the verdict as you type — and the other side can confirm in the app or
+in the chat; whichever they use, the question turns into its answer in both.
+
+**Who is asking.** Telegram hands the page `initData`, signed with the bot's
+token. The server checks that signature on every request (HMAC-SHA256 keyed
+with HMAC("WebAppData", token), every field but `hash`, sorted) and refuses
+anything older than a day. No cookie, no login, and opened outside Telegram
+the page shows nothing but a link to the bot. The sandbox has no bot, so it
+has no Mini App either.
+
+It needs a public `https://` address — Telegram only opens Mini Apps from
+one. On a hall LAN without one, the menu button stays Telegram's own command
+list and everything else works as before.
+
 ## Coms
 
 **Newsletter.** Everyone who has started the bot and not turned it off. The
@@ -156,6 +185,8 @@ change and no inbound port. The token is kept in `telegram.json` beside
   notices out.
 - `tt/bot.py` — the conversation: cards, buttons, copy, and the checks that a
   player only ever acts for themselves.
+- `tt/me.py` + `tt/static/me.html`, `me.js` — the Mini App: the signed door,
+  one player's view, and their actions through the Conversation.
 
 Order, each step shipping something usable:
 

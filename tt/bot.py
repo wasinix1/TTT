@@ -24,10 +24,6 @@ def button(text, data):
     return {"text": text, "callback_data": data[:64]}
 
 
-def url_button(text, url):
-    return {"text": text, "url": url}
-
-
 # ------------------------------------------------------------------- words
 
 _FIXED = {
@@ -410,10 +406,9 @@ class Conversation:
                 lines.append("")
                 lines += self._card_done(me)
             foot = []
-            url = self.bot.public_url()
-            if url:
-                foot.append(url_button("📺 Live" if phase in ("doors", "live")
-                                       else "🌐 Zur Seite", url))
+            app_url = self.bot.app_url()
+            if app_url:
+                foot.append({"text": "📱 Mein Abend", "web_app": {"url": app_url}})
             foot.append(button("⚙️", "s"))
             kb.append(foot)
             return "\n".join(lines), kb
@@ -469,6 +464,35 @@ class Conversation:
         b = board.cup_board(s, s.cup_key(f), self.app)
         return next((r for r in b["up"] if eid in (r.get("entrants") or [])), None)
 
+    def state_of(self, e):
+        """Where one entrant is tonight, as data: the card says it in a line,
+        the Mini App as its headline. One place, so they cannot disagree."""
+        s = self.store
+        st = self.app.entrant_status(e)
+        out = {"state": st, "table": "", "match": None, "opponent": "", "partners": [],
+               "label": "", "best_of": "", "eta_min": None, "position": None,
+               "on_deck": False, "tables": ""}
+        if st == "playing":
+            for t in s.tables.values():
+                m = s.matches.get(t.match_id) if t.match_id else None
+                if m and e.id in (m.entrant_a, m.entrant_b, *(m.meta.get("queued") or [])):
+                    pid = next((p for p in e.player_ids if p in m.players()), e.player_ids[0])
+                    mates, opp = _opponents(self.app, m, pid)
+                    out.update(table=table_de(t), match=m.id, opponent=opp, partners=mates,
+                               label=label_de(m.label), best_of=best_of(m),
+                               bo=m.scoring.best_of, need=m.scoring.games_to_win())
+                    break
+        elif st in ("waiting", "drawn"):
+            r = self._row_for(e.id)
+            if r:
+                out.update(on_deck=bool(r.get("on_deck")), eta_min=r.get("eta_min"),
+                           position=r.get("position"), label=label_de(r.get("label", "")))
+                if r["kind"] == "fixture":
+                    other = [x for x in r.get("entrants") or [] if x and x != e.id]
+                    out["opponent"] = s.entrant_name(other[0]) if other else ""
+        out["won"], out["lost"] = _record(s, e)
+        return out
+
     def _card_live(self, me, kb):
         s = self.store
         if not me.ents:
@@ -484,21 +508,16 @@ class Conversation:
             cup = s.cups.get(e.cup_id)
             tag = f"<b>{esc(cup.name)}</b>: " if cup and (many or len(s.cups) > 1) else ""
             pre = f"{cup.name}: " if cup and many else ""
-            st = self.app.entrant_status(e)
+            x = self.state_of(e)
+            st = x["state"]
             if st == "playing":
-                t, m = next(((t, s.matches[t.match_id]) for t in s.tables.values()
-                             if t.match_id and e.id in (s.matches[t.match_id].entrant_a,
-                                                        s.matches[t.match_id].entrant_b,
-                                                        *(s.matches[t.match_id].meta.get("queued") or []))),
-                            (None, None))
-                opp = _opponents(self.app, m, e.player_ids[0])[1] if m else ""
-                line = f"🏓 Jetzt an {esc(table_de(t)) if t else 'einem Tisch'}" + (f" gegen {esc(opp)}" if opp else "")
+                line = (f"🏓 Jetzt an {esc(x['table']) or 'einem Tisch'}"
+                        + (f" gegen {esc(x['opponent'])}" if x["opponent"] else ""))
             elif st in ("waiting", "drawn"):
-                r = self._row_for(e.id)
-                if r and r.get("on_deck"):
+                if x["on_deck"]:
                     line = "⏳ Gleich bist du dran"
-                elif r and r.get("eta_min") is not None:
-                    line = f"⏱ Etwa {r['eta_min']} Min · {r['position']}. in der Reihe"
+                elif x["eta_min"] is not None:
+                    line = f"⏱ Etwa {x['eta_min']} Min · {x['position']}. in der Reihe"
                 else:
                     line = "✓ Im Turnier — gerade kein Spiel für dich"
             elif st == "resting":
@@ -509,9 +528,8 @@ class Conversation:
                 line = "🏠 Für heute abgemeldet"
             else:
                 line = "✓ Eingetragen"
-            w, l = _record(s, e)
-            if w or l:
-                line += f"\n    Bisher {w}:{l}"
+            if x["won"] or x["lost"]:
+                line += f"\n    Bisher {x['won']}:{x['lost']}"
             lines.append(tag + line)
             if st == "resting":
                 kb.append([button(f"▶ {pre}Ich bin wieder da", f"p:{e.id}:0"),
@@ -760,15 +778,30 @@ class Conversation:
             return ""
         return self._register(uid, cup_id, kind, name, "", mid)
 
+    def register(self, uid, cup_id, kind, name, partner=""):
+        """An entry for this account, whichever screen it came from. `kind`
+        is s (single), p (with a partner) or k (looking for one). Entering
+        a cup you are already in hands back that entry instead."""
+        s = self.store
+        with s.lock:
+            me = self.who(uid)
+            have = next((r for r in me.regs if r.cup_id == cup_id), None)
+            if have:
+                cup = s.cups.get(cup_id)
+                return {"registration_id": have.id, "cup": cup.name if cup else "",
+                        "matched_with": "", "already": True}
+            name = me.person.name if me.person else " ".join((name or "").split())[:60]
+            if not name:
+                raise ValueError("Wir brauchen deinen Namen.")
+            if kind == "p" and not (partner or "").strip():
+                raise ValueError("Wie heißt deine Partnerin oder dein Partner?")
+            return self.bot.system("tg_register", {
+                "cup_id": cup_id, "tg_id": uid, "name": name,
+                "kind": {"p": "pair", "k": "seeking"}.get(kind, "single"),
+                "partner_name": partner or ""})
+
     def _register(self, uid, cup_id, kind, name, partner, mid):
-        me = self.who(uid)
-        out = self.bot.system("tg_register", {
-            "cup_id": cup_id, "tg_id": uid, "name": name,
-            "person_id": me.person.id if me.person else None,
-            "kind": {"p": "pair", "k": "seeking"}.get(kind, "single"),
-            "partner_name": partner})
-        if out is None:
-            return "Das hat nicht geklappt."
+        out = self.register(uid, cup_id, kind, name, partner)
         extra = (f"\nDu spielst mit <b>{esc(out['matched_with'])}</b>."
                  if out.get("matched_with") else "")
         notice = f"✓ Angemeldet für <b>{esc(out['cup'])}</b>.{extra}"
@@ -821,20 +854,25 @@ class Conversation:
                 return m, _side_of(m, pid), pid
         return None, None, None
 
-    def on_score(self, uid, games_mine):
-        """A score typed by somebody on a table. Returns False if it was not
-        one after all (they are not playing), so it goes to the orga."""
+    def claim(self, uid, games_mine):
+        """A score from one side of a table, the writer's points first.
+        Shared by the chat and the Mini App; returns what came of it:
+
+          not_playing   they are on no table, so it was not a score
+          invalid       it does not decide the match
+          sent          the other side has been asked
+          agreed        the other side had said the same; it is written
+          disputed      the other side had said something else
+          no_opponent   nobody on the other side is on Telegram"""
         s = self.store
         with s.lock:
             m, side, pid = self._live_for(uid)
             if not m:
-                return False
+                return {"status": "not_playing"}
             games = _mine(games_mine, side)     # back to a/b
             if not decide_winner(games, m.scoring):
-                need = m.scoring.games_to_win()
-                self.say(uid, f"Das ergibt noch keinen Sieg — bei {best_of(m)} braucht es "
-                              f"{need} Gewinnsätze. Zum Beispiel: 11:7 9:11 11:5")
-                return True
+                return {"status": "invalid", "need": m.scoring.games_to_win(),
+                        "best_of": best_of(m)}
             other = "b" if side == "a" else "a"
             from .notify import reach_map
             reach = reach_map(s, self.bot.ok_chats())
@@ -843,67 +881,127 @@ class Conversation:
             opp = self.app.side_name(m, other)
             me_name = self.app.side_name(m, side)
             t = s.tables.get(m.table)
-        for c in self.wire.claims_for(m.id, m.queued_seq):
+            match_id, qseq = m.id, m.queued_seq
+        for c in self.wire.claims_for(match_id, qseq):
             if c["side"] != side:
                 if c["games"] == games:
-                    self.wire.close_claim(c["id"], "agreed")
-                    return self._write(m.id, m.queued_seq, games) or True
-                self.wire.close_claim(c["id"], "disputed")
+                    self._settle(c, "agreed")
+                    self._write(match_id, qseq, games)
+                    return {"status": "agreed"}
+                self._settle(c, "disputed")
                 self._disputed(t, [(opp, games_line(_mine(c["games"], c["side"]))),
                                    (me_name, games_line(games_mine))])
-                for chat in (uid, c["chat_id"]):
-                    self.say(chat, "Eure Ergebnisse passen nicht zusammen — "
-                                   "bitte meldet euch beim Schiri.")
-                return True
-            self.wire.close_claim(c["id"], "replaced")
+                self.say(c["chat_id"], "Eure Ergebnisse passen nicht zusammen — "
+                                       "bitte meldet euch beim Schiri.")
+                return {"status": "disputed"}
+            self._settle(c, "replaced")
         if not theirs:
-            self.say(uid, f"{esc(opp)} ist nicht über Telegram verbunden — bitte trag das "
-                          "Ergebnis beim Schiri ein.")
-            return True
-        cid = self.wire.add_claim(m.id, m.queued_seq, side, uid, games)
+            return {"status": "no_opponent", "opponent": opp}
+        cid = self.wire.add_claim(match_id, qseq, side, uid, games)
         # shown the way round the reader played it: their points first
         view = _mine(games, other)
         mine_sets = sum(1 for x, y in view if x > y)
         their_sets = len(view) - mine_sets
+        msgs = []
         for c in theirs:
-            self.say(c, f"<b>{esc(me_name)}</b> meldet für {esc(table_de(t)) if t else 'euer Spiel'}:\n"
-                        f"{games_line(view)} — "
-                        f"{'du gewinnst' if mine_sets > their_sets else 'du verlierst'} "
-                        f"{mine_sets}:{their_sets}\n\nStimmt das?",
-                     [[button("✓ Stimmt", f"k+:{cid}"), button("✗ Stimmt nicht", f"k-:{cid}")]])
-        self.say(uid, f"Danke! {esc(opp)} muss noch bestätigen.")
-        return True
+            sent = self.say(c, f"<b>{esc(me_name)}</b> meldet für "
+                               f"{esc(table_de(t)) if t else 'euer Spiel'}:\n"
+                               f"{games_line(view)} — "
+                               f"{'du gewinnst' if mine_sets > their_sets else 'du verlierst'} "
+                               f"{mine_sets}:{their_sets}\n\nStimmt das?",
+                            [[button("✓ Stimmt", f"k+:{cid}"),
+                              button("✗ Stimmt nicht", f"k-:{cid}")]])
+            if sent:
+                msgs.append([c, sent["message_id"]])
+        self.wire.set_claim_msgs(cid, msgs)
+        self.bot.changed()
+        return {"status": "sent", "opponent": opp}
 
-    def on_claim_answer(self, uid, cid, yes, mid):
+    def answer(self, uid, cid, yes):
+        """The other side's answer to a score: gone, stale, agreed, disputed."""
         c = self.wire.claim(cid)
         if not c or c["state"] != "open":
-            self.edit(uid, mid, "Erledigt.")
-            return ""
+            return {"status": "gone"}
         s = self.store
         with s.lock:
             m, side, pid = self._live_for(uid)
-            ok = m and m.id == c["match_id"] and side != c["side"]
-            if ok and m.queued_seq != c["qseq"]:
-                ok = False
+            ok = bool(m) and m.id == c["match_id"] and side != c["side"] \
+                and m.queued_seq == c["qseq"]
             t = s.tables.get(m.table) if m else None
             names = (self.app.side_name(m, c["side"]),
-                     self.app.side_name(m, side)) if m else ("", "")
+                     self.app.side_name(m, side)) if ok else ("", "")
         if not ok:
-            self.wire.close_claim(cid, "stale")
-            self.edit(uid, mid, "Das Spiel ist schon eingetragen.")
-            return ""
+            self._settle(c, "stale")
+            return {"status": "stale"}
         if yes:
-            self.wire.close_claim(cid, "agreed")
+            self._settle(c, "agreed")
             self._write(c["match_id"], c["qseq"], c["games"])
-            self.edit(uid, mid, "✓ Bestätigt und eingetragen.")
-            return "Eingetragen ✓"
-        self.wire.close_claim(cid, "disputed")
+            return {"status": "agreed"}
+        self._settle(c, "disputed")
         self._disputed(t, [(names[0], games_line(_mine(c["games"], c["side"]))),
                            (names[1], "that is wrong")])
-        self.edit(uid, mid, "Okay — bitte meldet euch beim Schiri.")
         self.say(c["chat_id"], f"{esc(names[1])} sagt, das Ergebnis stimmt nicht. "
                                "Bitte meldet euch beim Schiri.")
-        return ""
+        return {"status": "disputed"}
+
+    SETTLED = {"agreed": "✓ Bestätigt und eingetragen.",
+               "disputed": "Uneinig — bitte meldet euch beim Schiri.",
+               "replaced": "Ersetzt durch eine neuere Meldung.",
+               "stale": "Erledigt — das Spiel ist schon eingetragen."}
+
+    def _settle(self, c, state):
+        """Close a report, and turn every question it asked into its answer,
+        wherever it was answered — chat or app."""
+        self.wire.close_claim(c["id"], state)
+        for chat, mid in c.get("msgs") or []:
+            self.edit(chat, mid, self.SETTLED[state])
+        self.bot.changed()
+
+    def pending_claims(self, uid):
+        """Reports about this account's current match: ones it is asked to
+        confirm, and its own still waiting for the other side."""
+        s = self.store
+        with s.lock:
+            m, side, pid = self._live_for(uid)
+            if not m:
+                return [], []
+            names = {x: self.app.side_name(m, x) for x in ("a", "b")}
+            match_id, qseq = m.id, m.queued_seq
+        ask, mine = [], []
+        for c in self.wire.claims_for(match_id, qseq):
+            view = _mine(c["games"], side)
+            won = sum(1 for x, y in view if x > y)
+            item = {"id": c["id"], "by": names[c["side"]], "games": view,
+                    "sets": [won, len(view) - won]}
+            (mine if c["side"] == side else ask).append(item)
+        return ask, mine
+
+    def on_score(self, uid, games_mine):
+        """A score typed into the chat. False if it was not one after all
+        (they are not playing), so it goes to the orga instead."""
+        r = self.claim(uid, games_mine)
+        st = r["status"]
+        if st == "not_playing":
+            return False
+        if st == "invalid":
+            self.say(uid, f"Das ergibt noch keinen Sieg — bei {r['best_of']} braucht es "
+                          f"{r['need']} Gewinnsätze. Zum Beispiel: 11:7 9:11 11:5")
+        elif st == "disputed":
+            self.say(uid, "Eure Ergebnisse passen nicht zusammen — bitte meldet euch beim Schiri.")
+        elif st == "no_opponent":
+            self.say(uid, f"{esc(r['opponent'])} ist nicht über Telegram verbunden — "
+                          "bitte trag das Ergebnis beim Schiri ein.")
+        elif st == "sent":
+            self.say(uid, f"Danke! {esc(r['opponent'])} muss noch bestätigen.")
+        return True
+
+    def on_claim_answer(self, uid, cid, yes, mid):
+        r = self.answer(uid, cid, yes)
+        if r["status"] == "gone":
+            self.edit(uid, mid, "Erledigt.")
+            return ""
+        return {"agreed": "Eingetragen ✓", "disputed": "Okay — ab zum Schiri"}.get(
+            r["status"], "")
 
     def _write(self, match_id, qseq, games):
         s = self.store
