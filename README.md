@@ -33,12 +33,13 @@ Any two can run at once and share the same tables. A knockout on tables 1 and
 Scheduled draws outrank open play for both tables and players, and anyone a
 draw releases drops back into the queue they came from.
 
-Roles are three URLs, no accounts:
+Roles are four URLs, no accounts:
 
 | URL | Can |
 |---|---|
 | `/` | watch |
 | `/r/<key>` | enter results, manage the queue |
+| `/d/<key>` | the door: check-in, walk-ins and the roster — no scores, draws or setup |
 | `/a/<key>` | everything |
 | `/board` | the wall display |
 

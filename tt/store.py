@@ -50,7 +50,14 @@ class Store:
             " seq INTEGER PRIMARY KEY AUTOINCREMENT,"
             " ts REAL NOT NULL, type TEXT NOT NULL, payload TEXT NOT NULL)"
         )
+        # Who wrote each event: admin, door, referee, public, or system for
+        # what the dispatcher does on its own. Logs from before this column
+        # existed read as "" — unknown, not guessed.
+        cols = [r[1] for r in self.conn.execute("PRAGMA table_info(events)")]
+        if "actor" not in cols:
+            self.conn.execute("ALTER TABLE events ADD COLUMN actor TEXT NOT NULL DEFAULT ''")
         self.conn.commit()
+        self.actor = "system"    # set by App.act for the length of one op
         self._replaying = False
         self._depth = 0          # nested appends commit with the outermost
         self.reset_state()
@@ -104,8 +111,8 @@ class Store:
         with self.lock:
             ts = self.clock()
             cur = self.conn.execute(
-                "INSERT INTO events (ts, type, payload) VALUES (?,?,?)",
-                (ts, etype, json.dumps(payload)),
+                "INSERT INTO events (ts, type, payload, actor) VALUES (?,?,?,?)",
+                (ts, etype, json.dumps(payload), self.actor),
             )
             seq = cur.lastrowid
             self._depth += 1
@@ -156,12 +163,12 @@ class Store:
 
     def history(self, limit=60):
         rows = self.conn.execute(
-            "SELECT seq, ts, type, payload FROM events ORDER BY seq DESC LIMIT ?",
+            "SELECT seq, ts, type, payload, actor FROM events ORDER BY seq DESC LIMIT ?",
             (limit,),
         ).fetchall()
         return [
-            {"seq": s, "ts": t, "type": ty, "payload": json.loads(p)}
-            for s, t, ty, p in rows
+            {"seq": s, "ts": t, "type": ty, "payload": json.loads(p), "by": a}
+            for s, t, ty, p, a in rows
         ]
 
     # ---------------------------------------------------------------- apply

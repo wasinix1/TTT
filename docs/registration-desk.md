@@ -60,9 +60,15 @@ roles get an explicit set of allowed ops alongside the ladder:
 | clear or keep duplicates, put back a resolved entry | forget someone from the directory |
 | add from the directory | rewind the log, sim |
 
-Every logged event gets a `by` field (`admin`, `door`, `referee`, `public`,
-`system`), so the desk's activity list and More → Log can say who did it.
-Old events without it read as admin.
+Every logged event records who wrote it (`admin`, `door`, `referee`,
+`public`, or `system` for what the dispatcher does on its own), so the desk's
+activity list and More → Log can say who did it. Events from before this
+existed carry no author and are shown without one, rather than guessed.
+
+Until the desk exists (step 2), the door link opens the console with a single
+Door tab: today's check-in list, minus the admin-only Merge into… and Remove
+all. The server refuses everything else to that key regardless of what the
+page shows.
 
 ## The desk page
 

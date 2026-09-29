@@ -22,7 +22,7 @@ from . import dispatch, board, simulate
 HERE = os.path.dirname(os.path.abspath(__file__))
 STATIC = os.path.join(HERE, "static")
 
-ROLES = {"public": 0, "referee": 1, "admin": 2}
+ROLES = {"public": 0, "referee": 1, "door": 0, "admin": 2}
 
 
 class App:
@@ -44,11 +44,15 @@ class App:
 
     def _load_keys(self):
         path = os.path.join(self.data_dir, "keys.json")
-        if os.path.exists(path):
-            return json.load(open(path))
-        # these live on the public internet now, not just the hall LAN
-        keys = {"admin": secrets.token_urlsafe(12), "referee": secrets.token_urlsafe(9)}
-        json.dump(keys, open(path, "w"), indent=2)
+        keys = json.load(open(path)) if os.path.exists(path) else {}
+        # these live on the public internet now, not just the hall LAN.
+        # A key a newer version added (door) is minted on first start and
+        # the ones already handed out are left alone.
+        want = {"admin": 12, "referee": 9, "door": 9}
+        if not all(keys.get(k) for k in want):
+            for k, n in want.items():
+                keys[k] = keys.get(k) or secrets.token_urlsafe(n)
+            json.dump(keys, open(path, "w"), indent=2)
         return keys
 
     # A phone filling in a form does this once or twice. Anything hammering
@@ -74,6 +78,8 @@ class App:
             return "admin"
         if token and secrets.compare_digest(token, self.keys["referee"]):
             return "referee"
+        if token and secrets.compare_digest(token, self.keys["door"]):
+            return "door"
         return "public"
 
     # ------------------------------------------------------------ read side
@@ -279,10 +285,10 @@ class App:
                 "people": [{**s.people[i].to_dict(),
                             "playing": bool(s.person_playing(i))}
                            for i in s.people_order if i in s.people]
-                          if role == "admin" else [],
+                          if role in ("admin", "door") else [],
                 "registrations": [r.to_dict() for r in (
                     s.registrations[i] for i in s.registration_order
-                    if i in s.registrations)] if role == "admin" else [],
+                    if i in s.registrations)] if role in ("admin", "door") else [],
                 "history": s.history(40) if role == "admin" else [],
                 "keys": self.keys if role == "admin" else {},
                 "sim": self.sim_state() if role == "admin" else None,
@@ -292,16 +298,22 @@ class App:
 
     def act(self, role, op, p):
         s = self.store
-        lvl = ROLES[role]
         need = OP_LEVEL.get(op)
         if need is None:
             raise KeyError(f"unknown action {op!r}")
-        if lvl < need:
+        if not (ROLES[role] >= need or (role == "door" and op in DOOR_OPS)):
             raise PermissionError(f"{role} cannot {op}")
         with s.lock:
             fn = getattr(self, "op_" + op)
-            out = fn(p)
-            dispatch.tick(s)
+            # Everything the op writes is theirs; what the dispatcher does
+            # afterwards on its own account is the system's.
+            s.actor = role
+            try:
+                out = fn(p)
+                s.actor = "system"
+                dispatch.tick(s)
+            finally:
+                s.actor = "system"
             return out or {}
 
     # players & entrants
@@ -1121,6 +1133,17 @@ OP_LEVEL = {
     "admit": 2, "add_registration": 2, "remove_entrant": 2, "remove_entrants": 2, "update_person": 2, "remove_person": 2, "add_from_directory": 2,
 }
 
+# The door key is not a rung on the ladder above: it runs who is in the
+# event — check-in, walk-ins, the roster, the directory — and nothing about
+# how it is played. So it gets a list rather than a level. Scoring, draws,
+# cups, tables, the log, merging cups and forgetting people stay with admin.
+DOOR_OPS = frozenset({
+    "admit", "add_registration", "update_registration",
+    "update_player", "update_entrant",
+    "set_resting", "withdraw", "remove_entrant",
+    "add_from_directory",
+})
+
 
 class Handler(BaseHTTPRequestHandler):
     app: App = None
@@ -1217,7 +1240,7 @@ class Handler(BaseHTTPRequestHandler):
         #
         # The bare root is phase-driven: the site before the doors open, the
         # console once they have.
-        if path.startswith(("/a/", "/r/")) or self.app.store.shows_console():
+        if path.startswith(("/a/", "/r/", "/d/")) or self.app.store.shows_console():
             return self._static("index.html")
         return self._site_page()
 
@@ -1409,6 +1432,7 @@ def serve(data_dir="data", host="0.0.0.0", port=8000):
     print(f"\n  Table tennis console\n")
     print(f"  Everyone   http://{ip}:{port}/")
     print(f"  Referees   http://{ip}:{port}/r/{app.keys['referee']}")
+    print(f"  Door       http://{ip}:{port}/d/{app.keys['door']}")
     print(f"  Admin      http://{ip}:{port}/a/{app.keys['admin']}\n")
     print(f"  Data in {os.path.abspath(data_dir)}  (delete event.db to reset)\n")
     srv.serve_forever()

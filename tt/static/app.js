@@ -2,7 +2,7 @@
    Polls /api/state, re-renders, keeps score drafts alive across renders. */
 
 const TOKEN = (() => {
-  const m = location.pathname.match(/^\/[ar]\/([^/]+)/);
+  const m = location.pathname.match(/^\/[ard]\/([^/]+)/);
   return m ? m[1] : '';
 })();
 
@@ -55,6 +55,10 @@ const $ = id => document.getElementById(id);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c =>
   ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const isAdmin = () => S && S.role === 'admin';
+/* The door key runs who is in the event and nothing about how it is played:
+   until the registration desk exists it gets the Door tab and only that. */
+const isDoor = () => S && S.role === 'door';
+const canDoor = () => isAdmin() || isDoor();
 const canScore = () => S && (S.role === 'admin' || S.role === 'referee');
 
 /* ------------------------------------------------------------------ net */
@@ -143,13 +147,14 @@ function render() {
   const sel = focus && focus.selectionStart != null ? focus.selectionStart : null;
 
   $('ev-name').textContent = S.event.name || 'Table tennis';
-  const base = S.role === 'admin' ? 'Admin' : S.role === 'referee' ? 'Referee' : 'Live';
+  const base = { admin: 'Admin', referee: 'Referee', door: 'Door' }[S.role] || 'Live';
   $('role-tag').textContent =
     (S.phase && S.phase !== 'live' && S.role !== 'public')
       ? base + ' · ' + S.phase : base;
   const waiting = (S.registrations || []).filter(r => r.status === 'pending').length;
-  $('setup-btn').hidden = !isAdmin();
-  $('setup-btn').textContent = waiting ? `Setup · ${waiting}` : 'Setup';
+  const label = isDoor() ? 'Door' : 'Setup';
+  $('setup-btn').hidden = !canDoor();
+  $('setup-btn').textContent = waiting ? `${label} · ${waiting}` : label;
 
   renderCupTabs();
   renderTables();
@@ -654,7 +659,8 @@ const TABS = [['door', 'Door'], ['event', 'Event'],
 /* Before the doors the job is setting the thing up; after them it is
    letting people in. Open on whichever that is. */
 const defaultTab = () =>
-  (S && (S.phase === 'announced' || S.phase === 'registration')) ? 'event' : 'door';
+  !isDoor() && S && (S.phase === 'announced' || S.phase === 'registration') ? 'event' : 'door';
+const sheetTabs = () => isDoor() ? TABS.filter(([k]) => k === 'door') : TABS;
 
 let sheetTabSet = false;
 
@@ -664,7 +670,8 @@ function renderSheet() {
   // never rebuild the sheet out from under a half-typed field
   if (dirtyFocus()) return;
   const waiting = (S.registrations || []).filter(r => r.status === 'pending').length;
-  $('tabs').innerHTML = TABS.map(([k, l]) =>
+  if (isDoor()) sheetTab = 'door';
+  $('tabs').innerHTML = sheetTabs().map(([k, l]) =>
     `<button class="${sheetTab === k ? 'on' : ''}" data-tab="${k}">${l}${
       k === 'door' && waiting ? ` <span class="count">${waiting}</span>` : ''}</button>`).join('');
   // a result coming in on another table re-renders everything, and without
@@ -1614,7 +1621,7 @@ function cupPeople(c, pending, allEnts, q) {
   ].filter(Boolean).join(' · ');
   // a matched team is one row and one confirm, so it counts once
   const teams = rows.filter(r => { const m = mateOf(r); return !(m && rows.includes(m) && m.id < r.id); });
-  const into = mergeTargets(c);
+  const into = isAdmin() ? mergeTargets(c) : [];
   const merging = !!form['mg_' + c.id];
   const mergeBtn = !into.length ? '' : into.length === 1
     ? `<button class="ghost tiny" data-act="merge-cup" data-c="${c.id}" data-i="${into[0].id}">Merge into ${esc(into[0].name)}</button>`
@@ -1628,7 +1635,7 @@ function cupPeople(c, pending, allEnts, q) {
       ${teams.length ? `<div class="rows">${teams.map(regRow).join('')}</div>`
         : `<p class="blank">${allRows.length ? 'None match.' : 'Nobody pre-registered for this cup.'}</p>`}
       <div class="subsec"><h3>In the pool${allEnts.length
-        ? ` <span class="count">${allEnts.length}</span>` : ''}</h3>${allEnts.length > 1
+        ? ` <span class="count">${allEnts.length}</span>` : ''}</h3>${allEnts.length > 1 && isAdmin()
         ? `<button class="ghost tiny" data-act="rm-all" data-c="${c.id}">Remove all ${allEnts.length}</button>` : ''}</div>`}
     ${ents.length ? `<div class="rows">${ents.map(e => personRow(e)).join('')}</div>`
       : `<p class="blank">${allEnts.length ? 'None match.' : 'Nobody in this cup yet.'}</p>`}`;
@@ -1797,13 +1804,17 @@ function tabLinks() {
         <span class="key">${base}/</span></div>
       <div class="drow" style="--cols:170px 1fr"><span>Referees — can score</span>
         <span class="key">${base}/r/${esc(S.keys.referee || '')}</span></div>
+      <div class="drow" style="--cols:170px 1fr"><span>Door — check-in only</span>
+        <span class="key">${base}/d/${esc(S.keys.door || '')}</span></div>
       <div class="drow" style="--cols:170px 1fr"><span>Admin — this page</span>
         <span class="key">${base}/a/${esc(S.keys.admin || '')}</span></div>
       <div class="drow" style="--cols:170px 1fr"><span>Wall display</span>
         <span class="key">${base}/board</span></div>
     </div>
     ${why('No accounts, no logins. Keep the referee link to the people running tables — ' +
-          'anyone who has it can enter results.',
+          'anyone who has it can enter results. The door link is for whoever lets people in: ' +
+          'check-in, walk-ins and the roster, but no scores, draws or setup, and the log ' +
+          'shows what was done with it.',
           'The wall display needs no key and has no controls, so it is safe on a screen ' +
           'anyone can reach. It answers “when am I playing” by itself: who is on ' +
           'which table now, then the running order with a rough time against each one.')}
@@ -1854,7 +1865,7 @@ function tabMore() {
       ${S.history.map(h => `<div class="drow" style="--cols:44px 1fr auto">
         <span class="num">${h.seq}</span>
         <span style="font-size:13px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"
-          >${esc(h.type)} <span style="color:var(--muted)">${esc(JSON.stringify(h.payload).slice(0, 70))}</span></span>
+          >${h.by && h.by !== 'system' ? `<b>${esc(h.by)}</b> · ` : ''}${esc(h.type)} <span style="color:var(--muted)">${esc(JSON.stringify(h.payload).slice(0, 70))}</span></span>
         <span class="acts"><button class="ghost tiny" data-act="rewind" data-s="${h.seq}">Rewind here</button></span>
       </div>`).join('')}
     </div>

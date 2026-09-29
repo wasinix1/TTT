@@ -433,6 +433,57 @@ def test_permissions():
     shutil.rmtree(d)
 
 
+def test_the_door_key():
+    print("\n[door key]")
+    app, d = fresh()
+    s = app.store
+    cup = door_event(app)
+    check(app.role_for(app.keys["door"]) == "door", "the door link is its own role")
+
+    def refused(op, data):
+        try:
+            app.act("door", op, data)
+        except PermissionError:
+            return True
+        return False
+
+    rid = app.act("public", "register", {"cup_id": cup, "name": "Jana Berger"})["registration_id"]
+    eid = app.act("door", "admit", {"registration_id": rid})["entrant_id"]
+    check(s.entrants[eid].name == "Jana Berger", "the door can check somebody in")
+    app.act("door", "admit", {"cup_id": cup, "name": "Ilya Marek"})
+    app.act("door", "set_resting", {"entrant_id": eid, "resting": True})
+    check(eid in s.opted_out, "and sit them out")
+    check(all(refused(op, data) for op, data in [
+        ("report", {"match_id": "M1", "games": [[11, 5]]}),
+        ("start_format", {"id": s.cups[cup].format_id}),
+        ("merge_cups", {"from": cup, "into": cup}),
+        ("remove_entrants", {"cup_id": cup}),
+        ("remove_person", {"id": "P1"}),
+        ("rewind", {"seq": 1}),
+        ("set_phase", {"phase": "live"}),
+    ]), "but not score, draw, merge, empty a cup, forget people, rewind or change the phase")
+
+    by = {h["type"]: h["by"] for h in reversed(s.history(200))}
+    check(by["registration_add"] == "public", "the log says the public wrote the entry")
+    check(by["entrant_add"] == "door", "and that the door checked them in")
+    check(by["rest_set"] == "door", "and sat them out")
+    check(by["event_new"] == "admin", "and that the admin set the event up")
+    check(s.actor == "system", "and nothing is left attributed afterwards")
+
+    st = app.state("door")
+    check(st["registrations"] and st["people"] and not st["keys"] and not st["history"],
+          "the door sees entries and the directory, never the keys or the log")
+
+    # a keys.json from before the door key existed gains one and keeps the rest
+    json.dump({"admin": "A" * 16, "referee": "R" * 12}, open(os.path.join(d, "keys.json"), "w"))
+    again = App(d)
+    check(again.keys["admin"] == "A" * 16 and again.keys["referee"] == "R" * 12,
+          "an older install keeps its admin and referee links")
+    check(again.keys.get("door") and json.load(open(os.path.join(d, "keys.json")))["door"]
+          == again.keys["door"], "and gets a door link, written down")
+    shutil.rmtree(d)
+
+
 def solo_field(app, n, base=5.0, step=0.0):
     return [add_player(app, f"P{i}", base + i * step) for i in range(n)]
 
@@ -1320,6 +1371,8 @@ def test_routing():
           "the admin link is the console whatever the phase")
     check("app.js" in get("/r/" + app.keys["referee"])[1],
           "so is the referee link")
+    check("app.js" in get("/d/" + app.keys["door"])[1],
+          "and the door link")
     check("site.js" in get("/join")[1], "/join is the site")
     check(get("/api/public")[0] == 200, "/api/public answers")
     app.act("admin", "set_phase", {"phase": "live"})
@@ -2285,6 +2338,7 @@ if __name__ == "__main__":
     test_registration_throttle()
     test_the_door()
     test_the_door_pairs()
+    test_the_door_key()
     test_the_door_after_the_draw_starts()
     test_directory()
     test_routing()
