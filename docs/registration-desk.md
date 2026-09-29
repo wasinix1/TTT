@@ -209,7 +209,13 @@ Each step ships on its own and keeps the old Door tab working.
    `update_registration` now refuses to set `confirmed` or to reopen a
    checked-in entry; undoing a check-in is removing the entrant.
 5. **Public additions.** The team-form line, the duplicate question,
-   `distinct`.
+   `distinct`. *Done.* `register` answers `{possible_duplicate, cup}` and
+   writes nothing when a waiting or checked-in team entry in that cup has
+   the same two names in either order; "Nein, wir sind ein anderes Team"
+   resends with `distinct`. Only teams are asked: a single name is left to
+   the desk's stacks, because asking would tell anyone whether a given
+   person has signed up. The done card also says the partner need not
+   register too.
 6. **Personal link.** Token, `/me/<token>`, the public reg ops,
    remembering it on the phone.
 7. **Console Door tab shrinks** to counts and a link, after the desk has run

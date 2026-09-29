@@ -159,6 +159,15 @@ body{padding-bottom:0}
 .done-card h2{font-size:clamp(26px,3vw,36px);font-weight:800;letter-spacing:-.02em;
               line-height:1;margin:0 0 12px;text-transform:none;color:var(--chalk)}
 .done-card p{color:var(--muted);margin:0 0 6px;font-size:17px;line-height:1.5}
+/* one line under the team fields, and the question when a team is sent twice */
+.onefor{color:var(--muted);font-size:14px;margin:10px 0 0}
+.twice{background:var(--surface);border-radius:10px;padding:18px 20px;margin-top:22px}
+.twice p{margin:0 0 6px;font-size:16px;line-height:1.5}
+.twice p:first-child{color:var(--chalk)}
+.twice .row{display:flex;gap:2px;flex-wrap:wrap;margin-top:14px}
+#join .twice .cta{margin-top:0;flex:1 1 200px}
+#join .twice .cta.ghost{background:var(--raised)}
+#join .twice .cta.ghost:hover{background:var(--edge)}
 .back{display:inline-block;margin-top:26px;color:var(--muted);font-size:15px}
 .back:hover{color:var(--signal)}
 

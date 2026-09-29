@@ -965,6 +965,15 @@ class App:
         if len(s.regs_for_cup(cup.id, status=None)) >= self.MAX_PER_CUP:
             raise ValueError("that cup is full")
 
+        # One partner often registers the team and the other does it again,
+        # to be safe. Ask before writing anything: the form puts the question
+        # to them, and only "we are a different team" comes back, as
+        # distinct. It answers yes or no to exactly these two names in this
+        # cup and says nothing else — no one else's entry, no counts.
+        distinct = kind == "pair" and bool(p.get("distinct"))
+        if kind == "pair" and not distinct and self._team_entered(cup.id, name, partner):
+            return {"possible_duplicate": True, "cup": cup.name}
+
         clamp = lambda v: max(1.0, min(10.0, float(v)))
         try:
             strength = clamp(p.get("strength", 5))
@@ -980,12 +989,22 @@ class App:
             "partner_strength": partner_strength if kind == "pair" else 5.0,
             "team_name": text(p.get("team_name"), 60) if kind == "pair" else "",
             "note": text(p.get("note"), 500),
+            "distinct": distinct,
             "ts": time.time(),
         })
         self._match_seekers(cup.id)
         mate = s.registrations.get(s.registrations[rid].matched_with or "")
         return {"registration_id": rid, "cup": cup.name,
                 "matched_with": mate.name if mate else ""}
+
+    def _team_entered(self, cup_id, name, partner):
+        """Whether these two people, in either order, already have an entry in
+        this cup that is waiting or checked in."""
+        s = self.store
+        want = sorted((s.name_key(name), s.name_key(partner)))
+        return any(r.kind == "pair" and r.status in ("pending", "confirmed")
+                   and sorted((s.name_key(r.name), s.name_key(r.partner_name))) == want
+                   for r in s.regs_for_cup(cup_id, status=None))
 
     def _match_seekers(self, cup_id):
         """Pair up people who registered alone for a doubles cup.

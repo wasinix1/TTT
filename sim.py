@@ -611,7 +611,11 @@ def test_duplicates_are_grouped_never_lost():
     cup = door_event(app, entry="pair", kind="open_play")
     reg = lambda **k: app.act("public", "register", {"cup_id": cup, "kind": "pair", **k})["registration_id"]
     a = reg(name="Lea Hoffmann", partner_name="Ben Krüger")
-    b = reg(name="Ben Krüger", partner_name="Lea Hoffmann", note="sicherheitshalber")
+    # the form asks before a second entry for the same team now (see the next
+    # test); this is one from before it did, which the desk still has to handle
+    b = "R99"
+    s.append("registration_add", {"id": b, "cup_id": cup, "kind": "pair", "name": "Ben Krüger",
+                                  "partner_name": "Lea Hoffmann", "note": "sicherheitshalber"})
 
     app.act("door", "admit", {"registration_id": b})
     check(s.registrations[a].status == "pending",
@@ -650,6 +654,36 @@ def test_duplicates_are_grouped_never_lost():
     check(s.registrations[k].matched_with == o, "two people looking are matched")
     app.act("door", "update_registration", {"id": o, "status": "duplicate"})
     check(s.registrations[k].matched_with is None, "clearing one of them sets the other looking again")
+    shutil.rmtree(d)
+
+
+def test_the_form_asks_before_a_team_registers_twice():
+    print("\n[public form: a team sent twice]")
+    app, d = fresh()
+    s = app.store
+    cup = door_event(app, entry="pair", kind="open_play")
+    send = lambda **k: app.act("public", "register", {"cup_id": cup, "kind": "pair", **k})
+    first = send(name="Lea Hoffmann", partner_name="Ben Krüger")
+    check("registration_id" in first, "the first entry goes in")
+    out = send(name="ben  krüger", partner_name="Lea Hoffmann")
+    check(out == {"possible_duplicate": True, "cup": "Cup"} and len(s.registrations) == 1,
+          "the same two names, either order, any case: asked, and nothing written")
+    check(set(out) == {"possible_duplicate", "cup"},
+          "and the answer names nobody and counts nothing")
+    out = send(name="Ben Krüger", partner_name="Lea Hoffmann", distinct=True)
+    r = s.registrations[out["registration_id"]]
+    check(r.distinct and len(s.registrations) == 2,
+          "\"we are a different team\" goes in, marked to be kept apart at the door")
+    check("registration_id" in send(name="Lea Hoffmann", partner_name="Max Weber"),
+          "one of the two with somebody else is not asked about")
+    k = app.act("public", "register", {"cup_id": cup, "kind": "seeking", "name": "Lea Hoffmann"})
+    check("registration_id" in k, "and neither is somebody looking for a partner")
+    app.act("door", "update_registration", {"id": first["registration_id"], "status": "dropped"})
+    check(send(name="Lea Hoffmann", partner_name="Ben Krüger").get("possible_duplicate"),
+          "the one kept apart still counts once the first is off the list")
+    app.act("door", "update_registration", {"id": r.id, "status": "duplicate"})
+    check("registration_id" in send(name="Lea Hoffmann", partner_name="Ben Krüger"),
+          "entries taken off the list do not")
     shutil.rmtree(d)
 
 
@@ -2511,6 +2545,7 @@ if __name__ == "__main__":
     test_the_desk_payload()
     test_the_desk_actions_and_their_undo()
     test_duplicates_are_grouped_never_lost()
+    test_the_form_asks_before_a_team_registers_twice()
     test_the_door_after_the_draw_starts()
     test_directory()
     test_routing()

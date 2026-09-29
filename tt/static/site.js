@@ -26,6 +26,10 @@ const showJoin = () => joining() || (!!P && (P.phase === 'registration' || P.pha
 let draft = { cup_id: '', kind: 'single', name: '', strength: '5',
               partner_name: '', partner_strength: '5', team_name: '', note: '' };
 let sending = false, error = '';
+/* The server found an entry for exactly these two names in this cup and
+   wrote nothing: the form asks whether the partner already registered them.
+   Changing either name, or the cup, drops the question. */
+let twice = null;
 
 // what this phone already sent, so coming back says so instead of quietly
 // taking a second entry
@@ -148,10 +152,21 @@ function renderJoin() {
       <a class="back" href="/">← Zurück zur Veranstaltung</a>`;
     return;
   }
+  if (draft.done && draft.done.already) {
+    box.innerHTML = joinShell(`<div class="done-card">
+        <h2>Alles klar</h2>
+        <p>${esc(draft.done.name)} — ${esc(draft.done.cup)}</p>
+        <p>Dann steht ihr schon auf der Liste. Mehr ist nicht nötig — kommt einfach vorbei.</p>
+      </div>
+      <button class="cta ghost" data-act="again">Jemand anderen anmelden</button>
+      ${backLink()}`, open);
+    return;
+  }
   if (draft.done) {
     box.innerHTML = joinShell(`<div class="done-card">
         <h2>Du stehst auf der Liste</h2>
         <p>${esc(draft.done.name)} — ${esc(draft.done.cup)}</p>
+        ${draft.done.team ? '<p>Dein:e Partner:in muss sich nicht extra anmelden — eure Anmeldung gilt fürs ganze Team.</p>' : ''}
         <p>Mehr ist nicht nötig. Wir bestätigen alle am Abend selbst — komm einfach vorbei.</p>
       </div>
       <button class="cta ghost" data-act="again">Noch jemanden anmelden</button>
@@ -186,30 +201,42 @@ function renderJoin() {
              placeholder="Teampartner:in" autocomplete="off" autocapitalize="words">
       <label class="sr" for="j-team">Teamname</label>
       <input id="j-team" class="partner" value="${esc(draft.team_name)}" data-j="team_name"
-             placeholder="Teamname" autocomplete="off">` : ''}
+             placeholder="Teamname" autocomplete="off">
+      <p class="onefor">Eine Anmeldung reicht fürs ganze Team.</p>` : ''}
 
     <label class="sr" for="j-note">Anmerkung</label>
     <textarea id="j-note" data-j="note" rows="2" placeholder="Anmerkung (optional)">${esc(draft.note)}</textarea>
 
     ${error ? `<div class="err">${esc(error)}</div>` : ''}
-    <button class="cta send" data-act="send" ${sending ? 'disabled' : ''}>${sending ? 'Sende …' : 'Abschicken'}</button>
+    ${twice ? `<div class="twice">
+        <p><b>Für ${esc(twice.names)} gibt es schon eine Anmeldung${twice.cup ? ` im ${esc(twice.cup)}` : ''}.</b></p>
+        <p>Kann es sein, dass dein:e Partner:in euch schon angemeldet hat?</p>
+        <div class="row">
+          <button class="cta" data-act="already" ${sending ? 'disabled' : ''}>Ja, dann nicht nochmal</button>
+          <button class="cta ghost" data-act="distinct" ${sending ? 'disabled' : ''}>Nein, wir sind ein anderes Team</button>
+        </div></div>`
+      : `<button class="cta send" data-act="send" ${sending ? 'disabled' : ''}>${sending ? 'Sende …' : 'Abschicken'}</button>`}
     ${backLink()}</div>`, open);
 }
 
-async function send() {
+async function send(distinct) {
   if (sending) return;
   if (!draft.name.trim()) { error = 'Wir brauchen einen Namen.'; return renderJoin(); }
   sending = true; error = ''; renderJoin();
+  const team = draft.kind === 'pair' && !!draft.partner_name.trim();
+  const who = team ? `${draft.name.trim()} & ${draft.partner_name.trim()}` : draft.name.trim();
   try {
     const r = await fetch('/api/action', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ op: 'register', data: draft }),
+      body: JSON.stringify({ op: 'register', data: { ...draft, distinct: !!distinct } }),
     });
     const j = await r.json().catch(() => ({ error: 'Da ist etwas schiefgegangen.' }));
     if (!r.ok) { error = j.error || 'Da ist etwas schiefgegangen.'; }
+    else if (j.possible_duplicate) { twice = { names: who, cup: j.cup }; }
     else {
-      draft.done = { name: draft.name, cup: j.cup };
-      remember({ id: j.registration_id, name: draft.name, cup: j.cup });
+      twice = null;
+      draft.done = { name: who, cup: j.cup, team };
+      remember({ id: j.registration_id, name: who, cup: j.cup });
     }
   } catch (e) {
     error = 'Gerade keine Verbindung — versuch es gleich noch einmal.';
@@ -272,27 +299,44 @@ async function load() {
 
 document.addEventListener('input', e => {
   const k = e.target.dataset.j;
-  if (k) draft[k] = e.target.value;
+  if (!k) return;
+  draft[k] = e.target.value;
+  // the question was about the names as they were: a different one is a new form
+  if (twice && (k === 'name' || k === 'partner_name')) {
+    twice = null;
+    const cursor = e.target.selectionStart;
+    renderJoin();
+    const back = $(e.target.id);
+    if (back) { back.focus(); try { back.setSelectionRange(cursor, cursor); } catch (x) { } }
+  }
 });
 document.addEventListener('change', e => {
   const k = e.target.dataset.j;
   if (!k) return;
   draft[k] = e.target.value;
   // a different cup can mean a different kind of entry, so the fields change
-  if (k === 'cup_id') { draft.kind = 'single'; error = ''; renderJoin(); }
+  if (k === 'cup_id') { draft.kind = 'single'; error = ''; twice = null; renderJoin(); }
 });
 document.addEventListener('click', e => {
   const cup = e.target.closest('button[data-cup]');
   if (cup) { draft.cup_id = cup.dataset.cup; error = ''; return renderJoin(); }
   const kind = e.target.closest('button[data-kind]');
-  if (kind) { draft.kind = kind.dataset.kind; error = ''; return renderJoin(); }
+  if (kind) { draft.kind = kind.dataset.kind; error = ''; twice = null; return renderJoin(); }
   const b = e.target.closest('button[data-act]');
   if (!b) return;
   if (b.dataset.act === 'send') return void send();
+  if (b.dataset.act === 'distinct') return void send(true);
+  if (b.dataset.act === 'already') {
+    // nothing was written; say so and leave it there
+    const cup = (P.cups.find(c => c.id === draft.cup_id) || {}).name || '';
+    draft.done = { name: twice ? twice.names : draft.name, cup, already: true };
+    twice = null;
+    return renderJoin();
+  }
   if (b.dataset.act === 'again') {
     draft = { cup_id: draft.cup_id, kind: draft.kind, name: '', strength: '5',
               partner_name: '', partner_strength: '5', team_name: '', note: '' };
-    error = '';
+    error = ''; twice = null;
     renderJoin();
   }
 });
