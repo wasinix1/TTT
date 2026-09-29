@@ -12,7 +12,11 @@ const TOKEN = (() => {
    is left in: there is no state to go stale and no way to end up entering a
    real result into a simulated evening or the other way round. */
 const SIM = new URLSearchParams(location.search).get('sim') === '1';
-const simq = sep => (SIM ? sep + 'sim=1' : '');
+/* A past event, opened read-only from More → Past events. Same idea as the
+   sandbox: the target rides on every request, and the server refuses writes
+   to it, so the read-only-ness does not depend on this file hiding buttons. */
+const PAST = new URLSearchParams(location.search).get('past') || '';
+const simq = sep => (SIM ? sep + 'sim=1' : PAST ? sep + 'past=' + encodeURIComponent(PAST) : '');
 
 // Strength is parked: hidden everywhere, still stored and still used by the
 // matchmaker at its default. Flip to bring the inputs back.
@@ -39,7 +43,7 @@ let recentQuery = '';      // Results panel: name filter
 // server, so admin and every spectator can each pick their own
 // the sim keeps its own, so switching cups in the sandbox does not move the
 // real console's tab out from under whoever is running the night
-const CUP_KEY = SIM ? 'tt_cup_sim' : 'tt_cup';
+const CUP_KEY = SIM ? 'tt_cup_sim' : PAST ? 'tt_cup_past' : 'tt_cup';
 let selectedCup = localStorage.getItem(CUP_KEY) || '';
 function setCup(id) {
   selectedCup = id || '';
@@ -54,8 +58,9 @@ const inView = cupId => !selectedCup || cupId == null || cupId === selectedCup;
 const $ = id => document.getElementById(id);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c =>
   ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-const isAdmin = () => S && S.role === 'admin';
-const canScore = () => S && (S.role === 'admin' || S.role === 'referee');
+// a past event has neither: nothing in it can be entered, paused or put back
+const isAdmin = () => S && S.role === 'admin' && !PAST;
+const canScore = () => S && !PAST && (S.role === 'admin' || S.role === 'referee');
 
 /* ------------------------------------------------------------------ net */
 
@@ -81,7 +86,7 @@ async function poll(force) {
     if (etag && !force) h['If-None-Match'] = etag;
     const r = await fetch('/api/state?token=' + encodeURIComponent(TOKEN) + simq('&'),
                           { headers: h });
-    if (r.status === 404 && SIM) return simGone();
+    if (r.status === 404 && (SIM || PAST)) return simGone();
     $('pulse').classList.add('on');
     setTimeout(() => $('pulse').classList.remove('on'), 320);
     if (r.status === 304) return;
@@ -120,8 +125,9 @@ function connectStream() {
    tab is open. Say so and stop, rather than retrying into a 404 forever. */
 function simGone() {
   const b = $('sim-bar');
-  if (b) { b.hidden = false; b.className = 'sim-bar over'; b.textContent =
-    'This sim has been stopped from the real console. Close the tab.'; }
+  if (b) { b.hidden = false; b.className = 'sim-bar over'; b.textContent = PAST
+    ? 'This past event is no longer available (rewound, or the link is not an admin one). Close the tab.'
+    : 'This sim has been stopped from the real console. Close the tab.'; }
   if (stream) { stream.close(); stream = null; }
   ticks.forEach(clearInterval);
   dead = true;
@@ -143,9 +149,9 @@ function render() {
   const sel = focus && focus.selectionStart != null ? focus.selectionStart : null;
 
   $('ev-name').textContent = S.event.name || 'Table tennis';
-  const base = S.role === 'admin' ? 'Admin' : S.role === 'referee' ? 'Referee' : 'Live';
+  const base = PAST ? 'Past event' : S.role === 'admin' ? 'Admin' : S.role === 'referee' ? 'Referee' : 'Live';
   $('role-tag').textContent =
-    (S.phase && S.phase !== 'live' && S.role !== 'public')
+    (S.phase && S.phase !== 'live' && S.role !== 'public' && !PAST)
       ? base + ' · ' + S.phase : base;
   const waiting = (S.registrations || []).filter(r => r.status === 'pending').length;
   $('setup-btn').hidden = !isAdmin();
@@ -1825,6 +1831,32 @@ function tabLinks() {
    The things you reach for once a month: who the club knows, the undo of
    last resort, and a rehearsal of the night that costs nothing. */
 
+/* Who played at earlier events. The log keeps every event, but live state
+   only knows tonight, so this asks the server to replay it — read-only, and
+   only when asked, because it walks the whole log. */
+function pastEventsBlock() {
+  const pe = form.past_events;
+  if (!pe) return `<p class="sub">Every earlier event is still in the log. Load the
+    list to see who played at each.</p>
+    <button class="ghost" data-act="past-load">${form.past_busy ? 'Loading…' : 'Load past events'}</button>`;
+  const rows = pe.filter(e => !e.current);
+  if (!rows.length) return '<p class="sub">No earlier events yet.</p>';
+  return `<div class="rows">${rows.map(e => {
+    const open = form['pe_' + e.first_seq];
+    return `<div class="drow" style="--cols:1fr auto">
+      <span style="min-width:0"><b>${esc(e.name || e.id || 'Event')}</b>
+        <span style="color:var(--muted)">${esc((e.starts_at || '').replace('T', ' '))}
+          · ${e.played.length} played</span></span>
+      <span class="acts"><button class="ghost tiny" data-act="past-toggle"
+        data-i="${e.first_seq}">${open ? 'Hide' : 'Players'}</button>
+        <button class="ghost tiny" data-act="past-open"
+        data-i="${e.first_seq}">Open</button></span>
+    </div>${open ? `<div style="padding:4px 12px 10px;font-size:13px">${
+      e.played.map(p => `${esc(p.name)} <span style="color:var(--muted)">${
+        p.won}/${p.played}</span>`).join(' · ') || 'Nobody played.'}</div>` : ''}`;
+  }).join('')}</div>`;
+}
+
 function tabMore() {
   return `<div class="form">
     ${sec('Club directory')}
@@ -1840,6 +1872,9 @@ function tabMore() {
         'a regular from here starts them at the number you tuned last time instead of a guess.'
       : 'Everyone the club has seen. This outlives the event — a new event clears ' +
         'tonight’s roster, never this.')}
+
+    ${sec('Past events')}
+    ${pastEventsBlock()}
 
     ${sec('Log')}
     <p class="sub">Every change is an event. Rewinding drops everything after that point and
@@ -2458,6 +2493,23 @@ document.addEventListener('click', async e => {
     if (!confirm('Stop this Swiss now and build the knockout from current standings?')) return;
     return void api('swiss_cut_ko', { id: b.dataset.i });
   }
+  if (a === 'past-load') {
+    form.past_busy = true; renderSheet();
+    const out = await api('past_events');
+    form.past_busy = false;
+    if (out) form.past_events = out.events;
+    renderSheet();
+    return;
+  }
+  if (a === 'past-open') {
+    window.open(location.pathname + '?past=' + b.dataset.i, 'tt-past-' + b.dataset.i);
+    return;
+  }
+  if (a === 'past-toggle') {
+    form['pe_' + b.dataset.i] = !form['pe_' + b.dataset.i];
+    renderSheet();
+    return;
+  }
   if (a === 'rewind') {
     if (!confirm('Drop everything after event ' + b.dataset.s + '?')) return;
     return void api('rewind', { seq: +b.dataset.s });
@@ -2510,6 +2562,23 @@ document.addEventListener('keydown', e => {
 $('editor').addEventListener('click', e => {
   if (e.target.id === 'editor') closeEditor();
 });
+
+if (PAST) {
+  const b = $('sim-bar');
+  document.body.classList.add('sim');       // same stripe, same room for it
+  if (b) { b.hidden = false; b.textContent =
+    'Past event — read only. This is how the evening ended; nothing here can be changed.'; }
+  document.title = 'PAST · ' + document.title;
+  // The server refuses every write; this just stops the buttons pretending.
+  const VIEW = new Set(['recent-all', 'jump', 'close-editor']);
+  document.addEventListener('click', e => {
+    const b = e.target.closest('button[data-act]');
+    if (b && !VIEW.has(b.dataset.act)) {
+      e.stopImmediatePropagation(); e.preventDefault();
+      toast('Past event — read only');
+    }
+  }, true);
+}
 
 if (SIM) {
   const b = $('sim-bar');

@@ -243,3 +243,12 @@ Later, deliberately not now: waitlists and caps, entry codes, pairing up the
   cup has not started, only between cups taking the same entry, and only into
   a cup whose draw can still take people. It is ordinary log events, so
   More → Log rewinds it.
+- Past events are readable, never reopenable. More → Past events lists every
+  earlier event with who actually played (finished, non-walkover matches), and
+  *Open* shows one in the console at `?past=<first_seq>`: the log replayed to the
+  moment that event ended, in a throwaway store that refuses every write (the
+  server refuses too, so it does not depend on the client hiding buttons).
+  Admin key only; anything else is a 404. The event still running cannot be
+  opened this way, and a rewind that cuts into a past event drops its archive.
+  Fixing an old result would be a separate "reopen as live" step, deliberately
+  not built: the live event and the log are one thing.

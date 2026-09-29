@@ -26,6 +26,9 @@ ROLES = {"public": 0, "referee": 1, "admin": 2}
 
 
 class App:
+    is_archive = False
+    first_seq = None
+
     def __init__(self, data_dir):
         os.makedirs(data_dir, exist_ok=True)
         self.data_dir = data_dir
@@ -35,7 +38,9 @@ class App:
         # the live one owns and nothing else can reach. is_sim is what it
         # knows about itself; sim is what the real event knows about it.
         self.is_sim = False
+        self.is_archive = False
         self.sim = None
+        self._archives = {}       # first_seq -> ArchiveApp, a few kept warm
         self._cache = {}          # (version, role) -> encoded state JSON
         self._reg_hits = {}       # ip -> recent registration timestamps
         if not self.store.tables:
@@ -286,6 +291,8 @@ class App:
                 "history": s.history(40) if role == "admin" else [],
                 "keys": self.keys if role == "admin" else {},
                 "sim": self.sim_state() if role == "admin" else None,
+                "archive": {"first_seq": self.first_seq,
+                            "last_seq": s.seq} if self.is_archive else None,
             }
 
     # ----------------------------------------------------------- write side
@@ -1102,8 +1109,61 @@ class App:
             raise ValueError(f"unknown phase {ph!r}")
         self.store.append("event_meta", {"phase_pin": ph})
 
+    ARCHIVES_KEPT = 3
+
+    def archive(self, first_seq):
+        """A past event for reading, or None. Built on demand and kept for a
+        moment: an event that has ended cannot change, and a viewer polls."""
+        try:
+            first_seq = int(first_seq)
+        except (TypeError, ValueError):
+            return None
+        with self.store.lock:
+            hit = self._archives.get(first_seq)
+            if hit:
+                return hit
+            st = self.store.archive_store(first_seq)
+            if st is None:
+                return None
+            app = ArchiveApp(self, st, first_seq)
+            if len(self._archives) >= self.ARCHIVES_KEPT:
+                self._archives.pop(next(iter(self._archives)))
+            self._archives[first_seq] = app
+            return app
+
+    def op_past_events(self, p):
+        """Who played at every earlier event. Read-only: replays the log
+        into a scratch store, so nothing here touches the live event."""
+        return {"events": self.store.past_events()}
+
     def op_rewind(self, p):
         self.store.rewind(int(p["seq"]))
+        self._archives.clear()      # a rewind can cut into a past event
+
+
+class ArchiveApp(App):
+    """A past event, opened for reading: the console over a store that was
+    replayed to the moment the event ended and refuses every write.
+
+    A subclass of App so state(), the board and every DTO are the code the
+    live console runs — the archive cannot drift from what the night showed.
+    What it does not do is own a data directory, run the dispatcher, or act:
+    `act` says no before anything is looked at, and the store says no again
+    underneath it."""
+
+    def __init__(self, live, store, first_seq):
+        self.data_dir = None
+        self.store = store
+        self.keys = live.keys
+        self.is_sim = False
+        self.is_archive = True
+        self.first_seq = first_seq
+        self.sim = None
+        self._cache = {}
+        self._reg_hits = {}
+
+    def act(self, role, op, p):
+        raise PermissionError("this is a past event — read only")
 
 
 OP_LEVEL = {
@@ -1115,7 +1175,7 @@ OP_LEVEL = {
     "join_queue": 1, "leave_queue": 1,
     "report": 1, "void_match": 1, "reopen_match": 1, "put_back": 2, "assign": 2,
     "manual_match": 2, "manual_result": 1, "event_meta": 2, "rewind": 2,
-    "new_event": 2, "create_event": 2, "set_phase": 2,
+    "new_event": 2, "create_event": 2, "set_phase": 2, "past_events": 2,
     "register": 0, "update_registration": 2,
     "sim_start": 2, "sim_stop": 2,
     "admit": 2, "add_registration": 2, "remove_entrant": 2, "remove_entrants": 2, "update_person": 2, "remove_person": 2, "add_from_directory": 2,
@@ -1150,15 +1210,24 @@ class Handler(BaseHTTPRequestHandler):
         return t
 
     def _route(self, q, body=None):
-        """Which event this request is talking about: the real one, or the
-        sandbox. A tab asks for the sandbox on every single request it makes,
-        so the two can never be confused for one another by a stale header or
-        a cached page — `sim=1` is not a mode anything is left in.
+        """Which event this request is talking about: the real one, a
+        sandbox, or a past event opened for reading. A tab asks for its
+        target on every single request it makes, so they can never be
+        confused for one another by a stale header or a cached page —
+        `sim=1` and `past=` are not modes anything is left in.
 
-        Asking for a sandbox that is not there is a 404 rather than a quiet
+        Asking for a sandbox that is not there, or an archive the caller may
+        not read, or one that does not exist, is a 404 rather than a quiet
         fall back to the live event, which is the one failure that would
-        matter: a tab that thinks it is simulating, entering real results."""
+        matter: a tab that thinks it is looking at the past, entering real
+        results."""
         live = type(self).app
+        past = q.get("past", [""])[0] or (body or {}).get("past") or ""
+        if past:
+            token = self._token(q) or (body or {}).get("token", "")
+            if live.role_for(token) != "admin":
+                return None
+            return live.archive(past)
         want = q.get("sim", [""])[0] == "1" or bool(body and body.get("sim"))
         if not want:
             return live
@@ -1172,7 +1241,7 @@ class Handler(BaseHTTPRequestHandler):
         self.app = self._route(q)
         if self.app is None:
             if path.startswith("/api/"):
-                return self._send(404, {"error": "no sim running"})
+                return self._send(404, {"error": "not available — no such sim or past event"})
             # the page itself still loads; it will say so once it polls
             self.app = type(self).app
 
@@ -1233,7 +1302,7 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(400, {"error": "bad json"})
         self.app = self._route(q, body)
         if self.app is None:
-            return self._send(404, {"error": "no sim running"})
+            return self._send(404, {"error": "not available — no such sim or past event"})
         role = self.app.role_for(self._token(q) or body.get("token", ""))
         if body.get("op") == "register" and role == "public" \
                 and not self.app.registration_allowed(self.client_address[0]):
