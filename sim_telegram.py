@@ -857,6 +857,72 @@ def test_the_desk_with_telegram():
     shutil.rmtree(d)
 
 
+def test_a_crowd_is_answered_side_by_side():
+    print("\n[forty taps at once, and table calls first]")
+    app, fake, d = fresh()
+    s = app.store
+    cup = event(app)
+    users = [fake.user(f"P{i}", "X") for i in range(40)]
+    for u in users:
+        fake.say(u, "/start")
+    app.telegram.pump()
+    real, answered = fake.__call__, {}
+
+    def slow(method, params, timeout=None):
+        if method != "getUpdates":
+            time.sleep(0.05)
+        out = real(method, params, timeout)
+        if method == "answerCallbackQuery":
+            answered[params["callback_query_id"]] = time.perf_counter()
+        return out
+    app.telegram.call = slow
+    for u in users:
+        fake.tap(u, "Ich bin dabei")
+    t0 = time.perf_counter()
+    app.telegram.poll(gen=app.telegram._gen)
+    while len(answered) < 40 and time.perf_counter() - t0 < 20:
+        time.sleep(0.01)
+    last = max(answered.values()) - t0
+    check(len(answered) == 40 and last < 40 * 0.05 * 2 / 3,
+          f"the last of forty is answered in {last:.2f}s, not after the other thirty-nine")
+    time.sleep(0.3)
+    check(sum(1 for m, p in fake.calls if m == "editMessageText") >= 40,
+          "and every card is still redrawn, after its tap was answered")
+
+    # one chat's own taps stay in order
+    order = []
+    orig = app.telegram.convo.on_update
+    app.telegram.convo.on_update = lambda u: (order.append(u["update_id"]), time.sleep(0.02))
+    first = len(fake.updates)
+    for _ in range(5):
+        fake.say(users[1], "x")
+    app.telegram.poll(gen=app.telegram._gen)
+    time.sleep(0.4)
+    app.telegram.convo.on_update = orig
+    check(order == sorted(order) and len(order) == 5, "while one player's taps keep their order")
+    shutil.rmtree(d)
+
+
+def test_a_table_call_does_not_wait_behind_cards():
+    print("\n[the table call goes ahead of the card edits]")
+    app, fake, d = fresh()
+    s = app.store
+    cup = event(app, tables=1, phase="doors")
+    us = linked_players(app, fake, cup, [f"P{i}" for i in range(12)])
+    for u in us:
+        fake.say(u, "/start")
+    app.telegram.pump()
+    start_draw(app, cup)
+    app.telegram.poll()
+    app.telegram.plan(force=True)
+    n = len(fake.calls)
+    app.telegram.flush()
+    first = [m for m, p in fake.calls[n:]]
+    check(first and first[0] == "sendMessage" and "Du bist dran" in fake.calls[n][1]["text"],
+          "with a dozen cards to redraw, the table call is sent first")
+    shutil.rmtree(d)
+
+
 def run():
     test_off_changes_nothing()
     test_connecting()
@@ -879,6 +945,8 @@ def run():
     test_the_mini_app_door()
     test_the_mini_app_on_the_night()
     test_the_menu_button_opens_the_app()
+    test_a_crowd_is_answered_side_by_side()
+    test_a_table_call_does_not_wait_behind_cards()
     test_the_desk_with_telegram()
 
 

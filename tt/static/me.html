@@ -6,7 +6,9 @@
 <title>Mein Abend</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Syne:wght@400..800&display=swap" rel="stylesheet">
+<!-- the font must never hold up the first paint: the page shows in the
+     system face and swaps when Syne arrives -->
+<link href="https://fonts.googleapis.com/css2?family=Syne:wght@400..800&display=swap" rel="stylesheet" media="print" onload="this.media='all'">
 <script src="https://telegram.org/js/telegram-web-app.js"></script>
 <style>
 /* The Mini App: one player's evening. Same language as the site and the

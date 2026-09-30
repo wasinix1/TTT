@@ -168,6 +168,34 @@ or two different scores, writes nothing and tells the organisers which table
 needs a referee. A referee entering the score always wins; a pending report
 for a match that already has a result is dropped.
 
+## Speed
+
+A tap has to feel instant, and the first version did not. What it takes:
+
+- **One connection, kept open.** Every call used to open a new TCP and TLS
+  connection to Telegram — several round trips before the request itself,
+  and a tap is two calls. Each thread now keeps one open. It also tries IPv4
+  first with a short connect timeout: a server whose IPv6 route silently
+  drops packets used to wait out the whole timeout on every call.
+- **Answer, then redraw.** The button spins until Telegram hears back, so the
+  tap is acknowledged the moment the action is done, and the card is redrawn
+  after.
+- **Side by side.** Updates are handled by a small pool, each chat in its own
+  order. One listener working through them one at a time made the fortieth
+  tap after an announcement wait for the other thirty-nine.
+- **Table calls first.** The sender takes a few messages at a time and asks
+  again, so a table call queued after a result goes ahead of card edits and
+  newsletters. Card edits are the lowest priority, and only happen when a
+  player's situation changes, or the rough time moves by ten minutes, not
+  after every result for everyone.
+- **Work once.** The running order is worked out once per state of the event
+  and shared, not once per player; the outbox is written in one go.
+
+Setup → Links → Telegram shows how long a typical call to Telegram takes from
+the server. Under 300 ms a tap feels instant; if it says seconds, the network
+between the server and Telegram is the problem, not the bot. Calls over two
+seconds are logged (`journalctl -u tt-console | grep telegram`).
+
 ## Setup
 
 1. In Telegram, open @BotFather, send `/newbot`, pick a name.
