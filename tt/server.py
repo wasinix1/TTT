@@ -193,6 +193,7 @@ class App:
             return {
                 "phase": phase,
                 "now": time.time(),
+                "event_id": s.event.get("id") or "",
                 "name": s.event.get("name") or "Table tennis",
                 "blurb": s.event.get("blurb") or "",
                 "venue": s.event.get("venue") or "",
