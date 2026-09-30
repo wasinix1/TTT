@@ -33,7 +33,12 @@ BLANK_EVENT = {
     "starts_at": "",        # naive local "YYYY-MM-DDTHH:MM", "" = unscheduled
     "ends_at": "",          # optional "HH:MM", shown as a range on the landing
     "phase_pin": "",        # admin override; "" = derive from the clock
+    "player_scores": False, # players may enter results over Telegram, both sides agreeing
 }
+
+# Event fields that are really the club's habits rather than one evening's,
+# so a new event keeps them — decided once, like the tables.
+CARRIED = ("player_scores",)
 
 
 class Store:
@@ -59,6 +64,7 @@ class Store:
         self.conn.commit()
         self.actor = "system"    # set by App.act for the length of one op
         self._replaying = False
+        self.readonly = False    # an archived event: replayed, never written
         self._depth = 0          # nested appends commit with the outermost
         self.reset_state()
         self.replay()
@@ -108,6 +114,8 @@ class Store:
         a Swiss builds the knockout — and those inner writes join the outer
         one: the whole cascade commits together or not at all, which is
         what you want from "this result ended the round" anyway."""
+        if self.readonly:
+            raise PermissionError("this is a past event and cannot be changed")
         with self.lock:
             ts = self.clock()
             cur = self.conn.execute(
@@ -161,6 +169,101 @@ class Store:
             self.conn.commit()
             self.replay()
 
+    def _spans(self):
+        """(first_seq, last_seq) of every event in the log, oldest first.
+
+        An event is the run of log entries from one `event_new` to the next;
+        whatever precedes the first `event_new` is the event that was there
+        before events had ids. Seqs are never reused (AUTOINCREMENT), so a
+        span keyed by its first_seq names the same event for ever — unless a
+        rewind cuts into it, which makes it the live one."""
+        with self.lock:
+            rows = self.conn.execute(
+                "SELECT seq, type FROM events ORDER BY seq").fetchall()
+        spans, first, prev = [], None, 0
+        for seq, etype in rows:
+            if etype == "event_new" and first is not None:
+                spans.append((first, prev))
+                first = None
+            if first is None:
+                first = seq
+            prev = seq
+        if first is not None:
+            spans.append((first, prev))
+        return spans
+
+    def _scratch(self, upto):
+        """A throwaway store holding the log replayed through seq `upto`."""
+        with self.lock:
+            rows = self.conn.execute(
+                "SELECT seq, type, payload, ts FROM events WHERE seq <= ? "
+                "ORDER BY seq", (upto,)).fetchall()
+        st = Store(":memory:")
+        st._replaying = True
+        for seq, etype, payload, ts in rows:
+            st.apply(etype, json.loads(payload), seq, ts)
+            st.seq = seq
+        st._replaying = False
+        st.version = 1
+        return st
+
+    def archive_store(self, first_seq):
+        """The state of the event that began at `first_seq`, as it stood when
+        it ended, in a store that refuses every write. None if there is no
+        such event, or if it is the one still running."""
+        spans = self._spans()
+        for i, (a, b) in enumerate(spans):
+            if a == first_seq and i < len(spans) - 1:
+                st = self._scratch(b)
+                st.readonly = True
+                return st
+        return None
+
+    def past_events(self):
+        """Who actually played at each event in the log, newest first.
+
+        The log is never truncated, so every earlier event is still in it.
+        Nothing in live state remembers them, so this replays the log into a
+        scratch store and reads the roster off it at the end of each event.
+        Read-only: nothing here writes to the log or to the live state.
+
+        "Played" means on a finished match that was not a walkover, so
+        somebody who registered, turned up and was withdrawn before their
+        first game is not on it."""
+        spans = self._spans()
+        out = []
+        for i, (a, b) in enumerate(spans):
+            st = self._scratch(b)
+            ev = st.event
+            if not st.roster_played() and not ev.get("id"):
+                continue            # the empty stretch before the first event
+            out.append({"id": ev.get("id", ""), "name": ev.get("name", ""),
+                        "starts_at": ev.get("starts_at", ""),
+                        "first_seq": a, "last_seq": b,
+                        "played": st.roster_played(),
+                        "current": i == len(spans) - 1})
+        return out[::-1]
+
+    def roster_played(self):
+        """Players on at least one finished, non-walkover match, with how
+        many they played and won. Sorted by name."""
+        tally = {}
+        for m in self.matches.values():
+            if m.status != "done" or m.meta.get("walkover"):
+                continue
+            for side, ids in (("a", m.side_a), ("b", m.side_b)):
+                for pid in ids:
+                    t = tally.setdefault(pid, [0, 0])
+                    t[0] += 1
+                    t[1] += m.winner == side
+        rows = []
+        for pid, (n, w) in tally.items():
+            pl = self.players.get(pid)
+            if pl:
+                rows.append({"name": pl.name, "strength": pl.strength,
+                             "played": n, "won": w})
+        return sorted(rows, key=lambda r: r["name"].lower())
+
     def history(self, limit=60):
         rows = self.conn.execute(
             "SELECT seq, ts, type, payload, actor FROM events ORDER BY seq DESC LIMIT ?",
@@ -192,6 +295,7 @@ class Store:
             id=p["id"], name=p["name"],
             strength=float(p.get("strength", 5.0)),
             note=p.get("note", ""), last_seen=p.get("last_seen", ""),
+            tg_id=p.get("tg_id"), tg_name=p.get("tg_name", ""),
         )
         if p["id"] not in self.people_order:
             self.people_order.append(p["id"])
@@ -205,6 +309,23 @@ class Store:
                 setattr(who, k, p[k])
         if "strength" in p:
             who.strength = float(p["strength"])
+
+    def _ev_person_link(self, p, seq):
+        """Attach a Telegram account to a person, or take it off them.
+
+        An account is exactly one person: linking it here takes it off
+        whoever had it before, so a phone handed to a new member last month
+        stops getting the old one's table calls."""
+        who = self.people.get(p["id"])
+        if not who:
+            return
+        tg = p.get("tg_id")
+        if tg:
+            for other in self.people.values():
+                if other.tg_id == tg and other.id != who.id:
+                    other.tg_id, other.tg_name = None, ""
+        who.tg_id = tg or None
+        who.tg_name = p.get("tg_name", "") if tg else ""
 
     def _ev_person_remove(self, p, seq):
         self.people.pop(p["id"], None)
@@ -418,7 +539,8 @@ class Store:
         if not p.get("keep_cups", True):
             self.cups = {}
             self.cup_order = []
-        self.event = dict(BLANK_EVENT)
+        carried = {k: self.event.get(k, BLANK_EVENT[k]) for k in CARRIED}
+        self.event = dict(BLANK_EVENT, **carried)
         self.event["id"] = p.get("id") or f"EV{seq}"
         for k in ("name", "note", "blurb", "venue", "starts_at", "ends_at", "phase_pin"):
             if k in p:
@@ -426,7 +548,7 @@ class Store:
 
     REG_FIELDS = ("cup_id", "kind", "name", "strength", "partner_name",
                   "partner_strength", "team_name", "note", "status", "entrant_id",
-                  "matched_with", "distinct", "token")
+                  "matched_with", "distinct", "tg_id", "person_id", "token", "rsvp")
 
     def _ev_registration_add(self, p, seq):
         r = Registration(id=p["id"], cup_id=p.get("cup_id", ""),
@@ -785,6 +907,16 @@ class Store:
                     self.name_key(self.players[i].name) for i in e.player_ids
                     if i in self.players) == want:
                 return e
+        return None
+
+    def person_by_tg(self, tg_id):
+        """The person this Telegram account was linked to at the door."""
+        if not tg_id:
+            return None
+        for i in self.people_order:
+            who = self.people.get(i)
+            if who and who.tg_id == tg_id:
+                return who
         return None
 
     def person_playing(self, person_id):

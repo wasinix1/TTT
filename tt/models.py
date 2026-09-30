@@ -40,6 +40,10 @@ class Person:
     strength: float = 5.0
     note: str = ""
     last_seen: str = ""            # the event id they last played in
+    # the Telegram account that is this person — only ever set by something
+    # the door witnessed (see docs/telegram.md), never matched up by name
+    tg_id: Optional[int] = None
+    tg_name: str = ""              # how the console shows it: @handle or first name
 
     def to_dict(self):
         return asdict(self)
@@ -161,9 +165,17 @@ class Registration:
     # the same names as another entry, and somebody said they are a different
     # team: never grouped with it at the door
     distinct: bool = False
-    # the secret in the registrant's personal link (/me/<token>). Only ever
-    # sent back to them, once, when they register; never in any payload.
+    # Telegram: the account it came from (or was carried onto by `token`),
+    # and the person that account already is, if the door ever linked it.
+    # Both are claims until confirmation, like everything else here.
+    tg_id: Optional[int] = None
+    person_id: Optional[str] = None
+    # The entry's one secret. It is the registrant's personal link on the web
+    # (/me/<token>) and the private link that carries it into the bot
+    # (r_<token>). Only ever handed back to them when they register; never
+    # in any payload or log view.
     token: str = ""
+    rsvp: str = ""                 # "yes" once they answered the reminder
 
     def to_dict(self):
         d = asdict(self)

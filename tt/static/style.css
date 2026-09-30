@@ -753,3 +753,33 @@ button.danger.tiny:hover{background:var(--signal);color:var(--on-signal)}
 .trows .drow{border-bottom:1px solid var(--edge);padding:6px 0}
 .sheet-body .trows input,.sheet-body .trows select{background:var(--surface);padding:9px 12px;font-size:15px;font-weight:500}
 .trows .num{font-size:13px;font-weight:600}
+
+/* ------------------------------------------------------------- Telegram
+   Optional, so it borrows everything it can: chips, cards, the sheet. The
+   only new shapes are a conversation and a code to scan. */
+.chip.tg{color:var(--muted);background:transparent;box-shadow:inset 0 0 0 1px var(--edge)}
+.thread .thead{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap}
+.thread .thead .when{margin-left:auto}
+.thread .thead .count{
+  font-size:11px;font-weight:700;background:var(--signal);color:var(--on-signal);
+  border-radius:999px;padding:1px 7px}
+.thread.unread{box-shadow:inset 3px 0 0 var(--signal)}
+.msgs{display:flex;flex-direction:column;gap:6px}
+.msg{max-width:85%;padding:8px 11px;border-radius:12px;font-size:14px;line-height:1.4;
+  white-space:pre-wrap;overflow-wrap:anywhere;display:flex;flex-direction:column;gap:2px}
+.msg i{font-style:normal;font-size:11px;color:var(--muted)}
+.msg.in{align-self:flex-start;background:var(--raised);border-bottom-left-radius:4px}
+.msg.out{align-self:flex-end;background:var(--chalk);color:var(--ground);border-bottom-right-radius:4px}
+.msg.out i{color:rgba(255,255,255,.6)}
+.msg.sys{align-self:stretch;max-width:none;background:var(--signal-wash);color:var(--signal);font-weight:600}
+.thread .reply{flex-wrap:nowrap}
+.thread .reply .field{flex:1;min-width:0}
+.thread .reply input{background:var(--raised)}
+.qr{display:flex;justify-content:center;padding:8px 0}
+.qr[hidden]{display:none}
+.stat{display:flex;align-items:center;gap:6px;min-width:0}
+.stat .tgmark{font-size:12px;color:var(--muted);line-height:1}
+#setup-btn .count{
+  font-size:11px;font-weight:700;background:var(--signal);color:var(--on-signal);
+  border-radius:999px;padding:1px 7px;margin-left:4px}
+.qr img{width:240px;height:240px;max-width:100%}

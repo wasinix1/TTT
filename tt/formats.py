@@ -17,9 +17,19 @@ used to take every table all evening.
 """
 
 import math
+import random
 from collections import defaultdict
 
 from .models import Scoring
+
+# its own generator, so drawing a round never disturbs anybody else's
+# random sequence (the simulator's seeded results included)
+_draw = random.Random()
+
+# Strength is parked, same as in the console (SHOW_STRENGTH in app.js): it is
+# still stored, but nothing pairs, seeds or draws on it while this is off.
+# Flip to bring the strength-based matchmaking back.
+USE_STRENGTH = False
 
 
 class Proposal:
@@ -42,7 +52,7 @@ class Proposal:
 
 # ----------------------------------------------------------------- matching
 
-def anchor_pair(entries, dist, tol, penalty):
+def anchor_pair(entries, dist, tol, penalty, closeness=None):
     """Pair the longest waiter with its best available opponent.
 
     Deliberately not a global optimum. Minimum-weight matching over the whole
@@ -55,6 +65,10 @@ def anchor_pair(entries, dist, tol, penalty):
     hard distance limit alone, the two weakest teams in a lopsided field sit
     permanently inside each other's tolerance, never get passed over, so the
     tolerance never widens and they play each other all night.
+
+    `closeness` breaks ties between equally good opponents without touching
+    the tolerance — a Swiss uses it to prefer the nearest sets and points
+    among people on the same wins.
     """
     for a in entries:
         limit = tol(a)
@@ -65,7 +79,8 @@ def anchor_pair(entries, dist, tol, penalty):
             cost = dist(a, b) + penalty(a, b)
             if cost > limit:
                 continue
-            key = (cost, -b.passes, b.joined_seq)
+            near = closeness(a, b) if closeness else ()
+            key = (cost, near, -b.passes, b.joined_seq)
             if best_key is None or key < best_key:
                 best, best_key = b, key
         if best is not None:
@@ -522,6 +537,8 @@ class OpenPlay(Format):
         meets = store.meetings()
 
         def dist(a, b):
+            if not USE_STRENGTH:
+                return 0.0         # wait time and rematches decide on their own
             return abs(store.entrant_strength(a.entrant_id)
                        - store.entrant_strength(b.entrant_id))
 
@@ -573,9 +590,11 @@ class OpenPlay(Format):
                     for split in ((0, 1, 2, 3), (0, 2, 1, 3), (0, 3, 1, 2)):
                         pa = (four[split[0]], four[split[1]])
                         pb = (four[split[2]], four[split[3]])
-                        sa = eff(*[store.entrant_strength(q.entrant_id) for q in pa])
-                        sb = eff(*[store.entrant_strength(q.entrant_id) for q in pb])
-                        imb = abs(sa - sb)
+                        imb = 0.0
+                        if USE_STRENGTH:
+                            sa = eff(*[store.entrant_strength(q.entrant_id) for q in pa])
+                            sb = eff(*[store.entrant_strength(q.entrant_id) for q in pb])
+                            imb = abs(sa - sb)
                         rep = 0.0
                         for p in (pa, pb):
                             ids = frozenset(
@@ -625,7 +644,10 @@ class GroupStage(Format):
         self.status = "running"
         self.phase = "groups"
         ids = [e for e in self.entrant_ids if not store.withdrawn(e)]
-        ids.sort(key=lambda e: -store.entrant_strength(e))
+        if USE_STRENGTH:
+            ids.sort(key=lambda e: -store.entrant_strength(e))
+        else:
+            _draw.shuffle(ids)                           # no seeds: a straight draw
         n = max(1, int(self.config.get("n_groups", 1)))
         groups = [[] for _ in range(n)]
         for i, eid in enumerate(ids):                    # snake seeding
@@ -744,7 +766,10 @@ class SingleElim(Format):
         self.status = "running"
         self.phase = "ko"
         ids = [e for e in self.entrant_ids if not store.withdrawn(e)]
-        ids.sort(key=lambda e: -store.entrant_strength(e))
+        if USE_STRENGTH:
+            ids.sort(key=lambda e: -store.entrant_strength(e))
+        else:
+            _draw.shuffle(ids)                           # no seeds: a straight draw
         build_bracket(store, self.id, ids, self.scoring(),
                       third_place=bool(self.config.get("third_place")))
 
@@ -786,9 +811,14 @@ class Swiss(Format):
         return [e for e in self.entrant_ids if played.get(e, 0) < budget]
 
     def paced(self):
-        """Continuous pairing, but nobody gets ahead: an entrant is only
-        paired against someone who has played the same number of matches,
-        and stops at the round budget.
+        """Continuous pairing in strict tiers: an entrant is only paired
+        against someone who has played the same number of matches, and
+        stops at the round budget.
+
+        Strict tiers are not a round barrier. Two people who finish quickly
+        can play again while a slow match is still going, so the games-played
+        spread can open past one; stopping that would mean waiting on the
+        slowest match every time, which is strict rounds.
 
         This is the answer to the round barrier. Strict rounds make a cup's
         demand bursty — it wants every table at once, then none while the
@@ -838,6 +868,17 @@ class Swiss(Format):
         rec = _record(store, self.id)
         return {e: rec.get(e, {"won": 0})["won"] for e in self.entrant_ids}
 
+    def _form(self, store):
+        """Wins, then set difference, then point difference — the order a
+        Swiss pairs in. Wins alone leave most of the field tied, and a tie
+        settled by whoever was admitted first is not a pairing."""
+        rec = _record(store, self.id)
+        out = {}
+        for e in self.entrant_ids:
+            r = rec.get(e)
+            out[e] = (r["won"], r["gw"] - r["gl"], r["pw"] - r["pl"]) if r else (0, 0, 0)
+        return out
+
     def _rounds_done(self, store):
         rs = [m.meta.get("round", 0) for m in store.matches.values()
               if m.format_id == self.id and m.status != "void"]
@@ -852,10 +893,22 @@ class Swiss(Format):
         return all(store.players[p].active for p in ent.player_ids if p in store.players)
 
     def _generate_round(self, store, rnd):
-        score = self._score(store)
+        form = self._form(store)
         meets = store.meetings()
-        pool = sorted([e for e in self.entrant_ids if self._eligible(store, e)],
-                      key=lambda e: (-score.get(e, 0), -store.entrant_strength(e)))
+        # Shuffled first, so whatever the sort leaves tied is drawn at random —
+        # all of round one, where nobody has a result yet. Sorting round one
+        # by strength just seeded the favourites into each other. Runs at
+        # request time and the matches go into the log, so replay never
+        # re-rolls it.
+        pool = [e for e in self.entrant_ids if self._eligible(store, e)]
+        _draw.shuffle(pool)
+        def key(e):
+            won, sets, points = form.get(e, (0, 0, 0))
+            k = (-won, -sets, -points)
+            if USE_STRENGTH and rnd > 0:
+                k += (-store.entrant_strength(e),)
+            return k
+        pool.sort(key=key)
         byes = {m.meta.get("bye") for m in store.matches.values()
                 if m.format_id == self.id and m.meta.get("bye")}
         if len(pool) % 2:
@@ -1067,26 +1120,49 @@ class Swiss(Format):
         if len(entries) < 2:
             return None
         score = self._score(store)
+        form = self._form(store)
         meets = store.meetings()
         gap = float(self.config.get("base_gap", 1.0))
         widen = max(1, int(self.config.get("widen_every", 3)))
         tiered = self.paced()
+        # who is still owed a game, by games played: the tiers
+        tiers = defaultdict(int)
+        for e in self.entrant_ids:
+            if self._eligible(store, e) and (not budget or played.get(e, 0) < budget):
+                tiers[played.get(e, 0)] += 1
+
+        def same_tier_ok(x, y):
+            """Strict tiers: only people on the same number of games play,
+            however long a table sits empty. The one way across is for
+            somebody alone in their tier — an odd field, a late admission, a
+            withdrawal — who would otherwise wait for an opponent who cannot
+            exist. They play up into the nearest tier above, which is them
+            catching up, not anybody getting ahead."""
+            px, py = played.get(x, 0), played.get(y, 0)
+            if px == py:
+                return True
+            lo = min(px, py)
+            if tiers.get(lo, 0) != 1:
+                return False
+            above = min((t for t in tiers if t > lo), default=None)
+            return max(px, py) == above
 
         def penalty(a, b):
             rep = 1.2 * meets.get(frozenset((a.entrant_id, b.entrant_id)), 0)
-            if not tiered:
-                return rep
-            behind = abs(played.get(a.entrant_id, 0) - played.get(b.entrant_id, 0))
-            # same number of games played, or close enough that waiting for a
-            # better tier would cost a table more than the mismatch is worth
-            allowed = 99 if force else a.passes // widen
-            return rep if behind <= allowed else 1e6
+            if tiered and not same_tier_ok(a.entrant_id, b.entrant_id):
+                return 1e6
+            return rep
+
+        def closeness(a, b):
+            fa, fb = form.get(a.entrant_id, (0, 0, 0)), form.get(b.entrant_id, (0, 0, 0))
+            return (abs(fa[1] - fb[1]), abs(fa[2] - fb[2]))
 
         found = anchor_pair(
             entries,
             dist=lambda a, b: abs(score.get(a.entrant_id, 0) - score.get(b.entrant_id, 0)),
             tol=lambda a: 99.0 if force else min(gap + a.passes // widen, 6.0),
             penalty=penalty,
+            closeness=closeness,
         )
         if not found:
             return None

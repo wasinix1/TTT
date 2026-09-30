@@ -176,6 +176,9 @@ function renderJoin() {
     return;
   }
   if (draft.done) {
+    // the entry's own link into the bot: one tap and the table calls for this
+    // entry come to their phone (docs/telegram.md)
+    const tg = draft.done.telegram;
     box.innerHTML = joinShell(`<div class="done-card">
         <h2>Du stehst auf der Liste</h2>
         <p>${esc(draft.done.name)} — ${esc(draft.done.cup)}</p>
@@ -186,6 +189,8 @@ function renderJoin() {
           + 'Dieses Handy merkt ihn sich — schick ihn gern auch deinem Team.') : ''}
       </div>
       ${draft.done.token ? `<a class="cta" href="/me/${esc(draft.done.token)}">Anmeldung ansehen</a>` : ''}
+      ${tg ? `<a class="cta tg" href="${esc(tg)}" target="_blank" rel="noopener">Per Telegram Bescheid bekommen</a>
+        <p class="tg-note">Wir schreiben dir, wenn du gleich dran bist und wenn dein Tisch frei ist.</p>` : ''}
       <button class="cta ghost" data-act="again">Noch jemanden anmelden</button>
       ${backLink()}`, open);
     return;
@@ -235,7 +240,9 @@ function renderJoin() {
           <button class="cta" data-act="already" ${sending ? 'disabled' : ''}>Ja, dann nicht nochmal</button>
           <button class="cta ghost" data-act="distinct" ${sending ? 'disabled' : ''}>Nein, wir sind ein anderes Team</button>
         </div></div>`
-      : `<button class="cta send" data-act="send" ${sending ? 'disabled' : ''}>${sending ? 'Sende …' : 'Abschicken'}</button>`}
+      : `<button class="cta send" data-act="send" ${sending ? 'disabled' : ''}>${sending ? 'Sende …' : 'Abschicken'}</button>
+    ${P.telegram ? `<a class="tg-alt" href="https://t.me/${esc(P.telegram)}?start=join" target="_blank"
+        rel="noopener">Oder mit Telegram anmelden — und Bescheid bekommen, wenn du dran bist →</a>` : ''}`}
     ${backLink()}</div>`, open);
 }
 
@@ -255,8 +262,8 @@ async function send(distinct) {
     else if (j.possible_duplicate) { twice = { names: who, cup: j.cup }; }
     else {
       twice = null;
-      draft.done = { name: who, cup: j.cup, team, token: j.token };
-      remember({ id: j.registration_id, name: who, cup: j.cup, token: j.token });
+      draft.done = { name: who, cup: j.cup, team, token: j.token, telegram: j.telegram || '' };
+      remember({ id: j.registration_id, name: who, cup: j.cup, token: j.token, telegram: j.telegram || '' });
     }
   } catch (e) {
     error = 'Gerade keine Verbindung — versuch es gleich noch einmal.';

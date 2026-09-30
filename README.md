@@ -23,7 +23,11 @@ Formats:
 - **Swiss** — Buchholz, in one of three shapes. *Paced* is the default for a
   new one: pair on demand the moment a table frees up, but only against
   someone who has played the same number of games, and stop at the round
-  count. *Strict rounds* is classic lockstep Swiss. *Free-running* pairs on
+  count. Tiers are strict: the only crossing is somebody left alone in theirs
+  (an odd field, a late entry) playing up into the next one to catch up. Fast
+  finishers can still get two games ahead of a slow match — holding everyone
+  to one would be strict rounds. Within the same wins, a Swiss pairs on set
+  difference, then point difference. *Strict rounds* is classic lockstep Swiss. *Free-running* pairs on
   demand with no round limit and ends when you cut it to a knockout. A Swiss
   set up before paced mode existed keeps running free — an event already
   under way does not change shape because the server was updated.
@@ -176,6 +180,36 @@ under it. *Undo result* takes it back altogether and leaves the match to be
 played again, taking the player it advanced back out of the next round with
 it. Setup → Log still rewinds the whole evening to any point.
 
+## Telegram
+
+Optional, and nothing changes without it. Connect a bot under Setup → Links
+→ Telegram (from @BotFather: `/newbot`, paste the token) and the players'
+phones join in:
+
+- **Two messages per match.** *Gleich bist du dran* when they are in the
+  next wave, *Du bist dran — Tisch 2* when the table is theirs. Afterwards
+  the table call turns into the result in place; nothing else is pushed.
+- **One-tap entry.** The bot shows what is open with a button per cup.
+  Somebody the door has linked before is entered as themselves in one tap.
+- **Their own app.** *Mein Abend* beside the message box opens a page inside
+  Telegram: *Tisch 2* in red when it is their turn, their place in the
+  running order, their results and table, entering in one tap, a score pad.
+  Signed by Telegram, so there is nothing to log in to.
+- **A live card.** Where they are tonight — on a table, roughly when, sat
+  out — kept current by editing, with *Pause* and *going home* one tap away.
+- **Talking to the room.** Announce the event (the announcement carries the
+  entry buttons), message tonight's players or one cup, and read and answer
+  what players write back in Setup → Chat.
+- **Players entering scores**, if you switch it on: one side types it, the
+  other confirms, and only then is it written. Disagreements show up in Chat
+  as a table that needs a referee.
+
+Identity is the part that matters. A Telegram account is attached to a
+player only by something the door saw happen — confirming an entry made from
+that account, or the player scanning the code on their row — never by name.
+The server long-polls Telegram, so there is no webhook and nothing to open
+on the server. All of it is in [docs/telegram.md](docs/telegram.md).
+
 ## Hosting
 
 One small server, one permanent URL, HTTPS handled for you.
@@ -237,9 +271,11 @@ If you put anything other than Caddy in front of it, server-sent events must
 not be buffered or updates arrive in batches. `deploy/Caddyfile` sets
 `flush_interval -1` on `/api/stream` for exactly this reason.
 
-Strength is **parked for now**: it is still stored and the matchmaker reads it at
-its default, but nothing asks for it or shows it (`SHOW_STRENGTH` in `app.js`,
-`ASK_STRENGTH` in `site.js`). Every mention of it here is for when it comes back.
+**Strength is parked for now.** It is still stored, but the console hides it
+(`SHOW_STRENGTH` in `tt/static/app.js`) and nothing pairs, seeds or draws on it
+(`USE_STRENGTH` in `tt/formats.py`): open play pairs on wait time and rematches,
+groups, knockouts and Swiss round one are drawn at random. Flip both to bring it
+back. The strength sections of this README describe it as it works when on.
 
 Strength is your estimate on a 1–10 scale, editable mid-event. Resist bolting
 Elo onto it: with six or eight games each, a K-factor big enough to move the
@@ -299,8 +335,8 @@ sim.py           plays full events through every format
 `python3 sim.py` runs the lot: starvation, rematch bounds, byes, bracket
 byes, Swiss byes scoring a point, two formats sharing tables, replay
 determinism, correcting a result mid-bracket, fair table share between cups,
-a small draw not outrunning a big one, paced Swiss holding the field to
-within one game of itself, somebody walking out mid-match, one person entered
+a small draw not outrunning a big one, paced Swiss only pairing equal
+games played, somebody walking out mid-match, one person entered
 in two cups never being called to two tables at once, and a corrected group
 score redrawing a bracket nobody has played in yet, and the sandbox copying
 the shape of an event without any of its people while the live log does not
