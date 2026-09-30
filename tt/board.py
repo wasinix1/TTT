@@ -198,6 +198,22 @@ def cup_board(store, cup_id, app):
     }
 
 
+def cup_board_cached(store, cup_id, app):
+    """The running order for a cup, worked out once per state of the event.
+
+    The Telegram layer asks "where is this player?" for every linked player
+    after every result; computing the whole order once each time made that
+    the most expensive thing the server did. The order is a function of the
+    store alone, so it keys on its version. Callers must not change what
+    they get back."""
+    cache = getattr(store, "_board_cache", None)
+    if cache is None or cache[0] != store.version:
+        cache = store._board_cache = (store.version, {})
+    if cup_id not in cache[1]:
+        cache[1][cup_id] = cup_board(store, cup_id, app)
+    return cache[1][cup_id]
+
+
 def boards(store, app, limit=24):
     """One board per cup, plus one for anything not in a cup."""
     keys = []

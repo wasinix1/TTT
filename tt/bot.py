@@ -9,9 +9,11 @@ for themselves and nobody else (docs/telegram.md, principle 5).
 German, du-form, like the landing page and the wall.
 """
 
+import hashlib
 import html
 import json
 import re
+import threading
 import time
 from datetime import datetime
 
@@ -267,6 +269,9 @@ class Conversation:
         self.bot = bot
         self.app = bot.app
         self.wire = bot.wire
+        # while a button is being handled: the edits it makes, held until
+        # Telegram has been told the tap landed (see on_callback)
+        self._ui = threading.local()
 
     @property
     def store(self):
@@ -383,7 +388,7 @@ class Conversation:
 
     # ----------------------------------------------------------- the card
 
-    def card(self, uid, notice=""):
+    def card(self, uid, notice="", coarse=False):
         s = self.store
         with s.lock:
             me = self.who(uid)
@@ -400,7 +405,7 @@ class Conversation:
                 lines += self._card_entry(me, kb)
             elif phase in ("doors", "live"):
                 lines.append("")
-                lines += self._card_live(me, kb)
+                lines += self._card_live(me, kb, coarse)
                 lines += ["", HINT]
             else:
                 lines.append("")
@@ -461,7 +466,7 @@ class Conversation:
                   and s.cup_of_format(s.formats[i]) == cup), None)
         if not f:
             return None
-        b = board.cup_board(s, s.cup_key(f), self.app)
+        b = board.cup_board_cached(s, s.cup_key(f), self.app)
         return next((r for r in b["up"] if eid in (r.get("entrants") or [])), None)
 
     def state_of(self, e):
@@ -493,7 +498,7 @@ class Conversation:
         out["won"], out["lost"] = _record(s, e)
         return out
 
-    def _card_live(self, me, kb):
+    def _card_live(self, me, kb, coarse=False):
         s = self.store
         if not me.ents:
             waiting = [r for r in me.regs if r.status == "pending"]
@@ -517,7 +522,8 @@ class Conversation:
                 if x["on_deck"]:
                     line = "⏳ Gleich bist du dran"
                 elif x["eta_min"] is not None:
-                    line = f"⏱ Etwa {x['eta_min']} Min · {x['position']}. in der Reihe"
+                    line = (f"⏱ ~{x['eta_min'] // 10}" if coarse else
+                            f"⏱ Etwa {x['eta_min']} Min · {x['position']}. in der Reihe")
                 else:
                     line = "✓ Im Turnier — gerade kein Spiel für dich"
             elif st == "resting":
@@ -567,6 +573,10 @@ class Conversation:
                   "parse_mode": "HTML", "link_preview_options": {"is_disabled": True}}
         if kb is not None:
             params["reply_markup"] = {"inline_keyboard": kb}
+        later = getattr(self._ui, "later", None)
+        if later is not None:
+            later.append(("editMessageText", params))
+            return
         self.bot.api("editMessageText", params, quiet=True)
 
     def say(self, uid, text, kb=None, reply=False, placeholder=""):
@@ -590,25 +600,36 @@ class Conversation:
         on_card = mid and mid == (self.wire.chat(uid) or {}).get("card_msg")
         verb, _, arg = data.partition(":")
         toast = ""
+        # The button spins until Telegram hears back. Do the thing (local,
+        # milliseconds), say it landed, and only then redraw: the redraw is
+        # another round trip the player should not be kept waiting through.
+        self._ui.later = []
         try:
-            toast = self.dispatch(uid, verb, arg, mid, on_card) or ""
-        except ValueError as e:
-            toast = str(e)[:190]
-        self.bot.api("answerCallbackQuery", {"callback_query_id": q["id"],
-                                             "text": toast}, quiet=True)
+            try:
+                toast = self.dispatch(uid, verb, arg, mid, on_card) or ""
+            except ValueError as e:
+                toast = str(e)[:190]
+            self.bot.api("answerCallbackQuery", {"callback_query_id": q["id"],
+                                                 "text": toast}, quiet=True)
+        finally:
+            later, self._ui.later = self._ui.later, None
+        for method, params in later:
+            self.bot.api(method, params, quiet=True)
 
     def refresh(self, uid, mid, notice=""):
+        if mid == (self.wire.chat(uid) or {}).get("card_msg"):
+            # noted first, so the card-keeper does not queue the same edit
+            self.wire.set_chat(uid, card_hash=self.card_hash(uid))
         text, kb = self.card(uid, notice)
         self.edit(uid, mid, text, kb)
-        if mid == (self.wire.chat(uid) or {}).get("card_msg"):
-            self.wire.set_chat(uid, card_hash=self.card_hash(uid))
 
     def card_hash(self, uid):
-        """What the card says with no one-off notice on it. The card keeps
-        itself current (Bot.refresh_cards), and this is how it knows the
-        player's situation changed rather than just the moment passing."""
-        import hashlib
-        text, kb = self.card(uid)
+        """What the card says about the player, with no one-off notice and
+        with the rough time in ten-minute steps. The card keeps itself
+        current (Bot.refresh_cards) and this is how it knows their situation
+        changed — not just the estimate drifting a minute after every
+        result, which was an edit to every card in the room each time."""
+        text, kb = self.card(uid, coarse=True)
         return hashlib.sha1((text + json.dumps(kb)).encode()).hexdigest()[:16]
 
     def dispatch(self, uid, verb, arg, mid, on_card):

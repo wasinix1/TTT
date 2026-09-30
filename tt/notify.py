@@ -49,7 +49,7 @@ def _cup_boards(store, app):
             k = store.cup_key(f)
             if k not in keys:
                 keys.append(k)
-    return [board.cup_board(store, k, app) for k in keys]
+    return [board.cup_board_cached(store, k, app) for k in keys]
 
 
 def _stint(store, eid):

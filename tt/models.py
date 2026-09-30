@@ -14,7 +14,10 @@ class Scoring:
         return self.best_of // 2 + 1
 
     def to_dict(self):
-        return asdict(self)
+        # by hand: this runs for every row of every running order, and
+        # dataclasses.asdict is a deep copy that costs ten times as much
+        return {"best_of": self.best_of, "points_to": self.points_to,
+                "win_by": self.win_by}
 
     @staticmethod
     def from_dict(d):

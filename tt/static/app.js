@@ -1903,7 +1903,8 @@ function tgSection() {
   return `${sec('Telegram', `<button class="ghost tiny" data-act="tg-disconnect">Disconnect</button>`)}
     <div class="rows">
       <div class="drow" style="--cols:170px 1fr"><span>Bot</span>
-        <span><b>@${esc(t.username)}</b> ${health}</span></div>
+        <span><b>@${esc(t.username)}</b> ${health}${t.ms != null
+          ? ` <span class="sub" style="display:inline" title="How long a typical call to Telegram takes from this server. Under 300 ms feels instant; over a second, the network between the two is the problem.">· ${t.ms} ms per call</span>` : ''}</span></div>
       <div class="drow" style="--cols:170px 1fr"><span>Following</span>
         <span>${t.followers}${t.queued ? ` <span class="sub" style="display:inline">· ${t.queued} waiting to go out</span>` : ''}</span></div>
       <div class="drow" style="--cols:170px 1fr"><span>Link for posters and chats</span>

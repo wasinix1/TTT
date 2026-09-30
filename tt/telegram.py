@@ -17,21 +17,26 @@ who blocked the bot shows up as a status line in the console, never as an
 error on the night.
 """
 
+import http.client
 import json
 import os
 import secrets
+import socket
 import sqlite3
 import sys
 import threading
 import time
 import urllib.error
 import urllib.request
+from collections import deque
+from concurrent.futures import ThreadPoolExecutor
 
 from . import notify
 from .bot import Conversation, esc
 
 API = "https://api.telegram.org"
 RATE = 25                  # messages a second, well under Telegram's 30
+CARD_PRIO = 3              # a card keeping itself current goes after anything said
 TOKEN_TTL = 12 * 3600      # a door QR code is good for the evening
 
 
@@ -45,9 +50,89 @@ class TgError(Exception):
         self.code, self.desc, self.retry_after = code, desc or "", retry_after
 
 
+HOST = "api.telegram.org"
+CONNECT_TIMEOUT = 4        # per address; a route that eats packets costs this, once
+
+
+class _Conn(http.client.HTTPSConnection):
+    """A connection that tries IPv4 first, and gives up on an address fast.
+
+    Python tries addresses one after another with the full timeout each, so
+    a server whose IPv6 route silently drops packets waited that long on
+    every single call before falling back — the difference between a bot
+    that answers at once and one that feels broken. IPv4 first, a short
+    connect timeout, and the reads get the call's own timeout."""
+
+    def connect(self):
+        infos = socket.getaddrinfo(self.host, self.port, type=socket.SOCK_STREAM)
+        infos.sort(key=lambda i: i[0] != socket.AF_INET)
+        err = None
+        for fam, typ, proto, _, addr in infos:
+            sock = socket.socket(fam, typ, proto)
+            sock.settimeout(CONNECT_TIMEOUT)
+            try:
+                sock.connect(addr)
+            except OSError as e:
+                err = e
+                sock.close()
+                continue
+            sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+            sock.settimeout(self.timeout)
+            self.sock = self._context.wrap_socket(sock, server_hostname=self.host)
+            return
+        raise err or OSError("no address for " + self.host)
+
+
+def _answer(status, raw):
+    try:
+        body = json.loads(raw)
+    except ValueError:
+        raise TgError(status, "bad response from Telegram")
+    if not body.get("ok"):
+        raise TgError(body.get("error_code", status), body.get("description", ""),
+                      (body.get("parameters") or {}).get("retry_after"))
+    return body["result"]
+
+
 def http_transport(token):
-    """The real thing: one JSON POST per call. Proxies come from the
-    environment, as urllib always does."""
+    """The real thing: JSON POSTs over a connection each thread keeps open.
+
+    A fresh connection is a TCP and a TLS handshake before Telegram even sees
+    the request — several round trips, on every call, and a tap costs two
+    calls. Keeping one open per thread makes a call one round trip. Behind a
+    proxy (HTTPS_PROXY set) it falls back to urllib, which knows how to use
+    one."""
+    if os.environ.get("HTTPS_PROXY") or os.environ.get("https_proxy"):
+        return _urllib_transport(token)
+    local = threading.local()
+
+    def call(method, params, timeout=15):
+        body = json.dumps(params).encode()
+        for attempt in (0, 1):
+            conn = getattr(local, "conn", None)
+            reused = conn is not None
+            if conn is None:
+                conn = local.conn = _Conn(HOST, timeout=timeout)
+            conn.timeout = timeout
+            if conn.sock:
+                conn.sock.settimeout(timeout)
+            try:
+                conn.request("POST", f"/bot{token}/{method}", body,
+                             {"Content-Type": "application/json"})
+                r = conn.getresponse()
+                return _answer(r.status, r.read())
+            except (http.client.HTTPException, OSError) as e:
+                conn.close()
+                local.conn = None
+                # a kept connection Telegram closed while it sat idle: the
+                # request never got there, so once more on a new one
+                if reused and attempt == 0 and not isinstance(e, socket.timeout):
+                    continue
+                raise TgError(0, f"network: {e}")
+    return call
+
+
+def _urllib_transport(token):
     def call(method, params, timeout=15):
         req = urllib.request.Request(
             f"{API}/bot{token}/{method}", data=json.dumps(params).encode(),
@@ -105,6 +190,11 @@ class Wire:
         self.lock = threading.RLock()
         self.conn = sqlite3.connect(path, check_same_thread=False)
         self.conn.row_factory = sqlite3.Row
+        # this file is conversation, not the event log: a power cut may cost
+        # the last outbox write, never the evening. WAL and NORMAL make every
+        # write here a memory copy instead of a disk flush
+        self.conn.execute("PRAGMA journal_mode=WAL")
+        self.conn.execute("PRAGMA synchronous=NORMAL")
         self.conn.executescript(SCHEMA)
         self._migrate()
         self.conn.commit()
@@ -113,7 +203,8 @@ class Wire:
         """Columns added after a telegram.db was first created. Adding is the
         only change ever made, so an older file just gains them."""
         want = {"chats": {"card_hash": "TEXT DEFAULT ''", "last_ack": "REAL DEFAULT 0"},
-                "claims": {"msgs": "TEXT DEFAULT '[]'"}}
+                "claims": {"msgs": "TEXT DEFAULT '[]'"},
+                "outbox": {"after": "REAL"}}
         for table, cols in want.items():
             have = {r[1] for r in self.conn.execute(f"PRAGMA table_info({table})")}
             for col, decl in cols.items():
@@ -178,9 +269,37 @@ class Wire:
                        now + ttl if ttl else None, json.dumps(ref or {})))
         return cur.rowcount > 0
 
+    def enqueue_many(self, items):
+        """Queue a plan's worth of notices in one write. Each is (key, chat,
+        method, params, prio, ttl, ref); a notice that was taken back and is
+        true again gets a new key, so it is said again. Returns how many are new."""
+        now, new = time.time(), 0
+        with self.lock:
+            for key, chat, method, params, prio, ttl, ref in items:
+                if (ref or {}).get("kind"):
+                    while True:
+                        row = self.conn.execute("SELECT closed FROM outbox WHERE key=?",
+                                                (key,)).fetchone()
+                        if not row or not row[0]:
+                            break
+                        key += "+"
+                cur = self.conn.execute(
+                    "INSERT OR IGNORE INTO outbox (key, chat_id, method, payload, prio,"
+                    " created, expires, ref) VALUES (?,?,?,?,?,?,?,?)",
+                    (key, chat, method, json.dumps(params), prio, now,
+                     now + ttl if ttl else None, json.dumps(ref or {})))
+                new += cur.rowcount > 0
+            self.conn.commit()
+        return new
+
+    def later(self, row_id, secs):
+        """Telegram said slow down for this one: keep it, try it again after."""
+        self._q("UPDATE outbox SET after=? WHERE id=?", (time.time() + secs, row_id))
+
     def due(self, limit=20):
-        rows = self._all("SELECT * FROM outbox WHERE state='queued' ORDER BY prio, id LIMIT ?",
-                         (limit,))
+        rows = self._all("SELECT * FROM outbox WHERE state='queued'"
+                         " AND (after IS NULL OR after <= ?) ORDER BY prio, id LIMIT ?",
+                         (time.time(), limit))
         for r in rows:
             r["params"] = json.loads(r.pop("payload"))
             r["ref"] = json.loads(r["ref"] or "{}")
@@ -190,19 +309,6 @@ class Wire:
         self._q("UPDATE outbox SET state=?, message_id=COALESCE(?, message_id), error=?,"
                 " tries=COALESCE(?, tries) WHERE id=?",
                 (state, message_id, error[:300], tries, row_id))
-
-    def fresh_key(self, key):
-        """The key to plan a notice under. Normally the key itself; but a
-        notice already taken back (a table call edited to "put back") that
-        is true again — a rewind reinstated the seating — has to be said
-        again, and the old key would swallow it."""
-        with self.lock:
-            while True:
-                row = self.conn.execute("SELECT closed FROM outbox WHERE key=?",
-                                        (key,)).fetchone()
-                if not row or not row[0]:
-                    return key
-                key += "+"
 
     def open_sent(self):
         rows = self._all("SELECT id, key, chat_id, message_id, ref FROM outbox"
@@ -305,8 +411,9 @@ class Bot:
         self.cfg = self._load()
         self.wire = Wire(os.path.join(data_dir, "telegram.db"))
         self._transport = transport
-        self.call = transport or (http_transport(self.cfg["token"])
-                                  if self.cfg.get("token") else None)
+        self._times = deque(maxlen=60)   # recent call durations, for the console
+        self.call = self._timed(transport or (http_transport(self.cfg["token"])
+                                              if self.cfg.get("token") else None))
         self.convo = Conversation(self)
         self.status = {"ok": None, "error": "", "last_ok": 0}
         self._stop = threading.Event()
@@ -315,6 +422,36 @@ class Bot:
         self._gen = 0             # bumped on every start: an old thread still in a
                                   # long poll sees it has been replaced and leaves
         self._last_plan = (None, 0.0)
+        # Players are handled side by side, each chat in its own order: one
+        # listener working through updates one at a time made the fortieth
+        # tap after an announcement wait for the thirty-nine before it
+        self._pool = ThreadPoolExecutor(max_workers=8, thread_name_prefix="tg-chat")
+        self._lines = {}                 # chat -> updates waiting, while one runs
+        self._lines_lock = threading.Lock()
+
+    SLOW = 2.0      # a call taking longer than this is worth a line in the log
+
+    def _timed(self, call):
+        """Every call, timed. The console shows the typical one, which is the
+        first thing to look at when the bot feels slow."""
+        if call is None:
+            return None
+
+        def timed(method, params, timeout=15):
+            t = time.monotonic()
+            try:
+                return call(method, params, timeout=timeout)
+            finally:
+                if method != "getUpdates":
+                    took = time.monotonic() - t
+                    self._times.append(took)
+                    if took > self.SLOW:
+                        log(f"{method} took {took:.1f}s")
+        return timed
+
+    def latency_ms(self):
+        xs = sorted(self._times)
+        return int(xs[len(xs) // 2] * 1000) if xs else None
 
     # ------------------------------------------------------------ config
 
@@ -358,7 +495,7 @@ class Bot:
         if not token or ":" not in token:
             raise ValueError("that does not look like a bot token — it is the long "
                              "line @BotFather sends, with a colon in it")
-        call = self._transport or http_transport(token)
+        call = self._timed(self._transport or http_transport(token))
         try:
             me = call("getMe", {})
             call("deleteWebhook", {"drop_pending_updates": False})
@@ -537,12 +674,49 @@ class Bot:
             return 0              # replaced while waiting; the new listener has these
         self._ok()
         for u in ups:
-            try:
-                self.convo.on_update(u)
-            except Exception as e:
-                log("update:", repr(e))
-            self.wire.put("offset", u["update_id"] + 1)
+            if gen is None:
+                self._handle(u)   # stepping through by hand (pump): in order, now
+            else:
+                self._hand_off(u)
+        if ups:
+            self.wire.put("offset", ups[-1]["update_id"] + 1)
         return len(ups)
+
+    def _handle(self, u):
+        try:
+            self.convo.on_update(u)
+        except Exception as e:
+            log("update:", repr(e))
+
+    @staticmethod
+    def _chat_of(u):
+        for k in ("message", "callback_query", "my_chat_member"):
+            if k in u:
+                body = u[k]
+                return (body.get("from") or body.get("chat") or {}).get("id")
+        return None
+
+    def _hand_off(self, u):
+        """Run this update beside everybody else's, but after anything still
+        running for the same chat — a tap must not overtake the one before."""
+        chat = self._chat_of(u)
+        with self._lines_lock:
+            line = self._lines.get(chat)
+            if line is not None:
+                line.append(u)
+                return
+            self._lines[chat] = deque([u])
+        self._pool.submit(self._drain, chat)
+
+    def _drain(self, chat):
+        while True:
+            with self._lines_lock:
+                line = self._lines[chat]
+                if not line:
+                    del self._lines[chat]
+                    return
+                u = line.popleft()
+            self._handle(u)
 
     PLAN_EVERY = 15      # the board's times drift even when nothing happens
 
@@ -561,17 +735,14 @@ class Bot:
         with s.lock:
             notices = notify.plan(self.app, ok, now)
             after = notify.settle(self.app, self.wire.open_sent(), ok)
-        new = 0
-        for n in notices:
-            key = self.wire.fresh_key(n["key"]) if n["ref"].get("kind") else n["key"]
-            new += self.wire.enqueue(key, n["chat"], n["method"], n["params"],
-                                     n["prio"], n["ttl"], n["ref"])
+        items = [(n["key"], n["chat"], n["method"], n["params"], n["prio"], n["ttl"],
+                  n["ref"]) for n in notices]
+        items += [(f"{'del' if a['method'] == 'deleteMessage' else 'end'}:{a['row']['key']}",
+                   a["row"]["chat"], a["method"], a["params"], 0, None, None)
+                  for a in after]
+        new = self.wire.enqueue_many(items) if items else 0
         for a in after:
-            row = a["row"]
-            verb = "del" if a["method"] == "deleteMessage" else "end"
-            self.wire.enqueue(f"{verb}:{row['key']}", row["chat"], a["method"],
-                              a["params"], prio=0)
-            self.wire.close(row["id"])
+            self.wire.close(a["row"]["id"])
         new += self.refresh_cards(ok)
         if new or after:
             self._kick.set()
@@ -600,11 +771,16 @@ class Bot:
                 {"chat_id": chat_id, "message_id": c["card_msg"], "text": text,
                  "parse_mode": "HTML", "link_preview_options": {"is_disabled": True},
                  "reply_markup": {"inline_keyboard": kb}},
-                prio=1, ttl=3600, ref={"card": h})
+                prio=CARD_PRIO, ttl=3600, ref={"card": h})
         return n
 
-    def flush(self, limit=40):
-        """Send what is due. Returns how many went, so the loop can idle."""
+    def flush(self, limit=4):
+        """Send what is due. Returns how many went, so the loop can idle.
+
+        A few at a time, asked for again each round: anything queued while
+        this round was sending — a table call after a result — goes ahead of
+        the card edits and newsletters still waiting, instead of behind the
+        whole batch they were fetched in."""
         if not self.on:
             return 0
         sent = 0
@@ -633,8 +809,10 @@ class Bot:
                 sent += 1
             except TgError as e:
                 if e.code == 429:
-                    self._stop.wait(min(60, e.retry_after or 5))
-                    return sent
+                    # usually one chat getting too much at once: hold that
+                    # message, not the whole queue behind it
+                    self.wire.later(row["id"], min(60, e.retry_after or 5))
+                    continue
                 if e.code == 403:
                     self.wire.set_chat(row["chat_id"], blocked=1)
                     self.wire.mark(row["id"], "dead", error=e.desc)
@@ -660,7 +838,7 @@ class Bot:
         sandbox-free way of stepping through a conversation."""
         self.poll()
         self.plan(force=True)
-        while self.flush():
+        while self.flush(limit=40):
             pass
 
     # ------------------------------------------------------------ console
@@ -770,6 +948,7 @@ class Bot:
             "ok": self.status.get("ok"), "error": self.status.get("error", ""),
             "last_ok": self.status.get("last_ok", 0),
             "queued": self.wire.queued_count(),
+            "ms": self.latency_ms(),
             "followers": len(self.wire.chats(news_only=True)),
             "audiences": self.audiences(),
             "threads": sorted(threads.values(), key=lambda t: -t["last"])[:40],
