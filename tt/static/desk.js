@@ -124,7 +124,11 @@ const entById = id => D.entrants.find(e => e.id === id);
 const regNames = r => [r.name, r.partner_name].filter(Boolean);
 const label = names => names.filter(Boolean).join(' & ');
 const entNames = e => e.players.length ? e.players : [e.name];
+/* Before the doors open only the words change — "Registered", "Remove" for a
+   no-show. Checking in works whenever somebody is standing there: a helper
+   who comes early, a regular who hands over their entry the day before. */
 const beforeDoors = () => D.phase === 'announced' || D.phase === 'registration';
+const noShow = () => beforeDoors() ? 'Remove' : 'No show';
 const personNamed = n => D.people.find(p => nk(p.name) === nk(n));
 // a team name somebody chose, as opposed to the two names joined up
 const teamName = e => e.players.length > 1 && ![label(e.players), e.players.join(' / ')]
@@ -335,9 +339,8 @@ function cardHTML(card) {
   const k = esc(card.key);
   // anything that needs deciding is decided in the panel, where all of it shows
   const acts = card.leftover || (card.distinct && card.here) ? ''
-    : beforeDoors() ? (card.stack ? '' : `<button class="btn ghost tiny" data-act="drop" data-k="${k}">Remove</button>`)
-    : card.seeking ? `<button class="btn ghost tiny" data-act="drop" data-k="${k}">No show</button>`
-    : `${card.matched || card.stack ? '' : `<button class="btn ghost tiny" data-act="drop" data-k="${k}">No show</button>`}
+    : card.seeking ? `<button class="btn ghost tiny" data-act="drop" data-k="${k}">${noShow()}</button>`
+    : `${card.matched || card.stack ? '' : `<button class="btn ghost tiny" data-act="drop" data-k="${k}">${noShow()}</button>`}
        <button class="btn primary tiny" data-act="checkin" data-k="${k}">Check in</button>`;
   const cls = [card.stack ? ' stack' : '', card.leftover ? ' leftover' : ''].join('');
   return `<div class="card${sel}${cls}" data-sel-reg="${k}">
@@ -360,7 +363,7 @@ function renderExpected() {
   const pair = !filtering() && (cupById(V.cup) || {}).entry === 'pair';
   const gone = D.registrations.filter(r => cups.includes(r.cup_id)
     && ['dropped', 'duplicate', 'cancelled'].includes(r.status) && matchQ(regNames(r)));
-  const ready = !filtering() && !beforeDoors() ? readyCards(V.cup) : [];
+  const ready = !filtering() ? readyCards(V.cup) : [];
   const all = V.confirm === 'all:' + V.cup;
   return `<section class="col ${V.phone === 'here' ? 'hideP' : ''}">
     <div class="colhead"><h2>${beforeDoors() ? 'Registered' : 'Expected'}</h2>
@@ -419,10 +422,6 @@ function walkButton(st) {
 }
 
 function renderHere() {
-  if (beforeDoors()) return `<section class="col ${V.phone === 'exp' ? 'hideP' : ''}">
-    <div class="colhead"><h2>Here</h2></div>
-    <div class="empty">Check-in opens with the doors. Until then, tidy the list on the left:
-      fix names, take off what will not come. Nothing there reaches a draw.</div></section>`;
   const cup = cupById(V.cup) || {};
   const pool = D.entrants.filter(e => filtering() || e.cup_id === V.cup);
   const shown = FILTERS.filter(([k, , f]) => k === 'all' || k === V.filter || pool.some(f));
@@ -522,7 +521,7 @@ function entrantDetail(e, close) {
 function cardDetail(card, close) {
   const here = card.here;
   const k = esc(card.key);
-  const doors = !beforeDoors();
+  const doors = true;          // check-in is open in every phase
   const who = esc(label(card.names)), same = card.names.length > 1 ? 'team' : 'person';
   const n = card.regs.length;
   const where = here ? `in at ${esc(clock(here.added_ts))}${D.cups.length > 1 ? ' · ' + esc(cupName(here.cup_id)) : ''}` : '';
@@ -556,7 +555,7 @@ function cardDetail(card, close) {
           + field(`r-t-${r.id}`, 'Team name', r.team_name, `data-edit="reg" data-f="team_name" data-r="${r.id}" placeholder="optional"`) : ''}
       </div>
       <div class="erow"><span class="t">sent ${esc(when(r.created_ts))}${r.kind === 'seeking' ? ' · looking for a partner' : ''}</span>
-        <button class="btn ghost tiny" data-act="drop-one" data-r="${r.id}">${doors ? 'No show' : 'Remove'}</button></div>
+        <button class="btn ghost tiny" data-act="drop-one" data-r="${r.id}">${noShow()}</button></div>
       ${r.note ? `<span class="nt">“${esc(r.note)}”</span>` : ''}
     </div>`).join('')}</div>
     ${pick ? `<p class="small muted" style="margin:0">Checking in uses the entry picked above — the newest
@@ -568,7 +567,7 @@ function cardDetail(card, close) {
       : 'Entered on Telegram. Checking in links that account to this person, so their table calls go to their phone.'}</p>` : ''}
     ${card.seeking ? '<p class="small muted" style="margin:0">The next person looking for a partner in this cup is matched with them automatically. Then they check in together as one team.</p>' : ''}
     ${doors && !card.seeking && !here ? `<div class="actions"><button class="btn primary" data-act="checkin" data-k="${k}">Check in${card.matched ? ' as a team' : ''}</button></div>` : ''}
-    ${doors ? '' : '<p class="small muted" style="margin:0">Check-in opens with the doors.</p>'}`;
+`;
 }
 
 function renderDetail() {
@@ -601,7 +600,7 @@ function renderDir() {
   const admin = D.role === 'admin';
   const row = p => {
     let add = '';
-    if (!p.playing && !beforeDoors()) add = V.dirAdd === p.id
+    if (!p.playing) add = V.dirAdd === p.id
       ? D.cups.map(c => `<button class="btn tiny" data-act="dir-add" data-p="${p.id}" data-c="${c.id}">${esc(c.name)}</button>`).join(' ')
         + ' <button class="btn ghost tiny" data-act="dir-cancel">Cancel</button>'
       : `<button class="btn tiny" data-act="dir-pick" data-p="${p.id}">Add to tonight…</button>`;
@@ -641,14 +640,14 @@ function render() {
   const counts = c => {
     const p = cardsFor(c.id);
     const n = D.entrants.filter(e => e.cup_id === c.id && e.status !== 'withdrawn').length;
-    return `${p.cards.length + p.seekers.length} expected${beforeDoors() ? '' : ` · ${n} here`}`;
+    return `${p.cards.length + p.seekers.length} expected · ${n} here`;
   };
   document.title = `Desk · ${D.event.name || 'Table tennis'}`;
   const head = `<header class="bar">
       <span class="word">TTT</span>
       <div><h1>${esc(D.event.name || 'Table tennis')}</h1><div class="phase">${esc(phaseLine)}</div></div>
-      <div class="tally"><span><b>${pending}</b> entries expected</span>${beforeDoors() ? ''
-        : `<span><b>${here}</b> here</span><span class="live"><b>${playing}</b> playing</span>`}</div>
+      <div class="tally"><span><b>${pending}</b> entries expected</span><span><b>${here}</b> here</span>${
+        playing ? `<span class="live"><b>${playing}</b> playing</span>` : ''}</div>
       <div class="right"><span class="role ${D.role}">${D.role === 'door' ? 'Door' : 'Admin'}</span>
         <a class="btn ghost tiny" href="${CONSOLE.href}${SIMQ}" target="_blank">${CONSOLE.label}</a>
         <span id="pulse" class="pulse on" title="live"></span></div>
@@ -946,7 +945,7 @@ document.addEventListener('keydown', ev => {
     return;
   }
   if (ev.key === '/') { ev.preventDefault(); const q = $('q'); if (q) q.focus(); }
-  else if (ev.key === 'n' && !beforeDoors()) { ev.preventDefault(); V.phone = 'here'; render(); const n = $('w-name'); if (n) n.focus(); }
+  else if (ev.key === 'n') { ev.preventDefault(); V.phone = 'here'; render(); const n = $('w-name'); if (n) n.focus(); }
   else if (ev.key === 'ArrowDown' || ev.key === 'ArrowUp') {
     const cards = V._cards || [];
     if (!cards.length) return;
@@ -957,7 +956,7 @@ document.addEventListener('keydown', ev => {
     const c = document.querySelector('.card.sel');
     if (c) c.scrollIntoView({ block: 'nearest' });
   }
-  else if (ev.key === 'Enter' && V.sel && V.sel.key && !beforeDoors()) {
+  else if (ev.key === 'Enter' && V.sel && V.sel.key) {
     const card = cardByKey(V.sel.key);
     if (!card || card.seeking) return;
     ev.preventDefault();

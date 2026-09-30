@@ -114,8 +114,9 @@ Layout, as in the mockup:
 - **Resolved** at the bottom: cleared duplicates, no-shows, cancellations by
   the registrant, each with **Put back**. Nothing leaves the list without
   landing here.
-- Before the doors open the column is "Registered", Check in is hidden and
-  No show reads Remove.
+- Before the doors open the column is "Registered" and No show reads Remove.
+  Checking in and walk-ins work in every phase, for both keys: somebody
+  standing there is somebody standing there.
 
 ### Here
 
