@@ -22,7 +22,7 @@ let D = null;              // last payload
 let etag = '';
 const V = {                // what this viewer is looking at; never sent anywhere
   view: 'desk', cup: '', q: '', filter: 'all', sel: null, phone: 'exp',
-  kb: -1, dirQ: '', dirAdd: '', confirm: '', stale: false, pick: {},
+  kb: -1, dirQ: '', dirAdd: '', confirm: '', stale: false, pick: {}, tgLink: null,
   walk: { name: '', partner: '', seek: false },
 };
 try { V.cup = localStorage.getItem('tt_desk_cup') || ''; } catch (e) { }
@@ -262,6 +262,39 @@ function readyCards(cup) {
   });
 }
 
+/* ------------------------------------------------------------- Telegram
+
+   An optional layer (docs/telegram.md): with no bot connected nothing here
+   shows. The door's part in it is witnessing — confirming an entry made on
+   Telegram links that account, and for anybody else the door shows a code
+   they scan. Nobody is ever linked by name. */
+
+function tgChip(regs) {
+  const tg = regs.filter(r => r.tg);
+  if (!tg.length) return '';
+  const known = tg.some(r => r.person_id);
+  return `<span class="chip tg" title="${known ? 'Entered on Telegram by somebody the club already knows'
+    : 'Entered on Telegram — checking in links the account to this person'}">Telegram</span>`;
+}
+
+function tgBlock(e) {
+  if (!D.telegram || !(e.people || []).length) return '';
+  const link = V.tgLink && V.tgLink.ent === e.id ? V.tgLink : null;
+  if (link) return `<div class="tglink">
+      <div class="qr"><img src="/api/qr.svg?u=${encodeURIComponent(link.url)}" alt="QR code"
+        onerror="this.parentNode.hidden=true"></div>
+      <p class="small" style="margin:0">${esc(link.name)} scans this with their phone camera, Telegram
+        opens, they tap Start — from then on their table calls come to their phone. Works once, tonight.</p>
+      <div class="key">${esc(link.url)}</div>
+      <div class="actions"><button class="btn tiny" data-act="tg-done">Done</button></div>
+    </div>`;
+  const night = D.phase === 'doors' || D.phase === 'live';
+  return `<div class="tgrow">${e.people.map(p => p.tg
+    ? `<span class="small"><span class="chip tg">✈︎</span> ${esc(p.name)} gets table calls on Telegram</span>`
+    : night ? `<button class="btn ghost tiny" data-act="tg-link" data-e="${e.id}" data-p="${esc(p.id)}"
+        title="Show ${esc(p.name)} a code to scan">Link ${esc(p.name)}’s Telegram</button>` : '').join('')}</div>`;
+}
+
 /* Near matches get a hint and nothing else: somebody looking for a partner
    who is already named in a team's entry, or an entry kept apart from
    another with the same names. */
@@ -293,6 +326,9 @@ function cardHTML(card) {
     card.leftover ? '<span class="chip warn">already here — same?</span>'
       : card.stack ? `<span class="chip warn">registered ${card.regs.length}×</span>`
       : card.distinct ? `<span class="chip dim">separate ${card.names.length > 1 ? 'team' : 'person'}</span>` : '',
+    tgChip(card.regs),
+    card.regs.some(r => r.rsvp === 'yes')
+      ? '<span class="chip" title="Answered the reminder on Telegram: they are coming">coming ✓</span>' : '',
     alsoIn(card.names, card.cup),
     `<span>${card.regs.map(r => esc(when(r.created_ts))).join(' · ')}</span>`,
   ].filter(Boolean).join('');
@@ -342,7 +378,7 @@ function renderExpected() {
       <div class="list">${seekers.map(cardHTML).join('') || '<div class="empty">Nobody waiting for a partner.</div>'}</div>` : ''}
     <details class="resolved" id="resolved"${V.openRes ? ' open' : ''}><summary>Taken off the list · ${gone.length}</summary>
       ${gone.length ? `<ul>${gone.map(r => `<li><span>${cupChip(r.cup_id)} <b>${esc(label(regNames(r)))}</b> · sent ${esc(when(r.created_ts))}
-        · ${r.status === 'duplicate' ? 'duplicate' : r.status === 'cancelled' ? 'cancelled with their link'
+        · ${r.status === 'duplicate' ? 'duplicate' : r.status === 'cancelled' ? 'cancelled by them'
           : beforeDoors() ? 'removed' : 'no show'}</span>
         <button class="btn ghost tiny" data-act="putback" data-r="${r.id}">Put back</button></li>`).join('')}</ul>`
         : '<p style="margin:8px 0 0">Nothing yet. No-shows, removed entries, cleared duplicates and cancellations land here, and can be put back.</p>'}
@@ -421,7 +457,8 @@ function renderHere() {
         <div class="side"><span class="chip ${cls}">${esc(lab)}${e.status === 'playing' && e.table ? ' · T' + e.table : ''}</span></div>
         <div class="meta">${cupChip(e.cup_id)}${e.added_ts ? `<span>in at ${esc(clock(e.added_ts))}</span>` : ''}${
           e.status === 'playing' && e.vs ? `<span>vs ${esc(e.vs)}</span>` : ''}${
-          e.registration_id ? '' : '<span>walk-in</span>'}${alsoIn(entNames(e), e.cup_id)}</div>
+          e.registration_id ? '' : '<span>walk-in</span>'}${alsoIn(entNames(e), e.cup_id)}${
+          (e.people || []).some(p => p.tg) ? '<span class="chip tg" title="Gets table calls on Telegram">✈︎</span>' : ''}</div>
       </div>`;
     }).join('') || `<div class="empty">${filtering() ? 'Nobody matches.' : 'Nobody in this group.'}</div>`}</div>
   </section>`;
@@ -470,6 +507,7 @@ function entrantDetail(e, close) {
           ? `<button class="btn ghost tiny" data-act="remove" data-e="${e.id}">${r ? 'Undo check-in' : 'Remove'}</button>`
           : `<button class="btn ghost tiny" data-act="gone-ask" data-e="${e.id}">Gone home…</button>`}
       </div>`}
+    ${gone ? '' : tgBlock(e)}
     <dl class="facts">
       <dt>In</dt><dd>${e.added_ts ? 'at ' + esc(clock(e.added_ts)) + ' · ' : ''}${r
         ? 'registered ' + esc(when(r.created_ts)) : 'walk-in'}</dd>
@@ -525,6 +563,9 @@ function cardDetail(card, close) {
       unless you choose another, because a second entry is usually the correction. The other${n > 2 ? 's stay' : ' stays'}
       here, marked, until you say whether ${n > 2 ? 'they are' : 'it is'} the same ${same}.</p>` : ''}
     ${hintsFor(card).map(h => `<p class="small muted" style="margin:0">${esc(h)}</p>`).join('')}
+    ${card.regs.some(r => r.tg) ? `<p class="small muted" style="margin:0">${card.regs.some(r => r.tg && r.person_id)
+      ? 'Entered on Telegram by somebody the club already knows.'
+      : 'Entered on Telegram. Checking in links that account to this person, so their table calls go to their phone.'}</p>` : ''}
     ${card.seeking ? '<p class="small muted" style="margin:0">The next person looking for a partner in this cup is matched with them automatically. Then they check in together as one team.</p>' : ''}
     ${doors && !card.seeking && !here ? `<div class="actions"><button class="btn primary" data-act="checkin" data-k="${k}">Check in${card.matched ? ' as a team' : ''}</button></div>` : ''}
     ${doors ? '' : '<p class="small muted" style="margin:0">Check-in opens with the doors.</p>'}`;
@@ -651,9 +692,13 @@ async function checkIn(card, asName) {
     () => api('remove_entrant', { id: out.entrant_id }));
 }
 
-async function dropRegs(regs, what, status = 'dropped') {
+async function dropRegs(regs, what, status = 'dropped', sameAs = '') {
   const done = [];
-  for (const r of regs) if (await api('update_registration', { id: r.id, status })) done.push(r.id);
+  for (const r of regs) {
+    const data = { id: r.id, status };
+    if (sameAs) data.same_as = sameAs;
+    if (await api('update_registration', data)) done.push(r.id);
+  }
   if (!done.length) return;
   if (V.sel && regs.some(r => V.sel.key === r.id)) V.sel = null;
   toast(`${what} the list`, async () => {
@@ -767,7 +812,16 @@ document.addEventListener('click', async ev => {
     if (act === 'checkin-as' && card) return checkIn(card, freeName(card.names[0]));
     if (act === 'drop' && card) return dropRegs(card.regs, `${label(card.names)} taken off`);
     if (act === 'dup' && card)
-      return dropRegs(card.regs, `${label(card.names)} cleared as a duplicate — taken off`, 'duplicate');
+      // same_as: whoever is already here — an entry from Telegram hands them its account
+      return dropRegs(card.regs, `${label(card.names)} cleared as a duplicate — taken off`, 'duplicate',
+        card.here ? card.here.id : '');
+    if (act === 'tg-link') {
+      const e = entById(d.e), who = e && (e.people || []).find(p => p.id === d.p);
+      const out = await api('tg_door_link', { person_id: d.p, url: location.origin + '/' });
+      if (out && out.url) { V.tgLink = { ent: d.e, name: who ? who.name : '', url: out.url }; render(); }
+      return;
+    }
+    if (act === 'tg-done') { V.tgLink = null; return render(); }
     if (act === 'distinct' && card) {
       const done = [];
       for (const r of card.regs) if (await api('update_registration', { id: r.id, distinct: true })) done.push(r.id);

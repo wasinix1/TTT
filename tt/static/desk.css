@@ -179,3 +179,11 @@ label.l{display:block;font-size:11px;font-weight:700;letter-spacing:.07em;text-t
 .entry.chosen{box-shadow:inset 0 0 0 2px var(--chalk)}
 .entry .pick{display:flex;gap:6px;align-items:center;font-size:12px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:var(--muted);margin-bottom:6px;cursor:pointer}
 .entry .pick input{accent-color:var(--chalk);margin:0}
+
+/* ---- Telegram (optional layer) */
+.chip.tg{background:#e8f1f8;color:#1f5f8b}
+.tgrow{display:flex;flex-wrap:wrap;gap:6px 10px;align-items:center}
+.tglink{background:var(--raised);border-radius:var(--r-sm);padding:12px;display:flex;flex-direction:column;gap:10px}
+.tglink .qr{background:#fff;border-radius:var(--r-sm);padding:8px;align-self:center}
+.tglink .qr img{display:block;width:200px;height:200px}
+.tglink .key{font-size:12px;color:var(--muted);overflow-wrap:anywhere}

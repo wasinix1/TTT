@@ -257,7 +257,8 @@ class App:
         """The registration desk's payload, cached per version like
         state_json. Only admin and door ever get here."""
         v = self.store.version
-        key = ("desk", v, role)
+        # connecting the bot is not a log event, so it is part of the key
+        key = ("desk", v, role, bool(self._tg_name()))
         hit = self._desk_cache.get(key)
         if hit is None:
             hit = json.dumps(self.desk_state(role)).encode()
@@ -296,15 +297,32 @@ class App:
                     "table": t[0] if t else None, "vs": t[1] if t else "",
                     "removable": not self._why_not_removable(e),
                     "added_ts": e.added_ts, "registration_id": from_reg.get(e.id, ""),
+                    # Telegram: who here gets their table calls, and who could
+                    # still be linked at the door (a person, not a name)
+                    "people": [{"id": pl.person_id, "name": pl.name,
+                                "tg": bool(pl.person_id in s.people
+                                           and s.people[pl.person_id].tg_id)}
+                               for pl in (s.players[p] for p in e.player_ids if p in s.players)
+                               if pl.person_id],
                 })
             ents.sort(key=lambda e: e["name"].casefold())
+
+            def reg_dto(r):
+                # an account number is nobody's business at the door: only
+                # whether the entry came from Telegram, and whether the account
+                # is somebody the club already knows
+                d = r.to_dict()
+                d["tg"] = bool(d.pop("tg_id", None))
+                return d
+
             return {
+                "telegram": bool(self._tg_name()),
                 "version": s.version, "role": role,
                 "event": {k: s.event.get(k, "") for k in ("name", "starts_at", "venue")},
                 "phase": s.phase(), "now": time.time(),
                 "cups": [{k: c[k] for k in ("id", "name", "entry", "registration")}
                          for c in (s.cups[i].to_dict() for i in s.cup_order if i in s.cups)],
-                "registrations": [r.to_dict() for r in regs],
+                "registrations": [reg_dto(r) for r in regs],
                 "entrants": ents,
                 "people": [{"id": p.id, "name": p.name, "playing": bool(s.person_playing(p.id))}
                            for p in (s.people[i] for i in s.people_order if i in s.people)],
@@ -343,7 +361,8 @@ class App:
             elif ty == "registration_update" and p.get("status") == "dropped" and reg(p["id"]):
                 line = f"Taken off the list: {who(reg(p['id']))}"
             elif ty == "registration_update" and p.get("status") == "cancelled" and reg(p["id"]):
-                line = f"Cancelled with their link: {who(reg(p['id']))}"
+                line = (f"Cancelled in Telegram: {who(reg(p['id']))}" if h["by"] == "telegram"
+                        else f"Cancelled with their link: {who(reg(p['id']))}")
             elif ty == "registration_update" and "note" in p and h["by"] == "public" and reg(p["id"]):
                 line = f"Note changed with their link: {who(reg(p['id']))}"
             elif ty == "registration_update" and p.get("status") == "duplicate" and reg(p["id"]):
@@ -351,6 +370,7 @@ class App:
             elif ty == "registration_update" and p.get("status") == "pending" and reg(p["id"]) \
                     and "entrant_id" not in p:
                 line = (f"Registered again with their link: {who(reg(p['id']))}" if h["by"] == "public"
+                        else f"Registered again in Telegram: {who(reg(p['id']))}" if h["by"] == "telegram"
                         else f"Put back on the list: {who(reg(p['id']))}")
             elif ty == "registration_update" and p.get("distinct") and reg(p["id"]):
                 line = (f"Kept as a separate {'team' if reg(p['id']).partner_name else 'person'}: "
@@ -1255,6 +1275,24 @@ class App:
                        else (chat or {}).get("first_name") or "")
         s.append("person_link", {"id": person_id, "tg_id": tg_id, "tg_name": tg_name})
 
+    def _carry_tg(self, dup, e):
+        """Somebody registered twice, once from Telegram, and the door let the
+        other entry in and cleared this one as the same team. The account
+        belongs to whoever is here now: the door has seen that they are the
+        same person, which is the witnessing a link needs (docs/telegram.md).
+        Without this their table calls would go nowhere."""
+        s = self.store
+        if not e:
+            return
+        mine = next((pid for pid in e.player_ids if pid in s.players and
+                     s.name_key(s.players[pid].name) == s.name_key(dup.name)),
+                    e.player_ids[0] if e.player_ids else None)
+        if mine in s.players:
+            self._link_tg(s.players[mine].person_id, dup.tg_id)
+        kept = next((r for r in s.registrations.values() if r.entrant_id == e.id), None)
+        if kept and not kept.tg_id:
+            s.append("registration_update", {"id": kept.id, "tg_id": dup.tg_id})
+
     def _refuse_duplicate(self, kind, name, partner=""):
         """Two people with the same name is how the wrong strength ends up
         on the wrong person, so the second one has to be told apart before
@@ -1342,20 +1380,26 @@ class App:
     def op_update_registration(self, p):
         """Correct an entry, take it off the list, or put it back.
 
-        Taken off is either a no-show (dropped) or the second copy of an entry
-        somebody sent twice (duplicate); both keep the entry, so Put back can
-        undo either. Confirmed is not settable here: that is what admit does,
-        and undoing it is removing the entrant, which puts the entry back."""
+        Taken off is a no-show (dropped), the second copy of an entry somebody
+        sent twice (duplicate), or the registrant calling it off themselves,
+        with their link or in Telegram (cancelled). All keep the entry, so Put
+        back can undo any of them. Confirmed is not settable here: that is
+        what admit does, and undoing it is removing the entrant, which puts
+        the entry back."""
         s = self.store
         reg = s.registrations.get(p.get("id") or "")
+        same_as = p.get("same_as")
+        p = {k: v for k, v in p.items() if k != "same_as"}
         if "status" in p:
-            if p["status"] not in ("pending", "dropped", "duplicate"):
-                raise ValueError("an entry is only ever waiting, taken off, or a duplicate")
+            if p["status"] not in ("pending", "dropped", "duplicate", "cancelled"):
+                raise ValueError("an entry is only ever waiting, taken off, a duplicate or cancelled")
             if reg and reg.status == "confirmed":
                 raise ValueError(f"{reg.name} is already checked in — undo the check-in instead")
         if "distinct" in p:
             p = dict(p, distinct=bool(p["distinct"]))
         s.append("registration_update", p)
+        if reg and reg.tg_id and p.get("status") == "duplicate" and same_as:
+            self._carry_tg(reg, s.entrants.get(same_as))
         if reg:
             self._match_seekers(reg.cup_id)     # whoever was left alone may have a new match
 
@@ -1573,6 +1617,9 @@ DOOR_OPS = frozenset({
     "update_player", "update_entrant",
     "set_resting", "withdraw", "remove_entrant",
     "add_from_directory",
+    # the QR code that links somebody's Telegram at the door: witnessing
+    # who is standing there is the door's job (docs/telegram.md)
+    "tg_door_link",
 })
 
 # An entry that is none of these is off the list: a no-show, a duplicate the
@@ -1666,7 +1713,7 @@ class Handler(BaseHTTPRequestHandler):
             if role not in ("admin", "door"):
                 return self._send(403, {"error": "the desk needs the admin or door link"})
             v, body = self.app.desk_json(role)
-            tag = f'W/"desk-{v}-{role}"'
+            tag = f'W/"desk-{v}-{role}-{int(bool(self.app._tg_name()))}"'
             if self.headers.get("If-None-Match") == tag:
                 self.send_response(304)
                 self.send_header("ETag", tag)
