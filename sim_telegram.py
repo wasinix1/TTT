@@ -923,6 +923,25 @@ def test_a_table_call_does_not_wait_behind_cards():
     shutil.rmtree(d)
 
 
+def test_the_console_sees_telegram_move():
+    print("\n[the console's Telegram line keeps up on a quiet night]")
+    app, fake, d = fresh()
+    app.telegram._shown = None
+    app.telegram._times.clear()
+    v0, _ = app.state_json("admin")
+    check(app.state("admin")["telegram"]["ms"] is None, "before any call there is no timing")
+    app.telegram.api("getMe", {})
+    v1, body = app.state_json("admin")
+    check(v1 != v0 and json.loads(body)["telegram"]["ms"] is not None,
+          "one call later the console shows it, with nothing else having happened")
+    fake.fail = TgError(0, "network: unreachable")
+    app.telegram.api("getMe", {})
+    v2, body = app.state_json("admin")
+    check(v2 != v1 and json.loads(body)["telegram"]["ok"] is False,
+          "and Telegram going away shows at once")
+    shutil.rmtree(d)
+
+
 def run():
     test_off_changes_nothing()
     test_connecting()
@@ -947,6 +966,7 @@ def run():
     test_the_menu_button_opens_the_app()
     test_a_crowd_is_answered_side_by_side()
     test_a_table_call_does_not_wait_behind_cards()
+    test_the_console_sees_telegram_move()
     test_the_desk_with_telegram()
 
 
