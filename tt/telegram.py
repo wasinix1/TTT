@@ -447,6 +447,7 @@ class Bot:
                     self._times.append(took)
                     if took > self.SLOW:
                         log(f"{method} took {took:.1f}s")
+                    self._publish()
         return timed
 
     def latency_ms(self):
@@ -586,11 +587,37 @@ class Bot:
 
     def _ok(self):
         self.status.update(ok=True, error="", last_ok=time.time())
+        self._publish()
 
     def _fail(self, why):
         if self.status.get("error") != why:
             log(why)
         self.status.update(ok=False, error=why)
+        self._publish()
+
+    SHOWN_EVERY = 20     # seconds between two console updates for a timing alone
+
+    def _publish(self):
+        """Tell the console when what it shows about Telegram has changed.
+
+        The console's state is cached per version of the event, and nothing
+        here is an event: without a nudge the status line kept whatever it
+        said when the page was first loaded — no timing on a quiet server,
+        "working" long after Telegram had stopped answering. Working or not
+        goes out at once; the timing, in coarse steps and at most every
+        twenty seconds."""
+        ms = self.latency_ms()
+        step = None if ms is None else (ms // 10 * 10 if ms < 200 else ms // 50 * 50)
+        now = time.monotonic()
+        health = (self.status.get("ok"), self.status.get("error"))
+        shown = getattr(self, "_shown", None)
+        if shown and shown[0] == health and shown[1] == step:
+            return
+        if shown and shown[0] == health and shown[1] is not None \
+                and now - shown[2] < self.SHOWN_EVERY:
+            return
+        self._shown = (health, step, now)
+        self.changed()
 
     # ------------------------------------------------------------ threads
 
