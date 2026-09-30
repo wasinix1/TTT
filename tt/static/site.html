@@ -171,6 +171,41 @@ body{padding-bottom:0}
 .back{display:inline-block;margin-top:26px;color:var(--muted);font-size:15px}
 .back:hover{color:var(--signal)}
 
+/* ------------------------------------------------ /me/<token>: your entry
+   One column: the entry, what you can still change, your link, and the way
+   back to the event as the biggest thing on the page. */
+.me{max-width:680px;display:flex;flex-direction:column;
+    padding:clamp(28px,4vw,52px) clamp(24px,4vw,52px)}
+@media (max-width:700px){ .me{padding:28px 22px} }
+.me > h2{font-size:clamp(30px,4.2vw,50px);font-weight:800;letter-spacing:-.02em;
+         line-height:1;margin:0 0 clamp(20px,3vw,28px);text-transform:none;color:var(--chalk)}
+.me .state{display:inline-block;font-size:12px;font-weight:700;letter-spacing:.07em;
+           text-transform:uppercase;padding:5px 9px;border-radius:5px;margin-bottom:14px;
+           background:var(--chalk);color:#fff}
+.me .state.cancelled,.me .state.dropped,.me .state.duplicate{background:var(--edge);color:var(--muted)}
+.me textarea{width:100%;background:var(--surface);color:var(--chalk);border:none;
+             border-bottom:2px solid transparent;border-radius:6px;padding:16px 18px;
+             font:inherit;font-size:17px;min-height:84px;resize:vertical;margin-top:22px}
+.me textarea:focus{outline:none;border-bottom-color:var(--signal)}
+.me .cta{display:block;width:100%}
+.me .cta.quiet{background:transparent;color:var(--muted);font-weight:500}
+.me .cta.quiet:hover{color:var(--signal);background:transparent}
+.me .okmsg{color:var(--chalk);font-weight:600;font-size:16px;margin:14px 0 0}
+#join .back-home{background:var(--signal);color:#fff;font-size:18px;font-weight:700;
+                 padding:20px 28px;margin-top:30px}
+#join .back-home:hover{background:var(--chalk)}
+.linkbox{margin-top:26px}
+.linkbox p{color:var(--muted);font-size:14.5px;line-height:1.5;margin:0 0 8px}
+.linkrow{display:flex;gap:2px}
+.linkrow input{flex:1;min-width:0;background:var(--surface);color:var(--muted);border:none;
+               border-radius:8px;padding:14px 16px;font:inherit;font-size:14px}
+#join .linkrow .cta{margin-top:0;width:auto;flex:none;padding:14px 20px}
+.done-card .linkbox .cta.ghost,.done-card .linkrow input{background:var(--raised)}
+/* what this phone has already registered, above a fresh form */
+.mine{background:var(--surface);border-radius:10px;padding:14px 18px;margin-bottom:16px;
+      display:flex;flex-direction:column;gap:6px;font-size:15px;color:var(--muted)}
+.mine a{color:var(--signal);font-weight:600}
+
 /* the dark tile beside the form: the cups named, then the fields */
 .join-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:2px}
 .join-note{background:var(--chalk);color:#fff;border-radius:10px;

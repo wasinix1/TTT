@@ -325,11 +325,16 @@ class App:
                     f" · {cup_name(p.get('cup_id'))}" if cup_name(p.get("cup_id")) else "")
             elif ty == "registration_update" and p.get("status") == "dropped" and reg(p["id"]):
                 line = f"Taken off the list: {who(reg(p['id']))}"
+            elif ty == "registration_update" and p.get("status") == "cancelled" and reg(p["id"]):
+                line = f"Cancelled with their link: {who(reg(p['id']))}"
+            elif ty == "registration_update" and "note" in p and h["by"] == "public" and reg(p["id"]):
+                line = f"Note changed with their link: {who(reg(p['id']))}"
             elif ty == "registration_update" and p.get("status") == "duplicate" and reg(p["id"]):
                 line = f"Cleared as a duplicate: {who(reg(p['id']))}"
             elif ty == "registration_update" and p.get("status") == "pending" and reg(p["id"]) \
                     and "entrant_id" not in p:
-                line = f"Put back on the list: {who(reg(p['id']))}"
+                line = (f"Registered again with their link: {who(reg(p['id']))}" if h["by"] == "public"
+                        else f"Put back on the list: {who(reg(p['id']))}")
             elif ty == "registration_update" and p.get("distinct") and reg(p["id"]):
                 line = (f"Kept as a separate {'team' if reg(p['id']).partner_name else 'person'}: "
                         f"{who(reg(p['id']))}")
@@ -990,12 +995,82 @@ class App:
             "team_name": text(p.get("team_name"), 60) if kind == "pair" else "",
             "note": text(p.get("note"), 500),
             "distinct": distinct,
+            "token": secrets.token_urlsafe(16),
             "ts": time.time(),
         })
         self._match_seekers(cup.id)
         mate = s.registrations.get(s.registrations[rid].matched_with or "")
         return {"registration_id": rid, "cup": cup.name,
-                "matched_with": mate.name if mate else ""}
+                "matched_with": mate.name if mate else "",
+                "token": s.registrations[rid].token}
+
+    # ---------------------------------------------------------- the link
+    #
+    # Whoever registered gets a personal link, /me/<token>. The token is the
+    # whole of the authorisation: it opens that one entry and nothing else,
+    # so these four ops are public (level 0) and each starts by finding the
+    # entry it names. Registrations are still not live state — the pool, the
+    # draw and the tables are only ever touched by the door.
+
+    def _reg_by_token(self, p):
+        t = str(p.get("token") or "")
+        if len(t) >= 16:
+            for r in self.store.registrations.values():
+                if r.token and secrets.compare_digest(r.token, t):
+                    return r
+        raise ValueError("Diesen Link kennen wir nicht — vielleicht ist er unvollständig.")
+
+    def _reg_changeable(self):
+        if self.store.phase() not in ("announced", "registration"):
+            raise ValueError("Die Veranstaltung läuft schon — sag vor Ort Bescheid.")
+
+    def op_reg_view(self, p):
+        s = self.store
+        r = self._reg_by_token(p)
+        cup = s.cups.get(r.cup_id)
+        before = s.phase() in ("announced", "registration")
+        return {
+            "name": r.name, "partner_name": r.partner_name, "team_name": r.team_name,
+            "kind": r.kind, "note": r.note, "status": r.status, "created_ts": r.created_ts,
+            "cup": cup.name if cup else "",
+            # a partner has been found; who it is, they hear at the door
+            "matched": bool(r.matched_with),
+            "event": s.event.get("name", ""),
+            "can_change": before and r.status == "pending",
+            "can_restore": before and r.status == "cancelled"
+                           and bool(cup) and cup.registration == "open",
+        }
+
+    def op_reg_note(self, p):
+        r = self._reg_by_token(p)
+        self._reg_changeable()
+        if r.status != "pending":
+            raise ValueError("Diese Anmeldung ist nicht mehr offen.")
+        note = " ".join(str(p.get("note") or "").split())[:500]
+        self.store.append("registration_update", {"id": r.id, "note": note})
+        return {}
+
+    def op_reg_cancel(self, p):
+        r = self._reg_by_token(p)
+        self._reg_changeable()
+        if r.status != "pending":
+            raise ValueError("Diese Anmeldung ist nicht mehr offen.")
+        self.store.append("registration_update", {"id": r.id, "status": "cancelled"})
+        self._match_seekers(r.cup_id)     # whoever was matched with them looks again
+        return {}
+
+    def op_reg_restore(self, p):
+        s = self.store
+        r = self._reg_by_token(p)
+        self._reg_changeable()
+        cup = s.cups.get(r.cup_id)
+        if r.status != "cancelled":
+            raise ValueError("Diese Anmeldung ist nicht abgemeldet.")
+        if not cup or cup.registration != "open":
+            raise ValueError("Für diese Kategorie ist die Anmeldung geschlossen.")
+        s.append("registration_update", {"id": r.id, "status": "pending"})
+        self._match_seekers(r.cup_id)
+        return {}
 
     def _team_entered(self, cup_id, name, partner):
         """Whether these two people, in either order, already have an entry in
@@ -1285,6 +1360,7 @@ OP_LEVEL = {
     "manual_match": 2, "manual_result": 1, "event_meta": 2, "rewind": 2,
     "new_event": 2, "create_event": 2, "set_phase": 2,
     "register": 0, "update_registration": 2,
+    "reg_view": 0, "reg_note": 0, "reg_cancel": 0, "reg_restore": 0,
     "sim_start": 2, "sim_stop": 2,
     "admit": 2, "add_registration": 2, "remove_entrant": 2, "remove_entrants": 2, "update_person": 2, "remove_person": 2, "add_from_directory": 2,
 }
@@ -1405,7 +1481,7 @@ class Handler(BaseHTTPRequestHandler):
         if path.startswith("/static/"):
             return self._static(path[len("/static/"):])
 
-        if path == "/join":
+        if path == "/join" or re.fullmatch(r"/me/[A-Za-z0-9_-]+/?", path):
             return self._site_page()
 
         # Role-scoped entry points always get the console: an admin holding

@@ -323,7 +323,7 @@ function renderExpected() {
   V._cards = cards.concat(seekers);
   const pair = !filtering() && (cupById(V.cup) || {}).entry === 'pair';
   const gone = D.registrations.filter(r => cups.includes(r.cup_id)
-    && (r.status === 'dropped' || r.status === 'duplicate') && matchQ(regNames(r)));
+    && ['dropped', 'duplicate', 'cancelled'].includes(r.status) && matchQ(regNames(r)));
   const ready = !filtering() && !beforeDoors() ? readyCards(V.cup) : [];
   const all = V.confirm === 'all:' + V.cup;
   return `<section class="col ${V.phone === 'here' ? 'hideP' : ''}">
@@ -342,9 +342,10 @@ function renderExpected() {
       <div class="list">${seekers.map(cardHTML).join('') || '<div class="empty">Nobody waiting for a partner.</div>'}</div>` : ''}
     <details class="resolved" id="resolved"${V.openRes ? ' open' : ''}><summary>Taken off the list · ${gone.length}</summary>
       ${gone.length ? `<ul>${gone.map(r => `<li><span>${cupChip(r.cup_id)} <b>${esc(label(regNames(r)))}</b> · sent ${esc(when(r.created_ts))}
-        · ${r.status === 'duplicate' ? 'duplicate' : beforeDoors() ? 'removed' : 'no show'}</span>
+        · ${r.status === 'duplicate' ? 'duplicate' : r.status === 'cancelled' ? 'cancelled with their link'
+          : beforeDoors() ? 'removed' : 'no show'}</span>
         <button class="btn ghost tiny" data-act="putback" data-r="${r.id}">Put back</button></li>`).join('')}</ul>`
-        : '<p style="margin:8px 0 0">Nothing yet. No-shows, removed entries and cleared duplicates land here, and can be put back.</p>'}
+        : '<p style="margin:8px 0 0">Nothing yet. No-shows, removed entries, cleared duplicates and cancellations land here, and can be put back.</p>'}
     </details>
   </section>`;
 }

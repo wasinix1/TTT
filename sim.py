@@ -687,6 +687,74 @@ def test_the_form_asks_before_a_team_registers_twice():
     shutil.rmtree(d)
 
 
+def test_the_personal_link():
+    print("\n[the personal link]")
+    app, d = fresh()
+    s = app.store
+    cup = door_event(app, entry="pair", kind="open_play")
+    out = app.act("public", "register", {"cup_id": cup, "kind": "pair", "name": "Lea Hoffmann",
+                                         "partner_name": "Ben Krüger", "note": "komme später"})
+    tok = out["token"]
+    check(len(tok) >= 20, "registering hands back a personal link")
+    blob = json.dumps([app.state("admin"), app.desk_state("admin"), app.public_state(), s.history(50)])
+    check(tok not in blob, "and it is in no payload and no log view, not even the admin's")
+
+    view = app.act("public", "reg_view", {"token": tok})
+    check(view["name"] == "Lea Hoffmann" and view["status"] == "pending" and view["can_change"],
+          "the link opens that entry")
+    other = app.act("public", "register", {"cup_id": cup, "kind": "seeking", "name": "Kim"})["token"]
+    check(app.act("public", "reg_view", {"token": other})["name"] == "Kim"
+          and "partner_name" in view and "token" not in view, "and only that one")
+    for bad in ("", "short", tok[:-1] + ("A" if tok[-1] != "A" else "B")):
+        try:
+            app.act("public", "reg_view", {"token": bad})
+            ok = False
+        except ValueError:
+            ok = True
+        check(ok, f"a wrong link opens nothing ({bad[:6] or 'empty'}…)")
+
+    app.act("public", "reg_note", {"token": tok, "note": "  doch pünktlich  "})
+    rid = out["registration_id"]
+    check(s.registrations[rid].note == "doch pünktlich", "the note can be changed")
+    app.act("public", "reg_cancel", {"token": tok})
+    check(s.registrations[rid].status == "cancelled", "and the entry cancelled")
+    check(app.act("public", "reg_view", {"token": tok})["can_restore"], "which offers to undo it")
+    app.act("public", "reg_restore", {"token": tok})
+    check(s.registrations[rid].status == "pending", "and undoing it puts them back on the list")
+
+    k2 = app.act("public", "register", {"cup_id": cup, "kind": "seeking", "name": "Ole"})["token"]
+    kim = next(r for r in s.registrations.values() if r.name == "Kim")
+    check(kim.matched_with, "two people looking are matched")
+    app.act("public", "reg_cancel", {"token": k2})
+    check(kim.matched_with is None, "one of them cancelling sets the other looking again")
+
+    texts = [x["text"] for x in app.activity(20)]
+    check("Cancelled with their link: Ole" in texts and "Note changed with their link: Lea Hoffmann & Ben Krüger" in texts
+          and "Registered again with their link: Lea Hoffmann & Ben Krüger" in texts,
+          "the desk's activity says what was done with a link")
+
+    app.act("admin", "set_phase", {"phase": "doors"})
+    try:
+        app.act("public", "reg_cancel", {"token": tok})
+        ok = False
+    except ValueError:
+        ok = True
+    check(ok and s.registrations[rid].status == "pending",
+          "once the doors are open a link only shows the entry — changes are made at the door")
+    check(not app.act("public", "reg_view", {"token": tok})["can_change"], "and says so")
+
+    Handler.app = app
+    srv = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    c = http.client.HTTPConnection("127.0.0.1", srv.server_address[1])
+    c.request("GET", "/me/" + tok)
+    r = c.getresponse()
+    check(r.status == 200 and "site.js" in r.read().decode(),
+          "/me/<link> is the public site, whatever the phase")
+    srv.shutdown()
+    shutil.rmtree(d)
+
+
 def solo_field(app, n, base=5.0, step=0.0):
     return [add_player(app, f"P{i}", base + i * step) for i in range(n)]
 
@@ -2546,6 +2614,7 @@ if __name__ == "__main__":
     test_the_desk_actions_and_their_undo()
     test_duplicates_are_grouped_never_lost()
     test_the_form_asks_before_a_team_registers_twice()
+    test_the_personal_link()
     test_the_door_after_the_draw_starts()
     test_directory()
     test_routing()

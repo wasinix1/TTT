@@ -166,10 +166,14 @@ class Store:
             "SELECT seq, ts, type, payload, actor FROM events ORDER BY seq DESC LIMIT ?",
             (limit,),
         ).fetchall()
-        return [
-            {"seq": s, "ts": t, "type": ty, "payload": json.loads(p), "by": a}
-            for s, t, ty, p, a in rows
-        ]
+        # a registration's secret link is in its own event and nowhere else:
+        # the log is shown to the admin, and it is not theirs to see either
+        out = []
+        for s, t, ty, p, a in rows:
+            p = json.loads(p)
+            p.pop("token", None)
+            out.append({"seq": s, "ts": t, "type": ty, "payload": p, "by": a})
+        return out
 
     # ---------------------------------------------------------------- apply
 
@@ -422,7 +426,7 @@ class Store:
 
     REG_FIELDS = ("cup_id", "kind", "name", "strength", "partner_name",
                   "partner_strength", "team_name", "note", "status", "entrant_id",
-                  "matched_with", "distinct")
+                  "matched_with", "distinct", "token")
 
     def _ev_registration_add(self, p, seq):
         r = Registration(id=p["id"], cup_id=p.get("cup_id", ""),
@@ -441,7 +445,7 @@ class Store:
         for k in self.REG_FIELDS:
             if k in p:
                 setattr(r, k, p[k])
-        if r.status in ("dropped", "duplicate") and r.matched_with:
+        if r.status in ("dropped", "duplicate", "cancelled") and r.matched_with:
             # the one who was matched with them is looking again
             mate = self.registrations.get(r.matched_with)
             if mate and mate.matched_with == r.id:

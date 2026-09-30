@@ -217,7 +217,16 @@ Each step ships on its own and keeps the old Door tab working.
    person has signed up. The done card also says the partner need not
    register too.
 6. **Personal link.** Token, `/me/<token>`, the public reg ops,
-   remembering it on the phone.
+   remembering it on the phone. *Done.* The token is 128 random bits, kept
+   in the entry's own `registration_add` event and stripped from every
+   payload and from the log view. `reg_view`, `reg_note`, `reg_cancel` and
+   `reg_restore` are level 0 and take only the token; changes are refused
+   once the doors are open ("sag vor Ort Bescheid"), and re-registering needs
+   the cup to be open still. A cancellation is its own status, `cancelled`,
+   shown on the desk under Taken off the list with Put back, and frees a
+   matched partner like a no-show does. The page has the way back to the
+   event twice: at the top, and as the largest button at the bottom. The
+   phone keeps its links and lists them above a fresh form.
 7. **Console Door tab shrinks** to counts and a link, after the desk has run
    one real event.
 
