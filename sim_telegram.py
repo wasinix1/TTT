@@ -942,6 +942,55 @@ def test_the_console_sees_telegram_move():
     shutil.rmtree(d)
 
 
+def test_players_claim_themselves_from_the_live_page():
+    print("\n[tapping your own name on the live page]")
+    app, fake, d = fresh()
+    s = app.store
+    cup = event(app, tables=1, phase="doors")
+    for n in ("Jana Berger", "Tom Frei"):
+        app.act("admin", "admit", {"cup_id": cup, "name": n})
+    jana_p = next(p for p in s.players.values() if p.name == "Jana Berger")
+    ev = s.event.get("id") or ""
+    st = app.state("public")
+    check(st["telegram"]["on"] and any(p["id"] == jana_p.id for p in st["players"]),
+          "the live page has what it needs to offer it: the bot, and tonight's names")
+
+    jana = fake.user("Jana", "B.")
+    fake.say(jana, f"/start c_{ev}_{jana_p.id}")
+    app.telegram.pump()
+    check(s.people[jana_p.person_id].tg_id == jana["id"],
+          "one tap on your name and the bot knows who you are — no door needed")
+    check(fake.seen(jana, "Du bist <b>Jana Berger</b>"), "and says so")
+
+    other = fake.user("Not", "Jana")
+    fake.say(other, f"/start c_{ev}_{jana_p.id}")
+    app.telegram.pump()
+    check(s.people[jana_p.person_id].tg_id == jana["id"],
+          "a name already linked to another phone is not taken over")
+    check(fake.seen(other, "schon mit einem anderen Telegram"), "the second phone is told why")
+
+    tom_p = next(p for p in s.players.values() if p.name == "Tom Frei")
+    fake.say(jana, f"/start c_{ev}_{tom_p.id}")
+    app.telegram.pump()
+    check(s.people[tom_p.person_id].tg_id == jana["id"]
+          and s.people[jana_p.person_id].tg_id is None,
+          "picking another name moves the account — a wrong tap is undone by the right one")
+
+    start_draw(app, cup)
+    app.telegram.pump()
+    check(fake.seen(jana, "Du bist dran"), "and table calls follow the name picked")
+
+    app.act("admin", "create_event", {"name": "Next", "cups": [
+        {"name": "Einzel", "entry": "single", "registration": "open", "kind": "open_play",
+         "config": {"mode": "singles"}}]})
+    stale = fake.user("Late", "Comer")
+    fake.say(stale, f"/start c_{ev}_{tom_p.id}")
+    app.telegram.pump()
+    check(fake.seen(stale, "von einem anderen Abend"),
+          "a link from last event's page does not link anybody")
+    shutil.rmtree(d)
+
+
 def run():
     test_off_changes_nothing()
     test_connecting()
@@ -967,6 +1016,7 @@ def run():
     test_a_crowd_is_answered_side_by_side()
     test_a_table_call_does_not_wait_behind_cards()
     test_the_console_sees_telegram_move()
+    test_players_claim_themselves_from_the_live_page()
     test_the_desk_with_telegram()
 
 

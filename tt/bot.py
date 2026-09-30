@@ -368,7 +368,38 @@ class Conversation:
             name = self.store.people[pid].name
             return self.show_card(uid, f"{hello}\n✓ Du bist <b>{esc(name)}</b>. "
                                        f"Ab jetzt sagen wir dir Bescheid, wenn du dran bist.")
+        if arg.startswith("c_"):
+            return self.on_claim_self(uid, user, arg[2:], hello)
         return self.show_card(uid, f"{hello}\n{WELCOME}" if fresh else "")
+
+    def on_claim_self(self, uid, user, arg, hello):
+        """Somebody tapped their own name on the live page.
+
+        Taken on trust, deliberately: what an account can do as a player is
+        get its table calls, sit itself out and report scores, and a score
+        still needs the other side to say the same. What is not taken on
+        trust is somebody else's account: a name that is already linked to
+        another phone stays with it, and the door sorts that out."""
+        s = self.store
+        ev, _, pid = arg.rpartition("_")
+        with s.lock:
+            pl = s.players.get(pid)
+            who = s.people.get(pl.person_id) if pl and pl.person_id else None
+            current = (s.event.get("id") or "") == ev
+        if not who or not current:
+            return self.show_card(uid, f"{hello}\nDieser Link ist von einem anderen Abend — "
+                                       "öffne die Live-Seite noch einmal.")
+        if who.tg_id == uid:
+            return self.show_card(uid, f"{hello}\n✓ Du bist schon <b>{esc(who.name)}</b>.")
+        if who.tg_id:
+            return self.show_card(uid, f"{hello}\n<b>{esc(who.name)}</b> ist schon mit einem "
+                                       "anderen Telegram verknüpft. Wenn das nicht stimmt, "
+                                       "sag am Eingang Bescheid.")
+        self.bot.system("tg_link", {"person_id": who.id, "tg_id": uid,
+                                    "tg_name": self._handle(user)})
+        return self.show_card(uid, f"{hello}\n✓ Du bist <b>{esc(who.name)}</b>. Wir sagen dir "
+                                   "Bescheid, wenn du gleich dran bist und wenn dein Tisch "
+                                   "frei ist.")
 
     def on_stop(self, uid):
         self.wire.set_chat(uid, news=0)

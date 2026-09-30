@@ -159,6 +159,7 @@ function render() {
   $('setup-btn').innerHTML = esc(waiting ? `Setup · ${waiting}` : 'Setup') + (unread
     ? ` <span class="count" title="${unread} unread on Telegram">${unread}</span>` : '');
 
+  renderNudge();
   renderCupTabs();
   renderTables();
   renderBoard();
@@ -2007,6 +2008,79 @@ function renderTgModal() {
   if (t) t.focus();
 }
 
+/* ------------------------------------------------------ Telegram, for players
+
+   On the live page, once per phone and event: find your name, tap it, and
+   Telegram opens on the bot, which links you and calls you to your table.
+   Taken on trust — a score still needs both sides — but a name already
+   linked to another phone stays with it (tt/bot.py, on_claim_self). German,
+   like the bot it leads to. */
+
+const NUDGE_NEVER = 'tt_tg_nudge_never';
+const nudgeKey = () => 'tt_tg_nudge_' + ((S && S.event && S.event.id) || '');
+let nudgeOpen = false, nudgeQ = '', nudgeTimer = null;
+
+const nudgeWanted = () => !!(S && S.role === 'public' && !PAST && !SIM
+  && S.telegram && S.telegram.on && S.telegram.username
+  && (S.phase === 'doors' || S.phase === 'live') && (S.players || []).length);
+
+function nudgeSeen() {
+  try { return !!(localStorage.getItem(nudgeKey()) || localStorage.getItem(NUDGE_NEVER)); }
+  catch (e) { return false; }
+}
+function nudgeClose(how) {
+  try {
+    if (how === 'never') localStorage.setItem(NUDGE_NEVER, '1');
+    else if (how) localStorage.setItem(nudgeKey(), '1');
+  } catch (e) { }
+  nudgeOpen = false;
+  drawNudge();
+}
+
+function renderNudge() {
+  const want = nudgeWanted();
+  $('tg-btn').hidden = !want;
+  // a moment after the page settles, not in the face of whoever just opened it
+  if (want && !nudgeSeen() && !nudgeOpen && !nudgeTimer) {
+    nudgeTimer = setTimeout(() => { if (nudgeWanted() && !nudgeSeen()) { nudgeOpen = true; drawNudge(); } }, 4000);
+  }
+  if (nudgeOpen) drawNudgeList();
+}
+
+function drawNudge() {
+  const el = $('tg-nudge');
+  if (!nudgeOpen || !nudgeWanted()) { el.hidden = true; el.innerHTML = ''; return; }
+  if (!el.hidden && el.innerHTML) return drawNudgeList();
+  el.hidden = false;
+  el.innerHTML = `<div class="nudge-card" role="dialog" aria-label="Benachrichtigung">
+    <button class="nudge-x" data-nudge="later" aria-label="Schließen">×</button>
+    <h2>Wann bist du dran?</h2>
+    <p>Wir schreiben dir auf Telegram — wenn du gleich dran bist, und wenn dein Tisch frei ist.</p>
+    <input id="nudge-q" value="${esc(nudgeQ)}" placeholder="Dein Name" autocomplete="off"
+           autocapitalize="words" aria-label="Dein Name">
+    <div id="nudge-list" class="nudge-list"></div>
+    <div class="nudge-foot">
+      <button class="ghost tiny" data-nudge="later">Später</button>
+      <button class="ghost tiny" data-nudge="never">Nicht mehr fragen</button>
+    </div></div>`;
+  drawNudgeList();
+}
+
+function drawNudgeList() {
+  const box = $('nudge-list');
+  if (!box) return;
+  const q = nameKey(nudgeQ);
+  const all = (S.players || []).filter(p => p.active !== false)
+    .sort((a, b) => a.name.localeCompare(b.name));
+  // a short field is quicker to tap than to type; a long one would bury the page
+  const hits = q ? all.filter(p => nameKey(p.name).includes(q)) : all.length <= 6 ? all : [];
+  const link = p => `https://t.me/${encodeURIComponent(S.telegram.username)}?start=c_${
+    encodeURIComponent((S.event.id || '') + '_' + p.id)}`;
+  box.innerHTML = hits.slice(0, 8).map(p => `<a class="nudge-name" href="${link(p)}"
+      target="_blank" rel="noopener" data-nudge="picked"><span>${esc(p.name)}</span><b>→</b></a>`).join('')
+    || `<p class="sub">${q ? 'Niemand mit diesem Namen heute.' : 'Tipp die ersten Buchstaben deines Namens.'}</p>`;
+}
+
 /* -------------------------------------------------------------- More tab
 
    The things you reach for once a month: who the club knows, the undo of
@@ -2151,6 +2225,7 @@ function directoryRows() {
 /* --------------------------------------------------------------- events */
 
 document.addEventListener('input', e => {
+  if (e.target.id === 'nudge-q') { nudgeQ = e.target.value; drawNudgeList(); return; }
   if (e.target.id === 'recent-q') { recentQuery = e.target.value; renderRecent(); return; }
   const mg = e.target.dataset.mg;
   if (mg) {
@@ -2326,6 +2401,14 @@ document.addEventListener('change', e => {
 });
 
 document.addEventListener('click', async e => {
+  const nudge = e.target.closest('[data-nudge]');
+  if (nudge) {
+    const how = nudge.dataset.nudge;
+    // a picked name opens Telegram through its own link; the sheet has done its job
+    if (how === 'picked') { setTimeout(() => nudgeClose('done'), 300); return; }
+    return nudgeClose(how);
+  }
+  if (e.target.closest('#tg-btn')) { nudgeOpen = true; drawNudge(); const q = $('nudge-q'); if (q) q.focus(); return; }
   const tab = e.target.dataset.tab;
   if (tab) {
     sheetTab = tab; renderSheet();
@@ -2813,6 +2896,7 @@ document.addEventListener('keydown', e => {
     return;
   }
   if (e.key !== 'Escape') return;
+  if (nudgeOpen) return nudgeClose('later');
   if (form.tgm) { form.tgm = null; return renderTgModal(); }
   if (form.team_open) return closeTeamModal();
   if (editing) return closeEditor();
