@@ -35,20 +35,31 @@ let twice = null;
 
 // what this phone already sent, so coming back says so instead of quietly
 // taking a second entry — and keeps each entry's personal link
+// Entries belong to the event they were made for: a new event starts clean.
+const thisEvent = x => !P || !P.event_id || x.event === P.event_id;
 function mine() {
-  try { return JSON.parse(localStorage.getItem('tt_reg') || 'null'); }
-  catch (e) { return null; }
+  try {
+    const v = JSON.parse(localStorage.getItem('tt_reg') || 'null');
+    return v && thisEvent(v) ? v : null;
+  } catch (e) { return null; }
 }
 function saved() {
-  try { return (JSON.parse(localStorage.getItem('tt_regs') || '[]') || []).filter(x => x && x.token); }
-  catch (e) { return []; }
+  try {
+    return (JSON.parse(localStorage.getItem('tt_regs') || '[]') || [])
+      .filter(x => x && x.token && thisEvent(x));
+  } catch (e) { return []; }
 }
 function remember(v) {
+  v = { ...v, event: P && P.event_id || '' };
   try {
     localStorage.setItem('tt_reg', JSON.stringify(v));
     if (v.token) localStorage.setItem('tt_regs', JSON.stringify(
-      saved().filter(x => x.token !== v.token).concat([v]).slice(-8)));
+      allSaved().filter(x => x.token !== v.token).concat([v]).slice(-8)));
   } catch (e) { }
+}
+function allSaved() {
+  try { return (JSON.parse(localStorage.getItem('tt_regs') || '[]') || []).filter(x => x && x.token); }
+  catch (e) { return []; }
 }
 const linkFor = token => `${location.origin}/me/${token}`;
 
