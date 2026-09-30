@@ -645,7 +645,8 @@ def test_the_reminder():
     check(sum("Kommst du?" in t for t in fake.texts(u)) == 1, "once")
     fake.tap(u, "Kann nicht")
     app.telegram.pump()
-    check(s.registrations[r.id].status == "dropped", "no drops the entry")
+    check(s.registrations[r.id].status == "cancelled",
+          "no cancels the entry — their own call, which the desk shows as such")
     fake.tap(u, "Doch dabei")
     app.telegram.pump()
     check(s.registrations[r.id].status == "pending", "and changing their mind puts it back")
@@ -800,6 +801,62 @@ def test_the_menu_button_opens_the_app():
     shutil.rmtree(d2)
 
 
+def test_the_desk_with_telegram():
+    print("\n[the registration desk, with Telegram on]")
+    app, fake, d = fresh()
+    s = app.store
+    cup = event(app)
+    web = app.act("public", "register", {"cup_id": cup, "name": "Jana Berger"})["registration_id"]
+    jana = fake.user("Jana", "B.", "jana")
+    fake.say(jana, "/start")
+    app.telegram.pump()
+    tg = app.act("system", "tg_register", {"cup_id": cup, "tg_id": jana["id"],
+                                           "name": "Jana Berger", "kind": "single"})
+    check("registration_id" in tg, "the bot registers without the web form's question")
+
+    desk = app.desk_state("door")
+    regs = {r["id"]: r for r in desk["registrations"]}
+    check(desk["telegram"] and regs[tg["registration_id"]]["tg"] and not regs[web]["tg"],
+          "the desk knows Telegram is on and which entry came from it")
+    check(all("tg_id" not in r and "token" not in r for r in desk["registrations"]),
+          "but never an account number or a link")
+
+    app.act("admin", "set_phase", {"phase": "doors"})
+    eid = app.act("door", "admit", {"registration_id": web})["entrant_id"]
+    check(s.person_by_tg(jana["id"]) is None, "the web entry went in: her account is not linked yet")
+    app.act("door", "update_registration", {"id": tg["registration_id"], "status": "duplicate",
+                                            "same_as": eid})
+    who = s.person_by_tg(jana["id"])
+    check(who is not None and who.name == "Jana Berger",
+          "clearing the Telegram copy as the same person hands her account to the one who is here")
+    check(s.registrations[web].tg_id == jana["id"], "and the entry she came in on carries it")
+    ent = next(e for e in app.desk_state("door")["entrants"] if e["id"] == eid)
+    check(ent["people"] and ent["people"][0]["tg"], "so the desk shows she gets her table calls")
+
+    bo = app.act("door", "admit", {"cup_id": cup, "name": "Bo Lind"})["entrant_id"]
+    pid = s.players[s.entrants[bo].player_ids[0]].person_id
+    check(app.act("door", "tg_door_link", {"person_id": pid, "url": "https://tt.example/"})["url"]
+          .startswith("https://t.me/"), "the door key can show a walk-in the code to link")
+    try:
+        app.act("door", "tg_send", {"audience": "followers", "text": "hi"})
+        ok = False
+    except PermissionError:
+        ok = True
+    check(ok, "but cannot write to the room")
+
+    ole = fake.user("Ole", "P.", "ole")
+    fake.say(ole, "/start")
+    app.telegram.pump()
+    app.act("admin", "set_phase", {"phase": "registration"})
+    r = app.act("system", "tg_register", {"cup_id": cup, "tg_id": ole["id"], "name": "Ole Petersen",
+                                          "kind": "single"})["registration_id"]
+    app.act("system", "update_registration", {"id": r, "status": "cancelled"})
+    texts = [a["text"] for a in app.activity(10)]
+    check("Cancelled in Telegram: Ole Petersen" in texts and s.registrations[r].status == "cancelled",
+          "cancelling in Telegram shows on the desk as their own call")
+    shutil.rmtree(d)
+
+
 def run():
     test_off_changes_nothing()
     test_connecting()
@@ -822,6 +879,7 @@ def run():
     test_the_mini_app_door()
     test_the_mini_app_on_the_night()
     test_the_menu_button_opens_the_app()
+    test_the_desk_with_telegram()
 
 
 if __name__ == "__main__":

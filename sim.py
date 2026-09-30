@@ -499,6 +499,328 @@ def test_permissions():
     shutil.rmtree(d)
 
 
+def test_the_door_key():
+    print("\n[door key]")
+    app, d = fresh()
+    s = app.store
+    cup = door_event(app)
+    check(app.role_for(app.keys["door"]) == "door", "the door link is its own role")
+
+    def refused(op, data):
+        try:
+            app.act("door", op, data)
+        except PermissionError:
+            return True
+        return False
+
+    rid = app.act("public", "register", {"cup_id": cup, "name": "Jana Berger"})["registration_id"]
+    eid = app.act("door", "admit", {"registration_id": rid})["entrant_id"]
+    check(s.entrants[eid].name == "Jana Berger", "the door can check somebody in")
+    app.act("door", "admit", {"cup_id": cup, "name": "Ilya Marek"})
+    app.act("door", "set_resting", {"entrant_id": eid, "resting": True})
+    check(eid in s.opted_out, "and sit them out")
+    check(all(refused(op, data) for op, data in [
+        ("report", {"match_id": "M1", "games": [[11, 5]]}),
+        ("start_format", {"id": s.cups[cup].format_id}),
+        ("merge_cups", {"from": cup, "into": cup}),
+        ("remove_entrants", {"cup_id": cup}),
+        ("remove_person", {"id": "P1"}),
+        ("rewind", {"seq": 1}),
+        ("set_phase", {"phase": "live"}),
+    ]), "but not score, draw, merge, empty a cup, forget people, rewind or change the phase")
+
+    by = {h["type"]: h["by"] for h in reversed(s.history(200))}
+    check(by["registration_add"] == "public", "the log says the public wrote the entry")
+    check(by["entrant_add"] == "door", "and that the door checked them in")
+    check(by["rest_set"] == "door", "and sat them out")
+    check(by["event_new"] == "admin", "and that the admin set the event up")
+    check(s.actor == "system", "and nothing is left attributed afterwards")
+
+    st = app.state("door")
+    check(st["registrations"] and st["people"] and not st["keys"] and not st["history"],
+          "the door sees entries and the directory, never the keys or the log")
+
+    # a keys.json from before the door key existed gains one and keeps the rest
+    json.dump({"admin": "A" * 16, "referee": "R" * 12}, open(os.path.join(d, "keys.json"), "w"))
+    again = App(d)
+    check(again.keys["admin"] == "A" * 16 and again.keys["referee"] == "R" * 12,
+          "an older install keeps its admin and referee links")
+    check(again.keys.get("door") and json.load(open(os.path.join(d, "keys.json")))["door"]
+          == again.keys["door"], "and gets a door link, written down")
+    shutil.rmtree(d)
+
+
+def test_the_desk_payload():
+    print("\n[registration desk]")
+    app, d = fresh()
+    s = app.store
+    cup = door_event(app)
+    rid = app.act("public", "register", {"cup_id": cup, "name": "Jana Berger",
+                                         "note": "komme später"})["registration_id"]
+    app.act("public", "register", {"cup_id": cup, "name": "Tobias Wendt"})
+    eid = app.act("door", "admit", {"registration_id": rid})["entrant_id"]
+    app.act("door", "admit", {"cup_id": cup, "name": "Ilya Marek"})
+    app.act("door", "set_resting", {"entrant_id": eid, "resting": True})
+
+    desk = app.desk_state("door")
+    check(desk["cups"][0]["id"] == cup and set(desk["cups"][0]) == {"id", "name", "entry", "registration"},
+          "the desk gets the cups and only what it needs of them")
+    check(sum(r["status"] == "pending" for r in desk["registrations"]) == 1,
+          "the one entry still expected")
+    jana = next(e for e in desk["entrants"] if e["id"] == eid)
+    check(jana["registration_id"] == rid and jana["status"] == "resting" and jana["added_ts"] > 0,
+          "who is here, where they came from, when, and where they are now")
+    check(next(e for e in desk["entrants"] if e["name"] == "Ilya Marek")["registration_id"] == "",
+          "a walk-in says so")
+    texts = [a["text"] for a in desk["activity"]]
+    check("Jana Berger sits out" in texts and any(t.startswith("In: Ilya Marek") for t in texts),
+          "the activity reads as sentences")
+    check(all(a["by"] in ("door", "public", "admin", "system", "") for a in desk["activity"])
+          and next(a for a in desk["activity"] if a["text"] == "Jana Berger sits out")["by"] == "door",
+          "and says who did it")
+    check("keys" not in desk and "history" not in desk and "matches" not in desk,
+          "no keys, no raw log, no scores")
+
+    # over HTTP: the key decides, not the page
+    Handler.app = app
+    srv = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    port = srv.server_address[1]
+
+    def get(path, key="", tag=""):
+        c = http.client.HTTPConnection("127.0.0.1", port)
+        h = {"X-Key": key}
+        if tag:
+            h["If-None-Match"] = tag
+        c.request("GET", path, headers=h)
+        r = c.getresponse()
+        return r.status, r.read().decode(), r.getheader("ETag")
+
+    check("desk.js" in get("/d/" + app.keys["door"] + "/desk")[1], "the door link has a desk")
+    check("desk.js" in get("/a/" + app.keys["admin"] + "/desk")[1], "so does the admin link")
+    check(get("/api/desk")[0] == 403 and get("/api/desk", app.keys["referee"])[0] == 403,
+          "the public and the referees get nothing from the desk")
+    code, body, tag = get("/api/desk", app.keys["door"])
+    check(code == 200 and json.loads(body)["role"] == "door", "the door key does")
+    check(get("/api/desk", app.keys["door"], tag)[0] == 304, "and asking again unchanged costs nothing")
+    app.act("door", "set_resting", {"entrant_id": eid, "resting": False})
+    check(get("/api/desk", app.keys["door"], tag)[0] == 200, "until something changes")
+    srv.shutdown()
+    shutil.rmtree(d)
+
+
+def test_the_desk_actions_and_their_undo():
+    print("\n[registration desk: every action, and its undo]")
+    app, d = fresh()
+    s = app.store
+    cup = door_event(app)
+    reg = lambda n: app.act("public", "register", {"cup_id": cup, "name": n})["registration_id"]
+    r1, r2 = reg("Mira Scholz"), reg("Mira Scholz")
+
+    e1 = app.act("door", "admit", {"registration_id": r1})["entrant_id"]
+    app.act("door", "remove_entrant", {"id": e1})
+    check(s.registrations[r1].status == "pending" and not s.entrants,
+          "undoing a check-in puts the entry back in Expected")
+    e1 = app.act("door", "admit", {"registration_id": r1})["entrant_id"]
+
+    try:
+        app.act("door", "admit", {"registration_id": r2})
+        ok = False
+    except ValueError:
+        ok = True
+    check(ok, "the second Mira Scholz is still refused by the server")
+    e2 = app.act("door", "admit", {"registration_id": r2, "name": "Mira Scholz (2)"})["entrant_id"]
+    check(s.entrants[e2].name == "Mira Scholz (2)" and s.registrations[r2].status == "confirmed",
+          "and goes in under the name the desk offers")
+
+    app.act("door", "update_registration", {"id": reg("Felix Hahn"), "status": "dropped"})
+    fx = next(r for r in s.registrations.values() if r.name == "Felix Hahn")
+    app.act("door", "update_registration", {"id": fx.id, "status": "pending"})
+    check(fx.status == "pending", "a no-show can be put back")
+
+    pid = s.entrants[e2].player_ids[0]
+    app.act("door", "update_player", {"id": pid, "name": "Mira S."})
+    app.act("door", "update_player", {"id": pid, "name": "Mira Scholz (2)"})
+    check(s.entrants[e2].name == "Mira Scholz (2)", "a rename and its undo")
+
+    app.act("door", "set_resting", {"entrant_id": e1, "resting": True})
+    app.act("door", "set_resting", {"entrant_id": e1, "resting": False})
+    check(e1 not in s.opted_out, "sitting out and back in")
+
+    app.act("door", "withdraw", {"entrant_id": e1, "withdrawn": True})
+    app.act("door", "withdraw", {"entrant_id": e1, "withdrawn": False})
+    check(s.entrants[e1].active, "gone home and brought back")
+
+    person = next(p for p in s.people.values() if p.name == "Mira Scholz")
+    app.act("door", "remove_entrant", {"id": e1})
+    e3 = app.act("door", "add_from_directory", {"person_id": person.id, "cup_id": cup})["entrant_id"]
+    check(s.entrants[e3].name == "Mira Scholz", "somebody can come back in from the directory")
+    # ids are reused after a removal; the activity still names who it was then
+    lines = [x["text"] for x in app.activity(50)]
+    check(lines[0] == "In: Mira Scholz · Cup" and lines[1] == "Removed: Mira Scholz",
+          "the activity reads newest first")
+    gone = app.act("door", "admit", {"cup_id": cup, "name": "Jana Berger"})["entrant_id"]
+    app.act("door", "remove_entrant", {"id": gone})
+    app.act("door", "admit", {"cup_id": cup, "name": "Ilya Marek"})
+    lines = [x["text"] for x in app.activity(3)]
+    check(lines[:2] == ["In: Ilya Marek · Cup", "Removed: Jana Berger"],
+          "and names whoever it was at the time, though the id went to somebody else")
+    check("Renamed Mira Scholz (2) → Mira S." in [x["text"] for x in app.activity(50)],
+          "and says what a rename changed")
+    shutil.rmtree(d)
+
+
+def test_duplicates_are_grouped_never_lost():
+    print("\n[registration desk: an entry sent twice]")
+    app, d = fresh()
+    s = app.store
+    cup = door_event(app, entry="pair", kind="open_play")
+    reg = lambda **k: app.act("public", "register", {"cup_id": cup, "kind": "pair", **k})["registration_id"]
+    a = reg(name="Lea Hoffmann", partner_name="Ben Krüger")
+    # the form asks before a second entry for the same team now (see the next
+    # test); this is one from before it did, which the desk still has to handle
+    b = "R99"
+    s.append("registration_add", {"id": b, "cup_id": cup, "kind": "pair", "name": "Ben Krüger",
+                                  "partner_name": "Lea Hoffmann", "note": "sicherheitshalber"})
+
+    app.act("door", "admit", {"registration_id": b})
+    check(s.registrations[a].status == "pending",
+          "checking in one entry leaves the other where it was, for somebody to decide")
+    app.act("door", "update_registration", {"id": a, "status": "duplicate"})
+    check(s.registrations[a].status == "duplicate" and s.registrations[a].entrant_id is None,
+          "same team: it is cleared as a duplicate, and kept")
+    app.act("door", "update_registration", {"id": a, "status": "pending"})
+    check(s.registrations[a].status == "pending", "and can be put back")
+
+    app.act("door", "update_registration", {"id": a, "distinct": 1})
+    check(s.registrations[a].distinct is True, "different team: it is kept apart from the other")
+    app.act("door", "admit", {"registration_id": a, "name": "Lea Hoffmann (2)"})
+    check(len(s.entrants) == 2, "and comes in as a second team under a name that tells them apart")
+
+    def refused(data):
+        try:
+            app.act("door", "update_registration", data)
+        except ValueError:
+            return True
+        return False
+    check(refused({"id": a, "status": "pending"}),
+          "a checked-in entry cannot be put back on the list behind the pool's back")
+    check(refused({"id": reg(name="X", partner_name="Y"), "status": "confirmed"}),
+          "and confirming is only ever done by checking in")
+
+    texts = [x["text"] for x in app.activity(20)]
+    check("Cleared as a duplicate: Lea Hoffmann & Ben Krüger" in texts
+          and "Put back on the list: Lea Hoffmann & Ben Krüger" in texts
+          and "Kept as a separate team: Lea Hoffmann & Ben Krüger" in texts,
+          "the activity says what was decided")
+
+    # a seeker whose match is cleared as a duplicate goes back to looking
+    k = app.act("public", "register", {"cup_id": cup, "kind": "seeking", "name": "Kim"})["registration_id"]
+    o = app.act("public", "register", {"cup_id": cup, "kind": "seeking", "name": "Ole"})["registration_id"]
+    check(s.registrations[k].matched_with == o, "two people looking are matched")
+    app.act("door", "update_registration", {"id": o, "status": "duplicate"})
+    check(s.registrations[k].matched_with is None, "clearing one of them sets the other looking again")
+    shutil.rmtree(d)
+
+
+def test_the_form_asks_before_a_team_registers_twice():
+    print("\n[public form: a team sent twice]")
+    app, d = fresh()
+    s = app.store
+    cup = door_event(app, entry="pair", kind="open_play")
+    send = lambda **k: app.act("public", "register", {"cup_id": cup, "kind": "pair", **k})
+    first = send(name="Lea Hoffmann", partner_name="Ben Krüger")
+    check("registration_id" in first, "the first entry goes in")
+    out = send(name="ben  krüger", partner_name="Lea Hoffmann")
+    check(out == {"possible_duplicate": True, "cup": "Cup"} and len(s.registrations) == 1,
+          "the same two names, either order, any case: asked, and nothing written")
+    check(set(out) == {"possible_duplicate", "cup"},
+          "and the answer names nobody and counts nothing")
+    out = send(name="Ben Krüger", partner_name="Lea Hoffmann", distinct=True)
+    r = s.registrations[out["registration_id"]]
+    check(r.distinct and len(s.registrations) == 2,
+          "\"we are a different team\" goes in, marked to be kept apart at the door")
+    check("registration_id" in send(name="Lea Hoffmann", partner_name="Max Weber"),
+          "one of the two with somebody else is not asked about")
+    k = app.act("public", "register", {"cup_id": cup, "kind": "seeking", "name": "Lea Hoffmann"})
+    check("registration_id" in k, "and neither is somebody looking for a partner")
+    app.act("door", "update_registration", {"id": first["registration_id"], "status": "dropped"})
+    check(send(name="Lea Hoffmann", partner_name="Ben Krüger").get("possible_duplicate"),
+          "the one kept apart still counts once the first is off the list")
+    app.act("door", "update_registration", {"id": r.id, "status": "duplicate"})
+    check("registration_id" in send(name="Lea Hoffmann", partner_name="Ben Krüger"),
+          "entries taken off the list do not")
+    shutil.rmtree(d)
+
+
+def test_the_personal_link():
+    print("\n[the personal link]")
+    app, d = fresh()
+    s = app.store
+    cup = door_event(app, entry="pair", kind="open_play")
+    out = app.act("public", "register", {"cup_id": cup, "kind": "pair", "name": "Lea Hoffmann",
+                                         "partner_name": "Ben Krüger", "note": "komme später"})
+    tok = out["token"]
+    check(len(tok) >= 20, "registering hands back a personal link")
+    blob = json.dumps([app.state("admin"), app.desk_state("admin"), app.public_state(), s.history(50)])
+    check(tok not in blob, "and it is in no payload and no log view, not even the admin's")
+
+    view = app.act("public", "reg_view", {"token": tok})
+    check(view["name"] == "Lea Hoffmann" and view["status"] == "pending" and view["can_change"],
+          "the link opens that entry")
+    other = app.act("public", "register", {"cup_id": cup, "kind": "seeking", "name": "Kim"})["token"]
+    check(app.act("public", "reg_view", {"token": other})["name"] == "Kim"
+          and "partner_name" in view and "token" not in view, "and only that one")
+    for bad in ("", "short", tok[:-1] + ("A" if tok[-1] != "A" else "B")):
+        try:
+            app.act("public", "reg_view", {"token": bad})
+            ok = False
+        except ValueError:
+            ok = True
+        check(ok, f"a wrong link opens nothing ({bad[:6] or 'empty'}…)")
+
+    app.act("public", "reg_note", {"token": tok, "note": "  doch pünktlich  "})
+    rid = out["registration_id"]
+    check(s.registrations[rid].note == "doch pünktlich", "the note can be changed")
+    app.act("public", "reg_cancel", {"token": tok})
+    check(s.registrations[rid].status == "cancelled", "and the entry cancelled")
+    check(app.act("public", "reg_view", {"token": tok})["can_restore"], "which offers to undo it")
+    app.act("public", "reg_restore", {"token": tok})
+    check(s.registrations[rid].status == "pending", "and undoing it puts them back on the list")
+
+    k2 = app.act("public", "register", {"cup_id": cup, "kind": "seeking", "name": "Ole"})["token"]
+    kim = next(r for r in s.registrations.values() if r.name == "Kim")
+    check(kim.matched_with, "two people looking are matched")
+    app.act("public", "reg_cancel", {"token": k2})
+    check(kim.matched_with is None, "one of them cancelling sets the other looking again")
+
+    texts = [x["text"] for x in app.activity(20)]
+    check("Cancelled with their link: Ole" in texts and "Note changed with their link: Lea Hoffmann & Ben Krüger" in texts
+          and "Registered again with their link: Lea Hoffmann & Ben Krüger" in texts,
+          "the desk's activity says what was done with a link")
+
+    app.act("admin", "set_phase", {"phase": "doors"})
+    try:
+        app.act("public", "reg_cancel", {"token": tok})
+        ok = False
+    except ValueError:
+        ok = True
+    check(ok and s.registrations[rid].status == "pending",
+          "once the doors are open a link only shows the entry — changes are made at the door")
+    check(not app.act("public", "reg_view", {"token": tok})["can_change"], "and says so")
+
+    Handler.app = app
+    srv = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    c = http.client.HTTPConnection("127.0.0.1", srv.server_address[1])
+    c.request("GET", "/me/" + tok)
+    r = c.getresponse()
+    check(r.status == 200 and "site.js" in r.read().decode(),
+          "/me/<link> is the public site, whatever the phase")
+    srv.shutdown()
+    shutil.rmtree(d)
+
+
 def solo_field(app, n, base=5.0, step=0.0):
     return [add_player(app, f"P{i}", base + i * step) for i in range(n)]
 
@@ -1397,6 +1719,8 @@ def test_routing():
           "the admin link is the console whatever the phase")
     check("app.js" in get("/r/" + app.keys["referee"])[1],
           "so is the referee link")
+    check("desk.js" in get("/d/" + app.keys["door"])[1],
+          "the door link is the registration desk")
     check("site.js" in get("/join")[1], "/join is the site")
     check(get("/api/public")[0] == 200, "/api/public answers")
     app.act("admin", "set_phase", {"phase": "live"})
@@ -2364,6 +2688,12 @@ if __name__ == "__main__":
     test_registration_throttle()
     test_the_door()
     test_the_door_pairs()
+    test_the_door_key()
+    test_the_desk_payload()
+    test_the_desk_actions_and_their_undo()
+    test_duplicates_are_grouped_never_lost()
+    test_the_form_asks_before_a_team_registers_twice()
+    test_the_personal_link()
     test_the_door_after_the_draw_starts()
     test_directory()
     test_routing()

@@ -69,6 +69,7 @@ class Entrant:
     player_ids: list[str]
     active: bool = True
     cup_id: str = ""        # the pool they were admitted to; "" = no cup
+    added_ts: float = 0.0   # when they came in — the door's "in at 18:32"
 
     def to_dict(self):
         return asdict(self)
@@ -157,20 +158,29 @@ class Registration:
     partner_strength: float = 5.0
     team_name: str = ""
     note: str = ""
-    status: str = "pending"        # pending | confirmed | dropped
+    status: str = "pending"        # pending | confirmed | dropped | duplicate | cancelled
     entrant_id: Optional[str] = None
     matched_with: Optional[str] = None   # kind = seeking: the other one looking
     created_ts: float = 0.0
+    # the same names as another entry, and somebody said they are a different
+    # team: never grouped with it at the door
+    distinct: bool = False
     # Telegram: the account it came from (or was carried onto by `token`),
     # and the person that account already is, if the door ever linked it.
     # Both are claims until confirmation, like everything else here.
     tg_id: Optional[int] = None
     person_id: Optional[str] = None
-    token: str = ""                # private: opens this entry in the bot
+    # The entry's one secret. It is the registrant's personal link on the web
+    # (/me/<token>) and the private link that carries it into the bot
+    # (r_<token>). Only ever handed back to them when they register; never
+    # in any payload or log view.
+    token: str = ""
     rsvp: str = ""                 # "yes" once they answered the reminder
 
     def to_dict(self):
-        return asdict(self)
+        d = asdict(self)
+        d.pop("token", None)
+        return d
 
 
 @dataclass

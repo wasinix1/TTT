@@ -279,7 +279,7 @@ class Conversation:
         person = s.person_by_tg(uid)
         regs = [r for r in (s.registrations[i] for i in s.registration_order
                             if i in s.registrations)
-                if r.status != "dropped"
+                if r.status not in ("dropped", "duplicate", "cancelled")
                 and (r.tg_id == uid or (person and r.person_id == person.id))]
         pids = {p.id for p in s.players.values()
                 if person and p.person_id == person.id}
@@ -640,7 +640,9 @@ class Conversation:
             return ""
         if verb == "x!":
             reg = self._my_reg(uid, arg)
-            self.bot.system("update_registration", {"id": reg.id, "status": "dropped"})
+            # their own call, like cancelling with the web link: the desk
+            # says so instead of calling it a no-show
+            self.bot.system("update_registration", {"id": reg.id, "status": "cancelled"})
             self.refresh(uid, mid)
             return "Abgemeldet"
 
@@ -652,7 +654,7 @@ class Conversation:
                 self.edit(uid, mid, "👍 Super, bis dann!")
                 return ""
             if verb == "yn":
-                self.bot.system("update_registration", {"id": reg.id, "status": "dropped"})
+                self.bot.system("update_registration", {"id": reg.id, "status": "cancelled"})
                 self.edit(uid, mid, "Schade! Du bist abgemeldet.",
                           [[button("Doch dabei", f"yu:{reg.id}")]])
                 return ""

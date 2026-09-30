@@ -55,7 +55,14 @@ class Store:
             " seq INTEGER PRIMARY KEY AUTOINCREMENT,"
             " ts REAL NOT NULL, type TEXT NOT NULL, payload TEXT NOT NULL)"
         )
+        # Who wrote each event: admin, door, referee, public, or system for
+        # what the dispatcher does on its own. Logs from before this column
+        # existed read as "" — unknown, not guessed.
+        cols = [r[1] for r in self.conn.execute("PRAGMA table_info(events)")]
+        if "actor" not in cols:
+            self.conn.execute("ALTER TABLE events ADD COLUMN actor TEXT NOT NULL DEFAULT ''")
         self.conn.commit()
+        self.actor = "system"    # set by App.act for the length of one op
         self._replaying = False
         self.readonly = False    # an archived event: replayed, never written
         self._depth = 0          # nested appends commit with the outermost
@@ -112,8 +119,8 @@ class Store:
         with self.lock:
             ts = self.clock()
             cur = self.conn.execute(
-                "INSERT INTO events (ts, type, payload) VALUES (?,?,?)",
-                (ts, etype, json.dumps(payload)),
+                "INSERT INTO events (ts, type, payload, actor) VALUES (?,?,?,?)",
+                (ts, etype, json.dumps(payload), self.actor),
             )
             seq = cur.lastrowid
             self._depth += 1
@@ -259,13 +266,17 @@ class Store:
 
     def history(self, limit=60):
         rows = self.conn.execute(
-            "SELECT seq, ts, type, payload FROM events ORDER BY seq DESC LIMIT ?",
+            "SELECT seq, ts, type, payload, actor FROM events ORDER BY seq DESC LIMIT ?",
             (limit,),
         ).fetchall()
-        return [
-            {"seq": s, "ts": t, "type": ty, "payload": json.loads(p)}
-            for s, t, ty, p in rows
-        ]
+        # a registration's secret link is in its own event and nowhere else:
+        # the log is shown to the admin, and it is not theirs to see either
+        out = []
+        for s, t, ty, p, a in rows:
+            p = json.loads(p)
+            p.pop("token", None)
+            out.append({"seq": s, "ts": t, "type": ty, "payload": p, "by": a})
+        return out
 
     # ---------------------------------------------------------------- apply
 
@@ -365,6 +376,7 @@ class Store:
         self.entrants[p["id"]] = Entrant(
             id=p["id"], name=p["name"], player_ids=list(p["player_ids"]),
             active=p.get("active", True), cup_id=p.get("cup_id") or "",
+            added_ts=self._now,
         )
 
     def _ev_entrant_update(self, p, seq):
@@ -536,7 +548,7 @@ class Store:
 
     REG_FIELDS = ("cup_id", "kind", "name", "strength", "partner_name",
                   "partner_strength", "team_name", "note", "status", "entrant_id",
-                  "matched_with", "tg_id", "person_id", "token", "rsvp")
+                  "matched_with", "distinct", "tg_id", "person_id", "token", "rsvp")
 
     def _ev_registration_add(self, p, seq):
         r = Registration(id=p["id"], cup_id=p.get("cup_id", ""),
@@ -555,7 +567,7 @@ class Store:
         for k in self.REG_FIELDS:
             if k in p:
                 setattr(r, k, p[k])
-        if r.status == "dropped" and r.matched_with:
+        if r.status in ("dropped", "duplicate", "cancelled") and r.matched_with:
             # the one who was matched with them is looking again
             mate = self.registrations.get(r.matched_with)
             if mate and mate.matched_with == r.id:

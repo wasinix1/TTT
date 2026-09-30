@@ -245,7 +245,7 @@ def act(bot, user, op, d):
                  else "Angemeldet ✓")
     elif op == "drop":
         reg = c._my_reg(uid, d.get("id") or "")
-        bot.system("update_registration", {"id": reg.id, "status": "dropped"})
+        bot.system("update_registration", {"id": reg.id, "status": "cancelled"})
         toast = "Abgemeldet"
     elif op == "rsvp":
         reg = c._my_reg(uid, d.get("id") or "", any_status=True)
@@ -253,7 +253,7 @@ def act(bot, user, op, d):
             bot.system("tg_rsvp", {"id": reg.id, "rsvp": "yes"})
             toast = "Super, bis dann!"
         else:
-            bot.system("update_registration", {"id": reg.id, "status": "dropped"})
+            bot.system("update_registration", {"id": reg.id, "status": "cancelled"})
             toast = "Schade — abgemeldet"
     elif op in ("rest", "leave"):
         e, _ = c._mine(uid, d.get("eid") or "")

@@ -1571,7 +1571,9 @@ function tabDoor() {
   const walkOpen = !!form.walk_open || !S.entrants.length && !pending.length;
   const q = nameKey(form.door_q);
   return `<div class="form">
-    ${sec('At the door', `<button class="${walkOpen ? 'ghost' : ''} tiny" data-act="walk-toggle">${
+    ${sec('At the door', `<a class="desk-link" href="${location.pathname.replace(/\/$/, '')}/desk${simq('?')}"
+        target="_blank"><button class="ghost tiny">Open the desk ↗</button></a>
+      <button class="${walkOpen ? 'ghost' : ''} tiny" data-act="walk-toggle">${
       walkOpen ? 'Hide' : 'Add somebody'}</button>`)}
     ${walkOpen ? walkInForm() : ''}
     ${S.entrants.length || pending.length ? `<div class="field door-search">
@@ -1811,13 +1813,19 @@ function tabLinks() {
         <span class="key">${base}/</span></div>
       <div class="drow" style="--cols:170px 1fr"><span>Referees — can score</span>
         <span class="key">${base}/r/${esc(S.keys.referee || '')}</span></div>
+      <div class="drow" style="--cols:170px 1fr"><span>Door — the registration desk</span>
+        <span class="key">${base}/d/${esc(S.keys.door || '')}</span></div>
+      <div class="drow" style="--cols:170px 1fr"><span>The desk, as admin</span>
+        <span class="key">${base}/a/${esc(S.keys.admin || '')}/desk</span></div>
       <div class="drow" style="--cols:170px 1fr"><span>Admin — this page</span>
         <span class="key">${base}/a/${esc(S.keys.admin || '')}</span></div>
       <div class="drow" style="--cols:170px 1fr"><span>Wall display</span>
         <span class="key">${base}/board</span></div>
     </div>
     ${why('No accounts, no logins. Keep the referee link to the people running tables — ' +
-          'anyone who has it can enter results.',
+          'anyone who has it can enter results. The door link is for whoever lets people in: ' +
+          'check-in, walk-ins and the roster, but no scores, draws or setup, and the log ' +
+          'shows what was done with it.',
           'The wall display needs no key and has no controls, so it is safe on a screen ' +
           'anyone can reach. It answers “when am I playing” by itself: who is on ' +
           'which table now, then the running order with a rough time against each one.')}
@@ -2056,7 +2064,7 @@ function tabMore() {
       ${S.history.map(h => `<div class="drow" style="--cols:44px 1fr auto">
         <span class="num">${h.seq}</span>
         <span style="font-size:13px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"
-          >${esc(h.type)} <span style="color:var(--muted)">${esc(JSON.stringify(h.payload).slice(0, 70))}</span></span>
+          >${h.by && h.by !== 'system' ? `<b>${esc(h.by)}</b> · ` : ''}${esc(h.type)} <span style="color:var(--muted)">${esc(JSON.stringify(h.payload).slice(0, 70))}</span></span>
         <span class="acts"><button class="ghost tiny" data-act="rewind" data-s="${h.seq}">Rewind here</button></span>
       </div>`).join('')}
     </div>

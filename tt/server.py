@@ -8,6 +8,7 @@ on the night.
 import json
 import mimetypes
 import os
+import re
 import secrets
 import socket
 import threading
@@ -24,8 +25,9 @@ STATIC = os.path.join(HERE, "static")
 
 # `system` is the bot acting for a player it has already checked is the one
 # asking (tt/bot.py). No URL key maps to it, so nothing outside the process
-# can reach the ops that need it.
-ROLES = {"public": 0, "referee": 1, "admin": 2, "system": 3}
+# can reach the ops that need it. `door` is not on this ladder at all: it
+# gets the list in DOOR_OPS below.
+ROLES = {"public": 0, "referee": 1, "door": 0, "admin": 2, "system": 3}
 
 
 class App:
@@ -45,6 +47,7 @@ class App:
         self.sim = None
         self._archives = {}       # first_seq -> ArchiveApp, a few kept warm
         self._cache = {}          # (version, role) -> encoded state JSON
+        self._desk_cache = {}     # the same for the registration desk
         self._reg_hits = {}       # ip -> recent registration timestamps
         # the Telegram layer (tt/telegram.py): only ever set on the live App
         # by serve(), so the sandbox cannot message anybody
@@ -55,11 +58,15 @@ class App:
 
     def _load_keys(self):
         path = os.path.join(self.data_dir, "keys.json")
-        if os.path.exists(path):
-            return json.load(open(path))
-        # these live on the public internet now, not just the hall LAN
-        keys = {"admin": secrets.token_urlsafe(12), "referee": secrets.token_urlsafe(9)}
-        json.dump(keys, open(path, "w"), indent=2)
+        keys = json.load(open(path)) if os.path.exists(path) else {}
+        # these live on the public internet now, not just the hall LAN.
+        # A key a newer version added (door) is minted on first start and
+        # the ones already handed out are left alone.
+        want = {"admin": 12, "referee": 9, "door": 9}
+        if not all(keys.get(k) for k in want):
+            for k, n in want.items():
+                keys[k] = keys.get(k) or secrets.token_urlsafe(n)
+            json.dump(keys, open(path, "w"), indent=2)
         return keys
 
     # A phone filling in a form does this once or twice. Anything hammering
@@ -85,6 +92,8 @@ class App:
             return "admin"
         if token and secrets.compare_digest(token, self.keys["referee"]):
             return "referee"
+        if token and secrets.compare_digest(token, self.keys["door"]):
+            return "door"
         return "public"
 
     # ------------------------------------------------------------ read side
@@ -242,6 +251,153 @@ class App:
             self._cache = {(v, role): hit}      # only the current version matters
         return v, hit
 
+    # ------------------------------------------------------------ the desk
+
+    def desk_json(self, role):
+        """The registration desk's payload, cached per version like
+        state_json. Only admin and door ever get here."""
+        v = self.store.version
+        # connecting the bot is not a log event, so it is part of the key
+        key = ("desk", v, role, bool(self._tg_name()))
+        hit = self._desk_cache.get(key)
+        if hit is None:
+            hit = json.dumps(self.desk_state(role)).encode()
+            self._desk_cache = {key: hit}
+        return v, hit
+
+    def desk_state(self, role):
+        """Everything about who is in the event and nothing about how it is
+        played: cups, entries, the pool with where each of them is right now,
+        the directory, and a readable account of the last things done.
+
+        Its own payload rather than /api/state, so the desk redraws when
+        somebody is checked in and not every time a point is scored — and so
+        it carries nothing the door key has no business seeing."""
+        s = self.store
+        with s.lock:
+            seat = {}          # entrant id -> (table, opponent)
+            for n, t in s.tables.items():
+                m = s.matches.get(t.match_id) if t.match_id else None
+                if not m:
+                    continue
+                for me, them in (("a", "b"), ("b", "a")):
+                    eid = getattr(m, "entrant_" + me)
+                    if eid:
+                        seat[eid] = (n, self.side_name(m, them))
+            regs = [s.registrations[i] for i in s.registration_order if i in s.registrations]
+            from_reg = {r.entrant_id: r.id for r in regs if r.entrant_id}
+            ents = []
+            for e in s.entrants.values():
+                t = seat.get(e.id)
+                ents.append({
+                    "id": e.id, "name": e.name, "cup_id": e.cup_id,
+                    "players": [s.players[p].name for p in e.player_ids if p in s.players],
+                    "player_ids": [p for p in e.player_ids if p in s.players],
+                    "status": self.entrant_status(e),
+                    "table": t[0] if t else None, "vs": t[1] if t else "",
+                    "removable": not self._why_not_removable(e),
+                    "added_ts": e.added_ts, "registration_id": from_reg.get(e.id, ""),
+                    # Telegram: who here gets their table calls, and who could
+                    # still be linked at the door (a person, not a name)
+                    "people": [{"id": pl.person_id, "name": pl.name,
+                                "tg": bool(pl.person_id in s.people
+                                           and s.people[pl.person_id].tg_id)}
+                               for pl in (s.players[p] for p in e.player_ids if p in s.players)
+                               if pl.person_id],
+                })
+            ents.sort(key=lambda e: e["name"].casefold())
+
+            def reg_dto(r):
+                # an account number is nobody's business at the door: only
+                # whether the entry came from Telegram, and whether the account
+                # is somebody the club already knows
+                d = r.to_dict()
+                d["tg"] = bool(d.pop("tg_id", None))
+                return d
+
+            return {
+                "telegram": bool(self._tg_name()),
+                "version": s.version, "role": role,
+                "event": {k: s.event.get(k, "") for k in ("name", "starts_at", "venue")},
+                "phase": s.phase(), "now": time.time(),
+                "cups": [{k: c[k] for k in ("id", "name", "entry", "registration")}
+                         for c in (s.cups[i].to_dict() for i in s.cup_order if i in s.cups)],
+                "registrations": [reg_dto(r) for r in regs],
+                "entrants": ents,
+                "people": [{"id": p.id, "name": p.name, "playing": bool(s.person_playing(p.id))}
+                           for p in (s.people[i] for i in s.people_order if i in s.people)],
+                "activity": self.activity(40),
+            }
+
+    def activity(self, limit):
+        """The log, told as the desk would say it. Only what is about who is
+        in the event; results and dispatching are the console's story."""
+        s = self.store
+        # Told in the order it happened, so every line uses the names as they
+        # were at that moment. Ids are reused once somebody is removed: read
+        # backwards, "Removed: E4" would name whoever holds E4 now.
+        hist = list(reversed(s.history(400)))
+        ents, players = {}, {}
+        ent_name = lambda i: ents.get(i) or (s.entrants[i].name if i in s.entrants else "somebody")
+        cup_name = lambda c: s.cups[c].name if c in s.cups else ""
+        reg = lambda i: s.registrations.get(i)
+        who = lambda r: r.name + (f" & {r.partner_name}" if r.partner_name else "")
+        out = []
+        for h in hist:
+            p, ty, line = h["payload"], h["type"], ""
+            if ty == "entrant_add" or (ty == "entrant_update" and "name" in p):
+                ents[p.get("id")] = p.get("name", "")
+            if ty == "player_update" and "name" in p:
+                was = players.get(p.get("id")) or (s.players[p["id"]].name
+                                                   if p.get("id") in s.players else "")
+                line = f"Renamed {was} → {p['name']}" if was and was != p["name"] \
+                    else f"Renamed to {p['name']}"
+            if ty in ("player_add", "player_update") and "name" in p:
+                players[p.get("id")] = p["name"]
+            if ty == "registration_add":
+                line = f"New entry: {p.get('name', '')}" + (
+                    f" & {p['partner_name']}" if p.get("partner_name") else "") + (
+                    f" · {cup_name(p.get('cup_id'))}" if cup_name(p.get("cup_id")) else "")
+            elif ty == "registration_update" and p.get("status") == "dropped" and reg(p["id"]):
+                line = f"Taken off the list: {who(reg(p['id']))}"
+            elif ty == "registration_update" and p.get("status") == "cancelled" and reg(p["id"]):
+                line = (f"Cancelled in Telegram: {who(reg(p['id']))}" if h["by"] == "telegram"
+                        else f"Cancelled with their link: {who(reg(p['id']))}")
+            elif ty == "registration_update" and "note" in p and h["by"] == "public" and reg(p["id"]):
+                line = f"Note changed with their link: {who(reg(p['id']))}"
+            elif ty == "registration_update" and p.get("status") == "duplicate" and reg(p["id"]):
+                line = f"Cleared as a duplicate: {who(reg(p['id']))}"
+            elif ty == "registration_update" and p.get("status") == "pending" and reg(p["id"]) \
+                    and "entrant_id" not in p:
+                line = (f"Registered again with their link: {who(reg(p['id']))}" if h["by"] == "public"
+                        else f"Registered again in Telegram: {who(reg(p['id']))}" if h["by"] == "telegram"
+                        else f"Put back on the list: {who(reg(p['id']))}")
+            elif ty == "registration_update" and p.get("distinct") and reg(p["id"]):
+                line = (f"Kept as a separate {'team' if reg(p['id']).partner_name else 'person'}: "
+                        f"{who(reg(p['id']))}")
+            elif ty == "registration_update" and p.get("matched_with") and reg(p["id"]) \
+                    and reg(p["matched_with"]) and p["id"] < p["matched_with"]:
+                line = f"{reg(p['id']).name} and {reg(p['matched_with']).name} matched as partners"
+            elif ty == "entrant_add":
+                line = f"In: {p.get('name', '')}" + (
+                    f" · {cup_name(p.get('cup_id'))}" if cup_name(p.get("cup_id")) else "")
+            elif ty == "entrant_remove":
+                line = f"Removed: {ent_name(p.get('id'))}"
+                ents.pop(p.get("id"), None)       # the id is free for the next one
+            elif ty == "rest_set":
+                n = ent_name(p.get("entrant_id"))
+                line = f"{n} sits out" if p.get("resting", True) else f"{n} back in"
+            elif ty == "entrant_update" and "active" in p:
+                n = ent_name(p.get("id"))
+                line = f"{n} gone home" if not p["active"] else f"{n} is back"
+            elif ty == "entrant_update" and p.get("cup_id"):
+                line = f"{ent_name(p.get('id'))} moved to {cup_name(p['cup_id'])}"
+            elif ty == "entrant_update" and "name" in p:
+                line = f"Team name: {p['name']}"
+            if line:
+                out.append({"seq": h["seq"], "ts": h["ts"], "by": h["by"], "text": line})
+        return out[::-1][:limit]
+
     def state(self, role):
         s = self.store
         with s.lock:
@@ -295,10 +451,10 @@ class App:
                 "people": [{**s.people[i].to_dict(),
                             "playing": bool(s.person_playing(i))}
                            for i in s.people_order if i in s.people]
-                          if role == "admin" else [],
+                          if role in ("admin", "door") else [],
                 "registrations": [r.to_dict() for r in (
                     s.registrations[i] for i in s.registration_order
-                    if i in s.registrations)] if role == "admin" else [],
+                    if i in s.registrations)] if role in ("admin", "door") else [],
                 "history": s.history(40) if role == "admin" else [],
                 "keys": self.keys if role == "admin" else {},
                 "telegram": (self.telegram.admin_state()
@@ -314,11 +470,10 @@ class App:
 
     def act(self, role, op, p):
         s = self.store
-        lvl = ROLES[role]
         need = OP_LEVEL.get(op)
         if need is None:
             raise KeyError(f"unknown action {op!r}")
-        if lvl < need:
+        if not (ROLES[role] >= need or (role == "door" and op in DOOR_OPS)):
             raise PermissionError(f"{role} cannot {op}")
         if op in UNLOCKED:
             # talks to Telegram, which can take seconds; the tables must
@@ -326,8 +481,15 @@ class App:
             return getattr(self, "op_" + op)(p) or {}
         with s.lock:
             fn = getattr(self, "op_" + op)
-            out = fn(p)
-            dispatch.tick(s)
+            # Everything the op writes is theirs; what the dispatcher does
+            # afterwards on its own account is the system's.
+            s.actor = "telegram" if role == "system" else role
+            try:
+                out = fn(p)
+                s.actor = "system"
+                dispatch.tick(s)
+            finally:
+                s.actor = "system"
             return out or {}
 
     # players & entrants
@@ -825,7 +987,7 @@ class App:
             raise ValueError("that cup is not taking entries")
         out = self._take_registration(cup, p)
         tg = self.telegram
-        if tg and tg.on:
+        if tg and tg.on and "registration_id" in out:
             # the entry's own private link into the bot: opening it is how a
             # web registration gets its table calls (docs/telegram.md)
             out["telegram"] = tg.link("r_" + self.store.registrations[
@@ -864,6 +1026,19 @@ class App:
         if len(s.regs_for_cup(cup.id, status=None)) >= self.MAX_PER_CUP:
             raise ValueError("that cup is full")
 
+        # One partner often registers the team and the other does it again,
+        # to be safe. Ask before writing anything: the form puts the question
+        # to them, and only "we are a different team" comes back, as
+        # distinct. It answers yes or no to exactly these two names in this
+        # cup and says nothing else — no one else's entry, no counts.
+        # The bot cannot put the question yet (it would report "Angemeldet"
+        # for an entry it never wrote), so an entry from Telegram goes in and
+        # the desk groups it with the other.
+        distinct = kind == "pair" and bool(p.get("distinct"))
+        if kind == "pair" and not distinct and tg_id is None \
+                and self._team_entered(cup.id, name, partner):
+            return {"possible_duplicate": True, "cup": cup.name}
+
         clamp = lambda v: max(1.0, min(10.0, float(v)))
         try:
             strength = clamp(p.get("strength", 5))
@@ -879,14 +1054,93 @@ class App:
             "partner_strength": partner_strength if kind == "pair" else 5.0,
             "team_name": text(p.get("team_name"), 60) if kind == "pair" else "",
             "note": text(p.get("note"), 500),
+            "distinct": distinct,
+            "token": secrets.token_urlsafe(16),
             "ts": time.time(),
-            "token": secrets.token_urlsafe(9),
             "tg_id": tg_id, "person_id": person_id,
         })
         self._match_seekers(cup.id)
         mate = s.registrations.get(s.registrations[rid].matched_with or "")
         return {"registration_id": rid, "cup": cup.name,
-                "matched_with": mate.name if mate else ""}
+                "matched_with": mate.name if mate else "",
+                "token": s.registrations[rid].token}
+
+    # ---------------------------------------------------------- the link
+    #
+    # Whoever registered gets a personal link, /me/<token>. The token is the
+    # whole of the authorisation: it opens that one entry and nothing else,
+    # so these four ops are public (level 0) and each starts by finding the
+    # entry it names. Registrations are still not live state — the pool, the
+    # draw and the tables are only ever touched by the door.
+
+    def _reg_by_token(self, p):
+        t = str(p.get("token") or "")
+        if len(t) >= 16:
+            for r in self.store.registrations.values():
+                if r.token and secrets.compare_digest(r.token, t):
+                    return r
+        raise ValueError("Diesen Link kennen wir nicht — vielleicht ist er unvollständig.")
+
+    def _reg_changeable(self):
+        if self.store.phase() not in ("announced", "registration"):
+            raise ValueError("Die Veranstaltung läuft schon — sag vor Ort Bescheid.")
+
+    def op_reg_view(self, p):
+        s = self.store
+        r = self._reg_by_token(p)
+        cup = s.cups.get(r.cup_id)
+        before = s.phase() in ("announced", "registration")
+        return {
+            "name": r.name, "partner_name": r.partner_name, "team_name": r.team_name,
+            "kind": r.kind, "note": r.note, "status": r.status, "created_ts": r.created_ts,
+            "cup": cup.name if cup else "",
+            # a partner has been found; who it is, they hear at the door
+            "matched": bool(r.matched_with),
+            "event": s.event.get("name", ""),
+            "can_change": before and r.status == "pending",
+            "can_restore": before and r.status == "cancelled"
+                           and bool(cup) and cup.registration == "open",
+        }
+
+    def op_reg_note(self, p):
+        r = self._reg_by_token(p)
+        self._reg_changeable()
+        if r.status != "pending":
+            raise ValueError("Diese Anmeldung ist nicht mehr offen.")
+        note = " ".join(str(p.get("note") or "").split())[:500]
+        self.store.append("registration_update", {"id": r.id, "note": note})
+        return {}
+
+    def op_reg_cancel(self, p):
+        r = self._reg_by_token(p)
+        self._reg_changeable()
+        if r.status != "pending":
+            raise ValueError("Diese Anmeldung ist nicht mehr offen.")
+        self.store.append("registration_update", {"id": r.id, "status": "cancelled"})
+        self._match_seekers(r.cup_id)     # whoever was matched with them looks again
+        return {}
+
+    def op_reg_restore(self, p):
+        s = self.store
+        r = self._reg_by_token(p)
+        self._reg_changeable()
+        cup = s.cups.get(r.cup_id)
+        if r.status != "cancelled":
+            raise ValueError("Diese Anmeldung ist nicht abgemeldet.")
+        if not cup or cup.registration != "open":
+            raise ValueError("Für diese Kategorie ist die Anmeldung geschlossen.")
+        s.append("registration_update", {"id": r.id, "status": "pending"})
+        self._match_seekers(r.cup_id)
+        return {}
+
+    def _team_entered(self, cup_id, name, partner):
+        """Whether these two people, in either order, already have an entry in
+        this cup that is waiting or checked in."""
+        s = self.store
+        want = sorted((s.name_key(name), s.name_key(partner)))
+        return any(r.kind == "pair" and r.status in ("pending", "confirmed")
+                   and sorted((s.name_key(r.name), s.name_key(r.partner_name))) == want
+                   for r in s.regs_for_cup(cup_id, status=None))
 
     def _match_seekers(self, cup_id):
         """Pair up people who registered alone for a doubles cup.
@@ -1021,6 +1275,24 @@ class App:
                        else (chat or {}).get("first_name") or "")
         s.append("person_link", {"id": person_id, "tg_id": tg_id, "tg_name": tg_name})
 
+    def _carry_tg(self, dup, e):
+        """Somebody registered twice, once from Telegram, and the door let the
+        other entry in and cleared this one as the same team. The account
+        belongs to whoever is here now: the door has seen that they are the
+        same person, which is the witnessing a link needs (docs/telegram.md).
+        Without this their table calls would go nowhere."""
+        s = self.store
+        if not e:
+            return
+        mine = next((pid for pid in e.player_ids if pid in s.players and
+                     s.name_key(s.players[pid].name) == s.name_key(dup.name)),
+                    e.player_ids[0] if e.player_ids else None)
+        if mine in s.players:
+            self._link_tg(s.players[mine].person_id, dup.tg_id)
+        kept = next((r for r in s.registrations.values() if r.entrant_id == e.id), None)
+        if kept and not kept.tg_id:
+            s.append("registration_update", {"id": kept.id, "tg_id": dup.tg_id})
+
     def _refuse_duplicate(self, kind, name, partner=""):
         """Two people with the same name is how the wrong strength ends up
         on the wrong person, so the second one has to be told apart before
@@ -1106,9 +1378,28 @@ class App:
         return {"entrant_id": eid, "where": where, "why": why}
 
     def op_update_registration(self, p):
+        """Correct an entry, take it off the list, or put it back.
+
+        Taken off is a no-show (dropped), the second copy of an entry somebody
+        sent twice (duplicate), or the registrant calling it off themselves,
+        with their link or in Telegram (cancelled). All keep the entry, so Put
+        back can undo any of them. Confirmed is not settable here: that is
+        what admit does, and undoing it is removing the entrant, which puts
+        the entry back."""
         s = self.store
         reg = s.registrations.get(p.get("id") or "")
+        same_as = p.get("same_as")
+        p = {k: v for k, v in p.items() if k != "same_as"}
+        if "status" in p:
+            if p["status"] not in ("pending", "dropped", "duplicate", "cancelled"):
+                raise ValueError("an entry is only ever waiting, taken off, a duplicate or cancelled")
+            if reg and reg.status == "confirmed":
+                raise ValueError(f"{reg.name} is already checked in — undo the check-in instead")
+        if "distinct" in p:
+            p = dict(p, distinct=bool(p["distinct"]))
         s.append("registration_update", p)
+        if reg and reg.tg_id and p.get("status") == "duplicate" and same_as:
+            self._carry_tg(reg, s.entrants.get(same_as))
         if reg:
             self._match_seekers(reg.cup_id)     # whoever was left alone may have a new match
 
@@ -1171,7 +1462,7 @@ class App:
         s = self.store
         tok = p.get("token") or ""
         reg = next((r for r in s.registrations.values()
-                    if tok and r.token == tok and r.status != "dropped"), None)
+                    if tok and r.token == tok and r.status not in OFF_THE_LIST), None)
         if not reg:
             raise ValueError("unknown link")
         cup = s.cups.get(reg.cup_id)
@@ -1292,6 +1583,7 @@ class ArchiveApp(App):
         self.first_seq = first_seq
         self.sim = None
         self._cache = {}
+        self._desk_cache = {}
         self._reg_hits = {}
 
     def act(self, role, op, p):
@@ -1309,11 +1601,30 @@ OP_LEVEL = {
     "manual_match": 2, "manual_result": 1, "event_meta": 2, "rewind": 2,
     "new_event": 2, "create_event": 2, "set_phase": 2, "past_events": 2,
     "register": 0, "update_registration": 2,
+    "reg_view": 0, "reg_note": 0, "reg_cancel": 0, "reg_restore": 0,
     "sim_start": 2, "sim_stop": 2,
     "admit": 2, "add_registration": 2, "remove_entrant": 2, "remove_entrants": 2, "update_person": 2, "remove_person": 2, "add_from_directory": 2,
     "tg_connect": 2, "tg_disconnect": 2, "tg_send": 2, "tg_door_link": 2, "tg_read": 2,
     "tg_register": 3, "tg_attach": 3, "tg_link": 3, "tg_detach": 3, "tg_rsvp": 3,
 }
+
+# The door key is not a rung on the ladder above: it runs who is in the
+# event — check-in, walk-ins, the roster, the directory — and nothing about
+# how it is played. So it gets a list rather than a level. Scoring, draws,
+# cups, tables, the log, merging cups and forgetting people stay with admin.
+DOOR_OPS = frozenset({
+    "admit", "add_registration", "update_registration",
+    "update_player", "update_entrant",
+    "set_resting", "withdraw", "remove_entrant",
+    "add_from_directory",
+    # the QR code that links somebody's Telegram at the door: witnessing
+    # who is standing there is the door's job (docs/telegram.md)
+    "tg_door_link",
+})
+
+# An entry that is none of these is off the list: a no-show, a duplicate the
+# door cleared, or one cancelled with its link. The bot counts it as gone.
+OFF_THE_LIST = ("dropped", "duplicate", "cancelled")
 
 # Ops that talk to Telegram and so must not hold the store lock while they wait.
 UNLOCKED = {"tg_connect", "tg_disconnect", "tg_send", "tg_door_link", "tg_read"}
@@ -1397,6 +1708,26 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/public":
             return self._send(200, self.app.public_state())
 
+        if path == "/api/desk":
+            role = self.app.role_for(self._token(q))
+            if role not in ("admin", "door"):
+                return self._send(403, {"error": "the desk needs the admin or door link"})
+            v, body = self.app.desk_json(role)
+            tag = f'W/"desk-{v}-{role}-{int(bool(self.app._tg_name()))}"'
+            if self.headers.get("If-None-Match") == tag:
+                self.send_response(304)
+                self.send_header("ETag", tag)
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+                return
+            return self._send(200, body, etag=tag)
+
+        # The registration desk: its own page, on the admin or the door key —
+        # and the whole of what the door link opens. The key is checked by
+        # /api/desk and /api/action, not here; the page is only markup.
+        if re.fullmatch(r"/[ad]/[^/]+/desk|/d/[^/]+/?", path):
+            return self._static("desk.html")
+
         if path == "/api/stream":
             return self._stream()
 
@@ -1412,7 +1743,7 @@ class Handler(BaseHTTPRequestHandler):
         if path.startswith("/static/"):
             return self._static(path[len("/static/"):])
 
-        if path == "/join":
+        if path == "/join" or re.fullmatch(r"/me/[A-Za-z0-9_-]+/?", path):
             return self._site_page()
 
         if path == "/tg":
@@ -1654,6 +1985,7 @@ def serve(data_dir="data", host="0.0.0.0", port=8000):
     print(f"\n  Table tennis console\n")
     print(f"  Everyone   http://{ip}:{port}/")
     print(f"  Referees   http://{ip}:{port}/r/{app.keys['referee']}")
+    print(f"  Door       http://{ip}:{port}/d/{app.keys['door']}")
     print(f"  Admin      http://{ip}:{port}/a/{app.keys['admin']}\n")
     print(f"  Data in {os.path.abspath(data_dir)}  (delete event.db to reset)\n")
     srv.serve_forever()

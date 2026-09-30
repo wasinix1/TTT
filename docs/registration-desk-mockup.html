@@ -1,0 +1,853 @@
+<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Registration Desk</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Syne:wght@400..800&display=swap" rel="stylesheet">
+<style>
+/* Layout: the console's own system — white paper, black ink, one red, flat
+   blocks on a 2px gutter. Desk = Expected | Here | Detail on a laptop,
+   stacked behind a switch on a phone. Deliberately single-theme, like the console. */
+:root{
+  --ground:#ffffff; --surface:#f2f2f0; --raised:#ffffff; --edge:#e4e4e0;
+  --chalk:#0a0a0a; --muted:#5f5f5f; --dim:#767671;
+  --signal:#d8241a; --signal-wash:rgba(216,36,26,.07); --on-signal:#ffffff;
+  --warn:#8a5a00; --warn-wash:#fbf3e2;
+  --sans:"Syne",ui-sans-serif,system-ui,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
+  --gap:2px; --pad:clamp(16px,2.4vw,26px); --r:8px; --r-sm:6px; --r-xs:5px;
+  color-scheme:light;
+}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+html,body{height:100%}
+body{margin:0;background:var(--ground);color:var(--chalk);font-family:var(--sans);font-size:15px;line-height:1.45;font-variant-numeric:tabular-nums}
+button,input,select,textarea{font:inherit;color:inherit}
+h1,h2,h3{margin:0;font-weight:700;letter-spacing:-.02em;text-wrap:balance}
+:focus-visible{outline:2px solid var(--signal);outline-offset:2px}
+
+/* ---- mockup controls */
+.mock{background:var(--chalk);color:var(--ground);padding:8px var(--pad);display:flex;flex-wrap:wrap;gap:10px 18px;align-items:center;font-size:13px}
+.mock b{letter-spacing:.08em;font-size:11px;text-transform:uppercase}
+.mock .grp{display:flex;align-items:center;gap:6px}
+.mock .grp span{color:#b9b9b4}
+.seg{display:inline-flex;background:rgba(255,255,255,.12);border-radius:var(--r-xs);padding:2px}
+.seg button{border:0;background:transparent;color:#d9d9d4;padding:4px 10px;border-radius:4px;font-size:12px;font-weight:600;cursor:pointer}
+.seg button.on{background:var(--ground);color:var(--chalk)}
+.mock .reset{margin-left:auto;border:0;background:transparent;color:#d9d9d4;font-size:12px;cursor:pointer;text-decoration:underline}
+
+/* ---- buttons, chips, fields */
+.btn{border:0;background:var(--surface);color:var(--chalk);padding:9px 14px;border-radius:var(--r-sm);font-weight:600;cursor:pointer;white-space:nowrap}
+.btn:hover{background:var(--chalk);color:var(--ground)}
+.btn.primary{background:var(--signal);color:var(--on-signal);font-weight:700}
+.btn.primary:hover{background:var(--chalk)}
+.btn.ghost{background:transparent;color:var(--muted)}
+.btn.ghost:hover{background:var(--surface);color:var(--chalk)}
+.btn.tiny{padding:6px 11px;font-size:13px;border-radius:var(--r-xs);font-weight:700}
+.btn:disabled{opacity:.4;cursor:default}
+.btn:disabled:hover{background:var(--surface);color:var(--chalk)}
+.chip{display:inline-flex;align-items:center;gap:4px;font-size:11px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;padding:3px 7px;border-radius:var(--r-xs);background:var(--surface);color:var(--muted);white-space:nowrap}
+.chip.hot{background:var(--signal);color:var(--on-signal)}
+.chip.dim{background:transparent;color:var(--dim);border:1px solid var(--edge)}
+.chip.warn{background:var(--warn-wash);color:var(--warn)}
+.chip.dark{background:var(--chalk);color:var(--ground)}
+input[type=text],input[type=search],select,textarea{width:100%;border:1px solid var(--edge);background:var(--raised);border-radius:var(--r-sm);padding:8px 10px;font-size:14px;min-width:0}
+input:focus,select:focus,textarea:focus{outline:2px solid var(--chalk);outline-offset:-1px;border-color:transparent}
+label.l{display:block;font-size:11px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;color:var(--muted);margin-bottom:4px}
+.muted{color:var(--muted)} .small{font-size:13px}
+
+/* ---- desk header */
+.bar{display:flex;flex-wrap:wrap;align-items:center;gap:10px 20px;padding:14px var(--pad)}
+.word{font-weight:800;letter-spacing:.02em;color:var(--signal);font-size:15px}
+.bar h1{font-size:19px}
+.bar .phase{font-size:13px;color:var(--muted)}
+.tally{display:flex;gap:16px;font-size:13px;color:var(--muted)}
+.tally b{color:var(--chalk);font-size:16px}
+.tally .live b{color:var(--signal)}
+.bar .right{margin-left:auto;display:flex;gap:8px;align-items:center}
+.role{font-size:12px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;padding:4px 8px;border-radius:var(--r-xs);background:var(--surface)}
+.role.door{background:var(--chalk);color:var(--ground)}
+.nav{display:flex;gap:var(--gap);padding:0 var(--pad);flex-wrap:wrap;align-items:stretch}
+.nav button{border:0;background:var(--surface);color:var(--muted);padding:10px 16px;font-weight:600;cursor:pointer;display:flex;gap:8px;align-items:baseline}
+.nav button:first-child{border-radius:var(--r) 0 0 0}
+.nav button.on{background:var(--chalk);color:var(--ground);font-weight:700}
+.nav button .n{font-size:12px;opacity:.75}
+.nav .sp{flex:1}
+.nav .search{display:flex;align-items:center;gap:8px;background:transparent;padding:4px 0}
+.nav .search input{width:220px}
+
+/* ---- desk grid */
+.desk{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr) minmax(300px,360px);gap:var(--gap);padding:var(--gap) var(--pad) 40px}
+.col{background:var(--surface);min-width:0;display:flex;flex-direction:column}
+.col:first-child{border-radius:0 0 0 var(--r)} .col:last-child{border-radius:0 var(--r) var(--r) 0}
+.colhead{display:flex;align-items:baseline;gap:10px;padding:14px 16px 10px}
+.colhead h2{font-size:13px;letter-spacing:.09em;text-transform:uppercase}
+.colhead .n{font-size:13px;color:var(--muted)}
+.colhead .act{margin-left:auto}
+.list{display:flex;flex-direction:column;gap:var(--gap);padding:0 0 2px}
+.sub{padding:14px 16px 6px;font-size:11px;font-weight:700;letter-spacing:.09em;text-transform:uppercase;color:var(--muted);display:flex;gap:8px;align-items:center}
+.empty{padding:14px 16px;color:var(--muted);font-size:14px}
+
+.card{background:var(--raised);padding:11px 14px;display:grid;grid-template-columns:minmax(0,1fr) auto;gap:4px 12px;align-items:center;cursor:pointer;border-left:3px solid transparent}
+.card:hover{background:#fbfbfa}
+.card.sel{border-left-color:var(--chalk);background:#fbfbfa}
+.card.kb{box-shadow:inset 0 0 0 2px var(--chalk)}
+.card .who{font-weight:700;min-width:0;overflow-wrap:anywhere}
+.card .who .team{font-weight:500;color:var(--muted);font-size:13px;margin-left:6px}
+.card .acts{display:flex;gap:6px;align-items:center}
+.card .meta{grid-column:1 / -1;display:flex;flex-wrap:wrap;gap:6px;align-items:center;font-size:13px;color:var(--muted)}
+.card .note{grid-column:1 / -1;font-size:13px;color:var(--muted);font-style:italic}
+.card.stack{box-shadow:4px 4px 0 -1px var(--raised),4px 4px 0 0 var(--edge)}
+.card.leftover{background:var(--warn-wash)}
+.card.gone{opacity:.55}
+.hint{grid-column:1 / -1;font-size:13px;color:var(--warn);display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+
+.filters{display:flex;gap:6px;flex-wrap:wrap;padding:0 16px 10px}
+.filters button{border:1px solid var(--edge);background:var(--raised);border-radius:99px;padding:3px 10px;font-size:12px;font-weight:600;color:var(--muted);cursor:pointer}
+.filters button.on{background:var(--chalk);border-color:var(--chalk);color:var(--ground)}
+
+/* walk-in */
+.walk{background:var(--raised);margin:0 0 var(--gap);padding:12px 14px;display:flex;flex-direction:column;gap:8px}
+.walk .row{display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap}
+.walk .row > div{flex:1 1 150px;min-width:0}
+.walk .chk{display:flex;gap:6px;align-items:center;font-size:13px;color:var(--muted);flex:0 0 auto}
+.walk .msg{font-size:13px;color:var(--warn);background:var(--warn-wash);padding:8px 10px;border-radius:var(--r-sm);display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+
+/* resolved drawer */
+.resolved{margin-top:auto;padding:10px 16px 14px;font-size:13px;color:var(--muted)}
+.resolved summary{cursor:pointer;font-weight:600}
+.resolved ul{list-style:none;padding:0;margin:8px 0 0;display:flex;flex-direction:column;gap:6px}
+.resolved li{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+
+/* detail */
+.detail{padding:16px;display:flex;flex-direction:column;gap:14px}
+.detail h3{font-size:20px}
+.detail .kv{font-size:13px;color:var(--muted)}
+.fields{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.fields .full{grid-column:1 / -1}
+.entries{display:flex;flex-direction:column;gap:var(--gap)}
+.entry{background:var(--raised);padding:10px 12px;border-radius:var(--r-sm);display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:4px 10px;align-items:start;font-size:14px}
+.entry input[type=radio]{margin-top:4px;accent-color:var(--chalk)}
+.entry .t{font-size:12px;color:var(--muted)}
+.entry .nt{grid-column:2 / -1;font-size:13px;color:var(--muted);font-style:italic}
+.actions{display:flex;gap:8px;flex-wrap:wrap}
+.confirm{background:var(--raised);border-radius:var(--r-sm);padding:10px 12px;font-size:14px;display:flex;flex-direction:column;gap:8px}
+.log{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:6px;font-size:13px}
+.log li{display:grid;grid-template-columns:44px 52px minmax(0,1fr);gap:6px;color:var(--muted)}
+.log li b{color:var(--chalk);font-weight:600}
+.keys{font-size:13px;color:var(--muted);display:grid;grid-template-columns:auto 1fr;gap:4px 10px}
+kbd{font-family:inherit;font-size:12px;font-weight:700;background:var(--raised);border:1px solid var(--edge);border-radius:4px;padding:0 6px}
+.closeD{display:none}
+
+/* directory */
+.dir{padding:var(--gap) var(--pad) 40px}
+.dir .panel{background:var(--surface);border-radius:0 var(--r) var(--r) var(--r);padding:16px;display:flex;flex-direction:column;gap:12px}
+.dir .rows{display:flex;flex-direction:column;gap:var(--gap)}
+.dir .r{background:var(--raised);padding:10px 14px;display:grid;grid-template-columns:minmax(0,1fr) auto auto;gap:12px;align-items:center}
+
+/* phone switch */
+.phoneSeg{display:none}
+
+/* toast */
+.toast{position:fixed;left:50%;bottom:calc(20px + env(safe-area-inset-bottom,0px));transform:translateX(-50%);background:var(--chalk);color:var(--ground);padding:10px 12px 10px 16px;border-radius:var(--r);display:flex;gap:14px;align-items:center;font-size:14px;z-index:50;max-width:calc(100% - 32px)}
+.toast button{border:0;background:rgba(255,255,255,.14);color:var(--ground);padding:6px 12px;border-radius:var(--r-xs);font-weight:700;cursor:pointer}
+
+/* ---- public pages */
+.pub{max-width:520px;margin:0 auto;padding:28px 16px 60px;display:flex;flex-direction:column;gap:16px}
+.pub .word{font-size:22px}
+.pub h2{font-size:26px}
+.pub .box{background:var(--surface);border-radius:var(--r);padding:18px;display:flex;flex-direction:column;gap:12px}
+.pub .choice{display:grid;grid-template-columns:1fr 1fr;gap:var(--gap)}
+.pub .choice button{border:0;background:var(--raised);padding:12px;text-align:left;cursor:pointer;border-radius:var(--r-sm);display:flex;flex-direction:column;gap:2px}
+.pub .choice button.on{background:var(--chalk);color:var(--ground)}
+.pub .choice .s{font-size:12px;opacity:.75}
+.pub .warnbox{background:var(--warn-wash);border-radius:var(--r);padding:16px;display:flex;flex-direction:column;gap:10px}
+.pub .warnbox p{margin:0}
+.pub .link{display:flex;gap:8px}
+.pub .link input{font-size:13px}
+.pub .cta{padding:13px 18px;font-size:16px}
+.pub .explain{font-size:13px;color:var(--muted);border-top:1px solid var(--edge);padding-top:12px}
+
+@media (max-width:1000px){
+  .desk{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}
+  .desk .col.detailcol{display:none}
+  .desk .col.detailcol.open{display:flex;position:fixed;left:0;right:0;bottom:0;max-height:78%;overflow:auto;z-index:40;border-radius:var(--r) var(--r) 0 0;box-shadow:0 -10px 40px rgba(0,0,0,.18)}
+  .closeD{display:inline-flex}
+}
+@media (max-width:700px){
+  .phoneSeg{display:flex;gap:var(--gap);padding:var(--gap) var(--pad) 0}
+  .phoneSeg button{flex:1;border:0;background:var(--surface);padding:10px;font-weight:700;color:var(--muted)}
+  .phoneSeg button.on{background:var(--chalk);color:var(--ground)}
+  .desk{grid-template-columns:minmax(0,1fr)}
+  .desk .col.hideP{display:none}
+  .nav .search{width:100%} .nav .search input{width:100%}
+  .nav .sp{display:none}
+  .tally{width:100%}
+  .fields{grid-template-columns:1fr}
+}
+@media (prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+
+<div class="mock" id="mock"></div>
+<div id="app"></div>
+<div id="toast" class="toast" hidden></div>
+
+<script>
+/* ============================================================ sample data */
+const CUPS = [{ id: 's', name: 'Einzel', entry: 'single' }, { id: 'd', name: 'Doppel', entry: 'pair' }];
+const cupName = id => (CUPS.find(c => c.id === id) || {}).name || '';
+
+function initial() {
+  const R = (o) => ({ partner: '', team: '', note: '', status: 'pending', ...o });
+  return {
+    clock: 18 * 60 + 31,
+    regs: [
+      R({ id: 'r1', cup: 's', kind: 'single', name: 'Jana Berger', at: 'Mon 19:12' }),
+      R({ id: 'r2', cup: 's', kind: 'single', name: 'Tobias Wendt', at: 'Tue 08:03' }),
+      R({ id: 'r3', cup: 's', kind: 'single', name: 'Mira Scholz', at: 'yesterday 21:40' }),
+      R({ id: 'r4', cup: 's', kind: 'single', name: 'Mira Scholz', at: 'today 14:05', note: 'Komme ca. 20 min später' }),
+      R({ id: 'r5', cup: 's', kind: 'single', name: 'Felix Hahn', at: 'today 09:30' }),
+      R({ id: 'r6', cup: 's', kind: 'single', name: 'Jonas Keller', at: 'Sun 17:45' }),
+      R({ id: 'r10', cup: 'd', kind: 'pair', name: 'Lea Hoffmann', partner: 'Ben Krüger', at: 'Sat 11:20' }),
+      R({ id: 'r11', cup: 'd', kind: 'pair', name: 'Ben Krüger', partner: 'Lea Hoffmann', team: 'Netzroller', at: 'Sun 20:02', note: 'Hab uns sicherheitshalber auch angemeldet' }),
+      R({ id: 'r12', cup: 'd', kind: 'pair', name: 'Lea Hoffmann', partner: 'Ben Krüger', at: 'today 10:15', distinct: true, note: 'Wir sind nicht die anderen beiden :)' }),
+      R({ id: 'r13', cup: 'd', kind: 'pair', name: 'Max Weber', partner: 'Lara Fuchs', at: 'Fri 16:40' }),
+      R({ id: 'r14', cup: 'd', kind: 'seeking', name: 'Lara Fuchs', at: 'today 12:02' }),
+      R({ id: 'r15', cup: 'd', kind: 'seeking', name: 'Kim Yilmaz', at: 'Sat 09:10', matched: 'r16' }),
+      R({ id: 'r16', cup: 'd', kind: 'seeking', name: 'Ole Petersen', at: 'Sun 13:55', matched: 'r15' }),
+      R({ id: 'r17', cup: 'd', kind: 'pair', name: 'Jonas Keller', partner: 'Timo Schmitt', at: 'Sun 17:47' }),
+    ],
+    ents: [
+      { id: 'e1', cup: 's', names: ['Tom Kraus'], status: 'waiting', at: '18:10' },
+      { id: 'e2', fromReg: 'Sat 10:12', cup: 's', names: ['Anna Roth'], status: 'playing', table: 2, vs: 'Lukas Brandt', at: '18:04', played: true },
+      { id: 'e3', fromReg: 'Mon 08:40', cup: 's', names: ['Lukas Brandt'], status: 'playing', table: 2, vs: 'Anna Roth', at: '18:05', played: true },
+      { id: 'e4', fromReg: 'Sun 19:03', cup: 's', names: ['Paul Seidl'], status: 'resting', at: '18:12', played: true },
+      { id: 'e5', cup: 's', names: ['Nina Vogel'], status: 'waiting', at: '18:15', played: true },
+      { id: 'e6', fromReg: 'Thu 22:15', cup: 's', names: ['Erik Lang'], status: 'playing', table: 1, vs: 'Sophie Braun', at: '18:02', played: true },
+      { id: 'e7', fromReg: 'Fri 07:30', cup: 's', names: ['Sophie Braun'], status: 'playing', table: 1, vs: 'Erik Lang', at: '18:03', played: true },
+      { id: 'e8', fromReg: 'Wed 18:00', cup: 's', names: ['David Horn'], status: 'gone', at: '18:01', played: true },
+      { id: 'e20', fromReg: 'Sat 12:01', cup: 'd', names: ['Marco Lenz', 'Julia Frank'], team: 'Die Kellerkinder', status: 'playing', table: 3, vs: 'Beck & Wolf', at: '18:06', played: true },
+      { id: 'e21', fromReg: 'Sun 09:44', cup: 'd', names: ['Sarah Beck', 'Chris Wolf'], status: 'playing', table: 3, vs: 'Die Kellerkinder', at: '18:07', played: true },
+      { id: 'e22', cup: 'd', names: ['Anja Koch', 'Stefan Roth'], status: 'waiting', at: '18:20' },
+    ],
+    people: ['Anja Koch', 'Anna Roth', 'Ben Krüger', 'Chris Wolf', 'David Horn', 'Erik Lang', 'Eva Maier', 'Felix Hahn',
+      'Jana Berger', 'Jonas Keller', 'Julia Frank', 'Kim Yilmaz', 'Lea Hoffmann', 'Lukas Brandt', 'Marco Lenz',
+      'Max Weber', 'Mira Scholz', 'Nina Vogel', 'Ole Petersen', 'Paul Seidl', 'Sarah Beck', 'Sophie Braun',
+      'Stefan Roth', 'Tim Busch', 'Tobias Wendt', 'Tom Kraus'].map((n, i) => ({ id: 'p' + i, name: n, seen: 1 + (i * 7) % 9 })),
+    log: [
+      { t: '18:20', who: 'Admin', text: 'Walk-in: Anja Koch & Stefan Roth · Doppel' },
+      { t: '18:15', who: 'Door', text: 'Checked in Nina Vogel · Einzel' },
+      { t: '17:58', who: '—', text: 'Kim Yilmaz and Ole Petersen matched automatically' },
+    ],
+  };
+}
+
+/* ============================================================ view state */
+let S = initial();
+const V = {
+  screen: 'desk', role: 'admin', phase: 'doors', view: 'desk', cup: 's',
+  q: '', filter: 'all', sel: null, kb: -1, phone: 'exp', pick: {}, confirm: null,
+  walk: { name: '', partner: '', seek: false },
+  pub: { cup: 'd', kind: 'pair', name: 'Lea Hoffmann', partner: 'Ben Krüger', team: '', note: '', warned: false, done: null, same: false },
+  me: 'r13', meConfirm: false, meNote: null, dirQ: '', dirAdd: null,
+};
+let undoStack = [];
+
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const nk = s => (s || '').trim().toLowerCase().replace(/\s+/g, ' ');
+const now = () => { const t = S.clock++; return `${Math.floor(t / 60)}:${String(t % 60).padStart(2, '0')}`; };
+const who = () => V.role === 'door' ? 'Door' : 'Admin';
+const log = text => S.log.unshift({ t: now(), who: who(), text });
+
+function snap() { undoStack.push(JSON.stringify(S)); if (undoStack.length > 30) undoStack.shift(); }
+let toastTimer = 0;
+function toast(msg, undo) {
+  const el = $('toast');
+  el.innerHTML = `<span>${esc(msg)}</span>${undo ? '<button data-a="undo">Undo</button>' : ''}`;
+  el.hidden = false;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { el.hidden = true; }, 6000);
+}
+
+/* ============================================================ derived */
+const keyOf = (cup, names) => cup + '|' + names.filter(Boolean).map(nk).sort().join('&');
+const regNames = r => [r.name, r.partner].filter(Boolean);
+const label = names => names.join(' & ');
+
+/* Expected column for one cup: stacks, leftovers, matched teams, seekers. */
+function cardsFor(cup) {
+  const pend = S.regs.filter(r => r.cup === cup && r.status === 'pending');
+  const used = new Set(), cards = [], seekers = [];
+  for (const r of pend) {
+    if (used.has(r.id) || r.kind !== 'seeking') continue;
+    const m = r.matched && pend.find(x => x.id === r.matched);
+    if (m) { used.add(r.id); used.add(m.id); cards.push({ type: 'matched', key: 'm:' + r.id, regs: [r, m], names: [r.name, m.name] }); }
+    else { used.add(r.id); seekers.push({ type: 'seeker', key: 's:' + r.id, regs: [r], names: [r.name] }); }
+  }
+  const groups = new Map();
+  for (const r of pend) {
+    if (used.has(r.id)) continue;
+    const k = r.distinct ? 'x:' + r.id : keyOf(cup, regNames(r));
+    if (!groups.has(k)) groups.set(k, []);
+    groups.get(k).push(r);
+  }
+  for (const [k, regs] of groups) {
+    const here = k.startsWith('x:') ? null : S.ents.find(e => e.regKey === k);
+    cards.push({ type: here ? 'leftover' : regs.length > 1 ? 'stack' : 'one', key: k, regs, here, names: regNames(regs[regs.length - 1]) });
+  }
+  // leftovers first: they are the thing that needs a decision
+  cards.sort((a, b) => (b.type === 'leftover') - (a.type === 'leftover'));
+  return { cards, seekers };
+}
+
+function hintsFor(card, cup) {
+  const out = [];
+  const r = card.regs[0];
+  if (card.type === 'one' && r.distinct)
+    out.push('Same names as another entry. The registrant said they are a different team.');
+  if (card.type === 'seeker') {
+    const other = S.regs.find(x => x.cup === cup && x.status === 'pending' && x.kind === 'pair' && regNames(x).some(n => nk(n) === nk(r.name)));
+    if (other) out.push(`Also named in ${label(regNames(other))}`);
+  }
+  return out;
+}
+function otherCupChip(names, cup) {
+  const o = CUPS.find(c => c.id !== cup);
+  const inOther = names.some(n => S.regs.some(x => x.cup === o.id && x.status !== 'dropped' && regNames(x).some(m => nk(m) === nk(n)))
+    || S.ents.some(e => e.cup === o.id && e.names.some(m => nk(m) === nk(n))));
+  return inOther ? `<span class="chip dim">also in ${esc(o.name)}</span>` : '';
+}
+
+const matchQ = names => !V.q || names.some(n => nk(n).includes(nk(V.q)));
+
+/* ============================================================ mock controls */
+function renderMock() {
+  const seg = (k, opts) => `<span class="seg">${opts.map(([v, l]) =>
+    `<button class="${V[k] === v ? 'on' : ''}" data-a="mock" data-k="${k}" data-v="${v}">${l}</button>`).join('')}</span>`;
+  $('mock').innerHTML = `<b>Mockup</b>
+    <span class="grp"><span>Screen</span>${seg('screen', [['desk', 'Registration desk'], ['form', 'Public form'], ['me', 'Personal link']])}</span>
+    ${V.screen === 'desk' ? `<span class="grp"><span>Key</span>${seg('role', [['admin', 'Admin'], ['door', 'Door']])}</span>
+    <span class="grp"><span>Phase</span>${seg('phase', [['before', 'Before the event'], ['doors', 'Doors open']])}</span>` : ''}
+    <button class="reset" data-a="reset">Reset sample data</button>`;
+}
+
+/* ============================================================ desk */
+function renderDesk() {
+  const before = V.phase === 'before';
+  const expAll = S.regs.filter(r => r.status === 'pending').length;
+  const here = S.ents.filter(e => e.status !== 'gone').length;
+  const playing = S.ents.filter(e => e.status === 'playing').length;
+  const cupCounts = c => {
+    const { cards, seekers } = cardsFor(c.id);
+    return `${cards.length + seekers.length} expected${before ? '' : ` · ${S.ents.filter(e => e.cup === c.id && e.status !== 'gone').length} here`}`;
+  };
+  const head = `<header class="bar">
+      <span class="word">TTT</span>
+      <div><h1>Herbst-Cup</h1><div class="phase">${before ? 'Sign-ups open · starts Friday 19:00' : 'Doors open · started 18:00'}</div></div>
+      <div class="tally"><span><b>${expAll}</b> entries expected</span>${before ? '' : `<span><b>${here}</b> here</span><span class="live"><b>${playing}</b> playing</span>`}</div>
+      <div class="right"><span class="role ${V.role}">${V.role === 'door' ? 'Door key' : 'Admin'}</span>
+        ${V.role === 'admin' ? '<button class="btn ghost tiny" title="Opens the scoring console in another tab">Console ↗</button>' : ''}</div>
+    </header>
+    <nav class="nav">
+      ${CUPS.map(c => `<button class="${V.view === 'desk' && V.cup === c.id ? 'on' : ''}" data-a="cup" data-v="${c.id}">${esc(c.name)} <span class="n">${cupCounts(c)}</span></button>`).join('')}
+      <button class="${V.view === 'dir' ? 'on' : ''}" data-a="dir">Club directory <span class="n">${S.people.length}</span></button>
+      <span class="sp"></span>
+      ${V.view === 'desk' ? `<label class="search"><span class="muted small">Filter</span><input type="search" id="q" value="${esc(V.q)}" placeholder="Name, partner or team  ( / )"></label>` : ''}
+    </nav>`;
+  if (V.view === 'dir') return head + renderDir();
+  return head + `
+    <div class="phoneSeg"><button class="${V.phone === 'exp' ? 'on' : ''}" data-a="phone" data-v="exp">Expected</button><button class="${V.phone === 'here' ? 'on' : ''}" data-a="phone" data-v="here">Here</button></div>
+    <div class="desk">
+      ${renderExpected()}
+      ${renderHere()}
+      ${renderDetail()}
+    </div>`;
+}
+
+function cardHTML(card, i) {
+  const r = card.regs[card.regs.length - 1];
+  const before = V.phase === 'before';
+  const sel = V.sel && V.sel.key === card.key ? ' sel' : '';
+  const kb = V.kb === i ? ' kb' : '';
+  const team = card.regs.map(x => x.team).find(Boolean);
+  let chips = '', acts = '', extra = '';
+  if (card.type === 'matched') chips = '<span class="chip dark">matched automatically</span>';
+  if (card.type === 'stack') chips = `<span class="chip warn">registered ${card.regs.length}×</span>`;
+  if (card.type === 'seeker') chips = '<span class="chip">looking for a partner</span>';
+  if (card.type === 'leftover') {
+    extra = `<div class="hint">Possible duplicate: ${esc(label(card.here.names))} checked in at ${esc(card.here.at)}.
+      <button class="btn tiny" data-a="same" data-k="${esc(card.key)}">Same team — clear it</button>
+      <button class="btn ghost tiny" data-a="distinct" data-k="${esc(card.key)}">Different team</button></div>`;
+  } else if (card.type === 'seeker') {
+    acts = `<button class="btn ghost tiny" data-a="noshow" data-k="${esc(card.key)}">${before ? 'Remove' : 'No show'}</button>`;
+  } else {
+    acts = before
+      ? `<button class="btn ghost tiny" data-a="noshow" data-k="${esc(card.key)}">Remove</button>`
+      : `<button class="btn ghost tiny" data-a="noshow" data-k="${esc(card.key)}">No show</button>
+         <button class="btn primary tiny" data-a="checkin" data-k="${esc(card.key)}">Check in</button>`;
+  }
+  const hints = hintsFor(card, V.cup).map(h => `<div class="hint">${esc(h)}</div>`).join('');
+  const meta = [chips, otherCupChip(card.names, V.cup),
+    card.type === 'stack' ? `<span>${card.regs.map(x => esc(x.at)).join(' · ')}</span>` : `<span>${esc(r.at)}</span>`].filter(Boolean).join('');
+  const note = card.regs.map(x => x.note).filter(Boolean).slice(-1)[0];
+  return `<div class="card${sel}${kb}${card.type === 'stack' ? ' stack' : ''}${card.type === 'leftover' ? ' leftover' : ''}" data-a="selcard" data-k="${esc(card.key)}">
+    <div class="who">${esc(label(card.names))}${team ? `<span class="team">${esc(team)}</span>` : ''}</div>
+    <div class="acts">${acts}</div>
+    <div class="meta">${meta}</div>
+    ${note ? `<div class="note">“${esc(note)}”</div>` : ''}
+    ${hints}${extra}
+  </div>`;
+}
+
+function renderExpected() {
+  const { cards, seekers } = cardsFor(V.cup);
+  const shown = cards.filter(c => matchQ(c.regs.flatMap(regNames).concat(c.regs.map(r => r.team))));
+  const shownSeek = seekers.filter(c => matchQ(c.names));
+  V._cards = shown;
+  const resolved = S.regs.filter(r => r.cup === V.cup && ['dup', 'dropped', 'cancelled'].includes(r.status));
+  const why = { dup: 'duplicate cleared', dropped: V.phase === 'before' ? 'removed' : 'no show', cancelled: 'cancelled by the registrant' };
+  const cup = CUPS.find(c => c.id === V.cup);
+  return `<section class="col ${V.phone === 'here' ? 'hideP' : ''}">
+    <div class="colhead"><h2>${V.phase === 'before' ? 'Registered' : 'Expected'}</h2><span class="n">${cards.length + seekers.length}</span></div>
+    <div class="list">${shown.map(cardHTML).join('') || `<div class="empty">${V.q ? 'Nobody matches.' : 'Nobody left to expect.'}</div>`}</div>
+    ${cup.entry === 'pair' ? `<div class="sub">Looking for a partner <span class="chip dim">matched automatically</span></div>
+      <div class="list">${shownSeek.map((c) => cardHTML(c, -2)).join('') || '<div class="empty">Nobody waiting for a partner.</div>'}</div>` : ''}
+    <details class="resolved"${V._openRes ? ' open' : ''}><summary>Resolved · ${resolved.length}</summary>
+      ${resolved.length ? `<ul>${resolved.map(r => `<li><span><b>${esc(label(regNames(r)))}</b> · ${esc(r.at)} · ${why[r.status]}</span>
+        <button class="btn ghost tiny" data-a="restore" data-r="${r.id}">Put back</button></li>`).join('')}</ul>`
+        : '<p style="margin:8px 0 0">Nothing yet. Anything taken off the list lands here, so no entry disappears without a trace.</p>'}
+    </details>
+  </section>`;
+}
+
+const STATUS = {
+  waiting: ['waiting', ''], playing: ['playing', 'hot'], resting: ['sitting out', 'dim'], gone: ['gone home', 'dim'], draw: ['in the draw', ''],
+};
+function renderHere() {
+  const before = V.phase === 'before';
+  const cup = CUPS.find(c => c.id === V.cup);
+  if (before) return `<section class="col ${V.phone === 'exp' ? 'hideP' : ''}">
+    <div class="colhead"><h2>Here</h2></div>
+    <div class="empty">Check-in opens with the doors. Until then, tidy the list on the left: fix names, clear duplicates, remove junk. Nothing you do here reaches the draw.</div></section>`;
+  const all = S.ents.filter(e => e.cup === V.cup);
+  const counts = k => all.filter(e => k === 'all' ? e.status !== 'gone' : e.status === k).length;
+  const list = all.filter(e => (V.filter === 'all' ? e.status !== 'gone' : e.status === V.filter) && matchQ(e.names.concat(e.team || '')))
+    .sort((a, b) => a.names[0].localeCompare(b.names[0]));
+  const w = V.walk;
+  const wmsg = walkMsg();
+  return `<section class="col ${V.phone === 'exp' ? 'hideP' : ''}">
+    <div class="colhead"><h2>Here</h2><span class="n">${counts('all')}</span></div>
+    <form class="walk" id="walkform" autocomplete="off">
+      <div class="row">
+        <div><label class="l" for="w-name">Walk-in${cup.entry === 'pair' ? ' · player 1' : ''}</label>
+          <input type="text" id="w-name" list="dirlist" value="${esc(w.name)}" placeholder="Name  ( n )"></div>
+        ${cup.entry === 'pair' ? `<div><label class="l" for="w-partner">Partner</label>
+          <input type="text" id="w-partner" list="dirlist" value="${esc(w.partner)}" ${w.seek ? 'disabled placeholder="matched automatically"' : 'placeholder="Name"'}></div>` : ''}
+        <button class="btn primary" type="submit" id="w-add">${wmsg && wmsg.here ? 'Add as someone else' : 'Add'}</button>
+      </div>
+      ${cup.entry === 'pair' ? `<label class="chk"><input type="checkbox" id="w-seek" ${w.seek ? 'checked' : ''}> No partner yet — match them with the next person looking</label>` : ''}
+      <div id="w-msg">${wmsg ? wmsg.html : ''}</div>
+    </form>
+    <datalist id="dirlist">${S.people.map(p => `<option value="${esc(p.name)}">`).join('')}</datalist>
+    <div class="filters">${[['all', 'All'], ['playing', 'Playing'], ['waiting', 'Waiting'], ['resting', 'Sitting out'], ['gone', 'Gone home']].map(([k, l]) =>
+      `<button class="${V.filter === k ? 'on' : ''}" data-a="filter" data-v="${k}">${l} ${counts(k)}</button>`).join('')}</div>
+    <div class="list">${list.map(e => {
+      const [lab, cls] = STATUS[e.status];
+      return `<div class="card${V.sel && V.sel.ent === e.id ? ' sel' : ''}${e.status === 'gone' || e.status === 'resting' ? ' gone' : ''}" data-a="selent" data-e="${e.id}">
+        <div class="who">${esc(label(e.names))}${e.team ? `<span class="team">${esc(e.team)}</span>` : ''}</div>
+        <div class="acts"><span class="chip ${cls}">${lab}${e.status === 'playing' ? ' · T' + e.table : ''}</span></div>
+        <div class="meta"><span>in at ${esc(e.at)}</span>${e.status === 'playing' ? `<span>vs ${esc(e.vs)}</span>` : ''}${e.fromReg ? '' : '<span>walk-in</span>'}${otherCupChip(e.names, V.cup)}</div>
+      </div>`;
+    }).join('') || `<div class="empty">${V.q ? 'Nobody matches.' : 'Nobody in this group.'}</div>`}</div>
+  </section>`;
+}
+
+/* A walk-in whose name is already on a list gets told so, with a way out
+   either direction. Nothing is blocked. */
+function walkMsg() {
+  const w = V.walk, cup = CUPS.find(c => c.id === V.cup);
+  if (!nk(w.name)) return null;
+  const names = cup.entry === 'pair' && !w.seek ? [w.name, w.partner] : [w.name];
+  if (cup.entry === 'pair' && !w.seek && !nk(w.partner)) return null;
+  const k = keyOf(V.cup, names);
+  const reg = S.regs.find(r => r.cup === V.cup && r.status === 'pending' && keyOf(V.cup, regNames(r)) === k);
+  if (reg) {
+    const n = S.regs.filter(r => r.cup === V.cup && r.status === 'pending' && keyOf(V.cup, regNames(r)) === k).length;
+    return { html: `<div class="msg">${esc(label(names))} ${n > 1 ? `registered ${n}×` : `registered ${esc(reg.at)}`}.
+      <button class="btn tiny" type="button" data-a="walkreg" data-k="${esc(k)}">Check in the registration instead</button></div>` };
+  }
+  const e = S.ents.find(x => x.cup === V.cup && keyOf(V.cup, x.names) === k);
+  if (e) return { here: true, html: `<div class="msg">${esc(label(names))} is already here, in at ${esc(e.at)}.
+      <button class="btn tiny" type="button" data-a="selent" data-e="${e.id}">Show them</button> Adding again creates a second entry.</div>` };
+  return null;
+}
+
+/* ============================================================ detail */
+function renderDetail() {
+  const open = !!V.sel;
+  const cls = `col detailcol${open ? ' open' : ''} ${''}`;
+  if (!V.sel) return `<aside class="${cls}"><div class="detail">
+      <p class="muted small" style="margin:0">Click anyone to see and change their details here. The lists keep updating while this stays put.</p>
+      <div><div class="sub" style="padding:0 0 6px">Activity</div>
+        <ul class="log">${S.log.slice(0, 8).map(l => `<li><span>${esc(l.t)}</span><b>${esc(l.who)}</b><span>${esc(l.text)}</span></li>`).join('')}</ul></div>
+      <div><div class="sub" style="padding:0 0 6px">Keys</div>
+        <div class="keys"><kbd>/</kbd><span>filter the lists</span><kbd>n</kbd><span>new walk-in</span>
+          <kbd>↑ ↓</kbd><span>move through Expected</span><kbd>Enter</kbd><span>check in the highlighted entry</span><kbd>Esc</kbd><span>close details</span></div></div>
+    </div></aside>`;
+  const close = `<button class="btn ghost tiny closeD" data-a="desel" style="margin-left:auto">Close</button>`;
+  if (V.sel.ent) {
+    const e = S.ents.find(x => x.id === V.sel.ent);
+    if (!e) { V.sel = null; return renderDetail(); }
+    const pair = e.names.length === 2;
+    const c = V.confirm === 'gone:' + e.id;
+    return `<aside class="${cls}"><div class="detail">
+      <div style="display:flex;gap:8px;align-items:flex-start"><h3>${esc(label(e.names))}</h3>${close}</div>
+      <div class="kv">${esc(cupName(e.cup))} · in at ${esc(e.at)} · ${e.fromReg ? 'from a registration (' + esc(e.fromReg) + ')' : 'walk-in'}</div>
+      <div><span class="chip ${STATUS[e.status][1]}">${STATUS[e.status][0]}${e.status === 'playing' ? ' · table ' + e.table : ''}</span>
+        ${e.status === 'playing' ? `<span class="small muted"> vs ${esc(e.vs)}</span>` : ''}</div>
+      <div class="fields">
+        <div class="${pair ? '' : 'full'}"><label class="l" for="d-n0">${pair ? 'Player 1' : 'Name'}</label><input type="text" id="d-n0" data-edit="n0" value="${esc(e.names[0])}"></div>
+        ${pair ? `<div><label class="l" for="d-n1">Player 2</label><input type="text" id="d-n1" data-edit="n1" value="${esc(e.names[1])}"></div>
+          <div class="full"><label class="l" for="d-team">Team name</label><input type="text" id="d-team" data-edit="team" value="${esc(e.team || '')}" placeholder="optional — otherwise both names"></div>` : ''}
+        <div class="full"><label class="l" for="d-cup">Cup</label><select id="d-cup" data-edit="cup" ${e.played ? 'disabled title="Already played in this cup"' : ''}>
+          ${CUPS.filter(x => x.entry === CUPS.find(y => y.id === e.cup).entry).map(x => `<option value="${x.id}" ${x.id === e.cup ? 'selected' : ''}>${esc(x.name)}</option>`).join('')}</select></div>
+      </div>
+      ${pair ? '<p class="small muted" style="margin:0">A substitute partner: just change the name. Results so far stay with the team.</p>' : ''}
+      ${c ? `<div class="confirm"><b>${esc(label(e.names))} has gone home?</b>
+          <span class="small">Every match they still owe goes to their opponent${e.status === 'playing' ? ', and table ' + e.table + ' is freed' : ''}.${V.role === 'door' ? ' This is logged under the door key.' : ''}</span>
+          <div class="actions"><button class="btn primary tiny" data-a="gone" data-e="${e.id}">Yes, gone home</button><button class="btn ghost tiny" data-a="cancelconfirm">Cancel</button></div></div>` : `
+      <div class="actions">
+        ${e.status === 'gone' ? `<button class="btn tiny" data-a="back" data-e="${e.id}">Bring back</button>`
+          : e.status === 'resting' ? `<button class="btn tiny" data-a="back" data-e="${e.id}">Back in</button>`
+          : `<button class="btn tiny" data-a="rest" data-e="${e.id}" ${e.status === 'playing' ? 'title="After this match"' : ''}>Sit out${e.status === 'playing' ? ' after this match' : ''}</button>`}
+        ${e.status === 'gone' ? '' : e.played
+          ? `<button class="btn ghost tiny" data-a="askgone" data-e="${e.id}">Gone home…</button>`
+          : `<button class="btn ghost tiny" data-a="uncheck" data-e="${e.id}">${e.fromReg ? 'Undo check-in' : 'Remove'}</button>`}
+      </div>`}
+      <p class="small muted" style="margin:0">${e.played ? 'Has played already, so leaving is “Gone home”, never a silent removal.' : e.fromReg ? 'Not drawn yet. Undoing the check-in puts the registration back in Expected.' : 'Not drawn yet, so removing leaves no trace in any draw.'}</p>
+    </div></aside>`;
+  }
+  const card = [...cardsFor(V.cup).cards, ...cardsFor(V.cup).seekers].find(c => c.key === V.sel.key);
+  if (!card) { V.sel = null; return renderDetail(); }
+  const before = V.phase === 'before';
+  const pick = V.pick[card.key] || card.regs[card.regs.length - 1].id;
+  const many = card.regs.length > 1 && card.type !== 'matched';
+  return `<aside class="${cls}"><div class="detail">
+    <div style="display:flex;gap:8px;align-items:flex-start"><h3>${esc(label(card.names))}</h3>${close}</div>
+    <div class="kv">${esc(cupName(V.cup))} · ${card.type === 'matched' ? 'two people looking for a partner, matched automatically'
+      : card.type === 'seeker' ? 'looking for a partner' : many ? card.regs.length + ' entries with these names' : 'one entry'}</div>
+    ${card.type === 'leftover' ? `<div class="confirm" style="background:var(--warn-wash)"><span class="small">${esc(label(card.here.names))} checked in at ${esc(card.here.at)} from another entry with the same names. If this is the same team, clear it. If it is a second team with the same names, keep it.</span>
+      <div class="actions"><button class="btn tiny" data-a="same" data-k="${esc(card.key)}">Same team — clear it</button><button class="btn ghost tiny" data-a="distinct" data-k="${esc(card.key)}">Different team</button></div></div>` : ''}
+    <div class="entries">${card.regs.map((r, i) => `<label class="entry">
+      ${many && card.type !== 'leftover' ? `<input type="radio" name="pick" data-a="pick" data-k="${esc(card.key)}" data-r="${r.id}" ${pick === r.id ? 'checked' : ''}>` : '<span></span>'}
+      <span><b>${esc(label(regNames(r)))}</b>${r.team ? ` · ${esc(r.team)}` : ''}<br><span class="t">sent ${esc(r.at)}${card.type === 'matched' ? ' · looking for a partner' : ''}</span></span>
+      <button class="btn ghost tiny" type="button" data-a="dropone" data-r="${r.id}">${before ? 'Remove' : 'No show'}</button>
+      ${r.note ? `<span class="nt">“${esc(r.note)}”</span>` : ''}
+    </label>`).join('')}</div>
+    ${many && card.type === 'stack' ? '<p class="small muted" style="margin:0">Checking in uses the selected entry only. The others stay in Expected, marked as possible duplicates, until you say what they are.</p>' : ''}
+    ${card.type === 'seeker' ? '<p class="small muted" style="margin:0">The next person looking for a partner in this cup is matched with them automatically. Once matched, they check in together as one team.</p>' : ''}
+    ${card.type !== 'leftover' && card.type !== 'seeker' && !before ? `<div class="actions"><button class="btn primary" data-a="checkin" data-k="${esc(card.key)}">Check in${card.type === 'matched' ? ' as a team' : ''}</button></div>` : ''}
+    ${before ? '<p class="small muted" style="margin:0">Check-in opens with the doors.</p>' : ''}
+  </div></aside>`;
+}
+
+/* ============================================================ directory */
+function renderDir() {
+  const q = nk(V.dirQ);
+  const hereNames = new Set(S.ents.filter(e => e.status !== 'gone').flatMap(e => e.names.map(nk)));
+  const list = S.people.filter(p => !q || nk(p.name).includes(q));
+  return `<div class="dir"><div class="panel">
+    <div style="display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap">
+      <div style="flex:1 1 240px;max-width:340px"><label class="l" for="dir-q">Search</label><input type="search" id="dir-q" value="${esc(V.dirQ)}" placeholder="Name"></div>
+      <p class="small muted" style="margin:0;flex:1 1 260px">Everyone the club has seen. This outlives the event: starting a new event clears tonight, never this list.</p>
+    </div>
+    <div class="rows">${list.map(p => {
+      const isHere = hereNames.has(nk(p.name));
+      return `<div class="r"><span><b>${esc(p.name)}</b> <span class="small muted">· ${p.seen} event${p.seen === 1 ? '' : 's'}</span>
+        ${isHere ? ' <span class="chip hot">here tonight</span>' : ''}</span>
+        <span>${isHere || V.phase === 'before' ? '' : V.dirAdd === p.id
+          ? CUPS.map(c => `<button class="btn tiny" data-a="diradd" data-p="${p.id}" data-c="${c.id}">${esc(c.name)}</button>`).join(' ')
+          : `<button class="btn tiny" data-a="dirpick" data-p="${p.id}">Add to tonight…</button>`}</span>
+        <span>${V.role === 'admin' ? `<button class="btn ghost tiny" data-a="forget" data-p="${p.id}">Forget</button>` : ''}</span>
+      </div>`;
+    }).join('') || '<div class="empty">Nobody by that name.</div>'}</div>
+    ${V.role === 'door' ? '<p class="small muted" style="margin:0">The door key can add people from here but not remove them from the directory.</p>' : ''}
+  </div></div>`;
+}
+
+/* ============================================================ public form */
+function renderForm() {
+  const p = V.pub;
+  const cup = CUPS.find(c => c.id === p.cup);
+  const pair = cup.entry === 'pair';
+  const inner = p.done ? `
+    <div class="box"><h2>Du stehst auf der Liste</h2>
+      <p style="margin:0">${esc(p.done.label)} — ${esc(cupName(p.done.cup))}</p>
+      ${p.done.pair ? '<p style="margin:0"><b>Dein:e Partner:in muss sich nicht extra anmelden.</b> Eine Anmeldung gilt fürs ganze Team.</p>' : ''}
+      <p style="margin:0" class="small">Hier ist dein persönlicher Link. Damit kannst du deine Anmeldung ansehen, eine Anmerkung ändern oder dich abmelden. Schick ihn gern auch deinem Team.</p>
+      <div class="link"><input type="text" id="mylink" readonly value="ttt.club/me/${esc(p.done.token)}"><button class="btn" data-a="copy">Kopieren</button></div>
+      <p class="small muted" style="margin:0">Dieses Handy merkt sich den Link auch so.</p>
+      <div class="actions"><button class="btn primary" data-a="openme" data-r="${p.done.id}">Link öffnen</button><button class="btn ghost" data-a="again">Noch jemanden anmelden</button></div>
+    </div>` : p.same ? `
+    <div class="box"><h2>Alles klar</h2><p style="margin:0">Dann steht ihr schon auf der Liste. Kommt einfach vorbei.</p>
+      <div class="actions"><button class="btn ghost" data-a="again">Zurück zum Formular</button></div></div>` : `
+    <div class="box">
+      <div><label class="l" for="p-cup">Kategorie</label><select id="p-cup" data-pub="cup">${CUPS.map(c => `<option value="${c.id}" ${c.id === p.cup ? 'selected' : ''}>${esc(c.name)}${c.entry === 'pair' ? ' · Doppel mit Partner:in' : ''}</option>`).join('')}</select></div>
+      ${pair ? `<div class="choice"><button class="${p.kind === 'pair' ? 'on' : ''}" data-a="pubkind" data-v="pair"><b>Mit Partner:in</b><span class="s">Ihr spielt zusammen</span></button>
+        <button class="${p.kind === 'seeking' ? 'on' : ''}" data-a="pubkind" data-v="seeking"><b>Partner:in gesucht</b><span class="s">Wir teilen euch automatisch ein</span></button></div>` : ''}
+      <div><label class="l" for="p-name">Name</label><input type="text" id="p-name" data-pub="name" value="${esc(p.name)}"></div>
+      ${pair && p.kind === 'pair' ? `<div><label class="l" for="p-partner">Teampartner:in</label><input type="text" id="p-partner" data-pub="partner" value="${esc(p.partner)}"></div>
+        <div><label class="l" for="p-team">Teamname <span style="text-transform:none;font-weight:500">(optional)</span></label><input type="text" id="p-team" data-pub="team" value="${esc(p.team)}"></div>
+        <p class="small muted" style="margin:0">Eine Anmeldung reicht fürs ganze Team.</p>` : ''}
+      <div><label class="l" for="p-note">Anmerkung <span style="text-transform:none;font-weight:500">(optional)</span></label><textarea id="p-note" data-pub="note" rows="2">${esc(p.note)}</textarea></div>
+      ${p.warned ? `<div class="warnbox"><p><b>Für ${esc(label([p.name, p.partner]))} gibt es schon eine Anmeldung im ${esc(cup.name)}.</b></p>
+          <p class="small">Kann es sein, dass dein:e Partner:in euch schon angemeldet hat?</p>
+          <div class="actions"><button class="btn primary" data-a="pubsame">Ja, dann nicht nochmal</button><button class="btn" data-a="pubsend" data-force="1">Nein, wir sind ein anderes Team</button></div></div>`
+        : `<button class="btn primary cta" data-a="pubsend">Abschicken</button>`}
+    </div>`;
+  return `<div class="pub">
+    <span class="word">TTT</span>
+    <div><h2>Herbst-Cup</h2><p class="muted" style="margin:4px 0 0">Freitag, 19:00 · Voranmeldung</p></div>
+    ${inner}
+    <p class="explain">Mockup: the form is filled with a team that has already registered, so pressing <b>Abschicken</b> shows the duplicate warning. Clear a name to see the normal path. Whatever you send here shows up on the registration desk.</p>
+  </div>`;
+}
+
+/* ============================================================ personal link */
+function renderMe() {
+  const r = S.regs.find(x => x.id === V.me) || S.regs[0];
+  const cancelled = r.status === 'cancelled' || r.status === 'dropped';
+  const note = V.meNote ?? r.note;
+  const st = r.status === 'pending' ? 'Angemeldet' : r.status === 'checked' ? 'Vor Ort bestätigt' : 'Abgemeldet';
+  return `<div class="pub">
+    <span class="word">TTT</span>
+    <div><h2>Deine Anmeldung</h2><p class="muted" style="margin:4px 0 0">Herbst-Cup · Freitag, 19:00</p></div>
+    <div class="box">
+      <div style="display:flex;gap:10px;align-items:baseline;flex-wrap:wrap"><h3 style="font-size:20px">${esc(label(regNames(r)))}</h3>
+        <span class="chip ${cancelled ? 'dim' : 'dark'}">${st}</span></div>
+      <p style="margin:0" class="muted">${esc(cupName(r.cup))}${r.team ? ' · ' + esc(r.team) : ''} · gesendet ${esc(r.at)}</p>
+      ${cancelled ? `<p style="margin:0">Du bist abgemeldet. Falls das ein Versehen war:</p>
+        <div class="actions"><button class="btn" data-a="mereopen" data-r="${r.id}">Doch wieder anmelden</button></div>`
+      : r.status === 'checked' ? '<p style="margin:0">Du bist vor Ort bestätigt. Viel Spaß!</p>' : `
+        <div><label class="l" for="me-note">Anmerkung</label><textarea id="me-note" rows="2">${esc(note)}</textarea></div>
+        <div class="actions"><button class="btn" data-a="mesave" data-r="${r.id}">Anmerkung speichern</button></div>
+        ${V.meConfirm ? `<div class="warnbox"><p><b>Wirklich abmelden?</b></p><p class="small">${regNames(r).length > 1 ? 'Das meldet das ganze Team ab.' : 'Du kannst dich danach hier wieder anmelden.'}</p>
+          <div class="actions"><button class="btn primary" data-a="mecancel" data-r="${r.id}">Ja, abmelden</button><button class="btn ghost" data-a="menocancel">Doch nicht</button></div></div>`
+        : `<div class="actions"><button class="btn ghost" data-a="meask">Abmelden</button></div>`}`}
+    </div>
+    <p class="explain">Mockup: this is the page behind the personal link. It knows only this one entry. Cancelling here moves the entry to “Resolved” on the desk and logs it, instead of leaving a no-show.</p>
+  </div>`;
+}
+
+/* ============================================================ render */
+function render() {
+  renderMock();
+  const html = V.screen === 'desk' ? renderDesk() : V.screen === 'form' ? renderForm() : renderMe();
+  const act = document.activeElement && document.activeElement.id;
+  const pos = act && document.activeElement.selectionStart;
+  $('app').innerHTML = html;
+  if (act && $(act) && $(act).tagName !== 'BUTTON') { $(act).focus(); try { $(act).setSelectionRange(pos, pos); } catch (e) { } }
+}
+
+/* ============================================================ actions */
+function findCard(key) {
+  for (const c of CUPS) { const d = cardsFor(c.id); const f = [...d.cards, ...d.seekers].find(x => x.key === key); if (f) return f; }
+}
+function checkIn(key) {
+  const card = findCard(key); if (!card) return;
+  snap();
+  let regs, names, team;
+  if (card.type === 'matched') { regs = card.regs; names = card.names; team = ''; }
+  else { const id = V.pick[key] || card.regs[card.regs.length - 1].id; const r = card.regs.find(x => x.id === id); regs = [r]; names = regNames(r); team = r.team; }
+  regs.forEach(r => r.status = 'checked');
+  const e = { id: 'e' + Math.random().toString(36).slice(2, 7), cup: regs[0].cup, names, team, status: 'waiting', at: '', regKey: card.type === 'matched' ? null : key, fromReg: regs[0].at, regIds: regs.map(r => r.id) };
+  e.at = now(); S.clock--;
+  S.ents.push(e);
+  log(`Checked in ${label(names)} · ${cupName(e.cup)}`);
+  const left = card.type === 'stack' ? card.regs.length - 1 : 0;
+  V.sel = null; V.kb = -1;
+  toast(`${label(names)} checked in${left ? ` · ${left} other entr${left === 1 ? 'y stays' : 'ies stay'} in Expected as possible duplicate${left === 1 ? '' : 's'}` : ''}`, true);
+}
+function dropRegs(regs, status, msg) {
+  snap();
+  regs.forEach(r => { r.status = status; if (r.matched) { const m = S.regs.find(x => x.id === r.matched); if (m) m.matched = null; r.matched = null; } });
+  log(msg);
+  toast(msg, true);
+}
+
+document.addEventListener('click', ev => {
+  const b = ev.target.closest('[data-a]');
+  if (!b) return;
+  const a = b.dataset.a;
+  if (a === 'selcard' && ev.target.closest('button')) return; // a button inside the card
+  if (a === 'selent' && ev.target.closest('button') && ev.target.closest('button') !== b) return;
+  if (a === 'mock') { V[b.dataset.k] = b.dataset.v; V.sel = null; V.confirm = null; V.kb = -1; if (b.dataset.k === 'screen' && b.dataset.v === 'me') { V.meConfirm = false; V.meNote = null; } }
+  else if (a === 'reset') { S = initial(); undoStack = []; V.sel = null; V.pub = { ...V.pub, warned: false, done: null, same: false, name: 'Lea Hoffmann', partner: 'Ben Krüger', cup: 'd', kind: 'pair' }; V.me = 'r13'; }
+  else if (a === 'undo') { const prev = undoStack.pop(); if (prev) S = JSON.parse(prev); $('toast').hidden = true; V.sel = null; }
+  else if (a === 'cup') { V.view = 'desk'; V.cup = b.dataset.v; V.sel = null; V.kb = -1; V.walk = { name: '', partner: '', seek: false }; }
+  else if (a === 'dir') { V.view = 'dir'; V.sel = null; }
+  else if (a === 'phone') V.phone = b.dataset.v;
+  else if (a === 'filter') V.filter = b.dataset.v;
+  else if (a === 'selcard') { V.sel = { key: b.dataset.k }; V.confirm = null; }
+  else if (a === 'selent') { V.sel = { ent: b.dataset.e }; V.confirm = null; }
+  else if (a === 'desel') V.sel = null;
+  else if (a === 'pick') { V.pick[b.dataset.k] = b.dataset.r; }
+  else if (a === 'checkin') checkIn(b.dataset.k);
+  else if (a === 'noshow') {
+    const card = findCard(b.dataset.k);
+    dropRegs(card.regs, 'dropped', `${V.phase === 'before' ? 'Removed' : 'No show'}: ${label(card.names)}`);
+    if (V.sel && V.sel.key === b.dataset.k) V.sel = null;
+  }
+  else if (a === 'dropone') {
+    const r = S.regs.find(x => x.id === b.dataset.r);
+    dropRegs([r], 'dropped', `${V.phase === 'before' ? 'Removed' : 'No show'}: ${label(regNames(r))} (sent ${r.at})`);
+  }
+  else if (a === 'same') {
+    const card = findCard(b.dataset.k);
+    snap(); card.regs.forEach(r => r.status = 'dup');
+    log(`Cleared ${card.regs.length} duplicate entr${card.regs.length === 1 ? 'y' : 'ies'} of ${label(card.names)}`);
+    toast(`Cleared as duplicate · it is under Resolved if you need it back`, true); V.sel = null;
+  }
+  else if (a === 'distinct') {
+    const card = findCard(b.dataset.k);
+    snap(); card.regs.forEach(r => r.distinct = true);
+    log(`Kept ${label(card.names)} as a separate team`);
+    toast('Kept as a separate team', true); V.sel = null;
+  }
+  else if (a === 'restore') { snap(); const r = S.regs.find(x => x.id === b.dataset.r); r.status = 'pending'; log(`Put back: ${label(regNames(r))}`); V._openRes = true; }
+  else if (a === 'rest') { snap(); const e = S.ents.find(x => x.id === b.dataset.e); e.status = 'resting'; log(`${label(e.names)} sits out`); toast(`${label(e.names)} sits out`, true); }
+  else if (a === 'back') { snap(); const e = S.ents.find(x => x.id === b.dataset.e); e.status = 'waiting'; log(`${label(e.names)} back in`); }
+  else if (a === 'askgone') V.confirm = 'gone:' + b.dataset.e;
+  else if (a === 'cancelconfirm') V.confirm = null;
+  else if (a === 'gone') { snap(); const e = S.ents.find(x => x.id === b.dataset.e); e.status = 'gone'; V.confirm = null; log(`${label(e.names)} gone home`); toast(`${label(e.names)} gone home`, true); }
+  else if (a === 'uncheck') {
+    snap(); const e = S.ents.find(x => x.id === b.dataset.e);
+    S.ents = S.ents.filter(x => x !== e);
+    (e.regIds || []).forEach(id => { const r = S.regs.find(x => x.id === id); if (r) r.status = 'pending'; });
+    log(e.fromReg ? `Undid check-in of ${label(e.names)}` : `Removed walk-in ${label(e.names)}`);
+    toast(e.fromReg ? `${label(e.names)} is back in Expected` : `Removed ${label(e.names)}`, true); V.sel = null;
+  }
+  else if (a === 'walkreg') { const card = findCard(b.dataset.k); V.walk = { name: '', partner: '', seek: false }; checkIn(card.key); }
+  else if (a === 'dirpick') V.dirAdd = b.dataset.p;
+  else if (a === 'diradd') {
+    snap(); const p = S.people.find(x => x.id === b.dataset.p); const c = CUPS.find(x => x.id === b.dataset.c);
+    if (c.entry === 'pair') { V.view = 'desk'; V.cup = c.id; V.walk = { name: p.name, partner: '', seek: false }; V.dirAdd = null; undoStack.pop(); render(); $('w-partner') && $('w-partner').focus(); return; }
+    S.ents.push({ id: 'e' + Math.random().toString(36).slice(2, 7), cup: c.id, names: [p.name], status: 'waiting', at: now() });
+    log(`Added ${p.name} from the directory · ${c.name}`); toast(`${p.name} added to ${c.name}`, true); V.dirAdd = null;
+  }
+  else if (a === 'forget') { snap(); const p = S.people.find(x => x.id === b.dataset.p); S.people = S.people.filter(x => x !== p); toast(`Forgot ${p.name}`, true); }
+  // public form
+  else if (a === 'pubkind') { V.pub.kind = b.dataset.v; V.pub.warned = false; }
+  else if (a === 'pubsend') pubSend(!!b.dataset.force);
+  else if (a === 'pubsame') { V.pub.same = true; V.pub.warned = false; }
+  else if (a === 'again') { V.pub = { ...V.pub, done: null, same: false, warned: false, name: '', partner: '', team: '', note: '' }; }
+  else if (a === 'copy') { const t = $('mylink').value; navigator.clipboard?.writeText(t).then(() => toast('Link kopiert'), () => { $('mylink').select(); }); return; }
+  else if (a === 'openme') { V.screen = 'me'; V.me = b.dataset.r; V.meConfirm = false; V.meNote = null; }
+  // personal link
+  else if (a === 'meask') V.meConfirm = true;
+  else if (a === 'menocancel') V.meConfirm = false;
+  else if (a === 'mecancel') { const r = S.regs.find(x => x.id === b.dataset.r); r.status = 'cancelled'; S.log.unshift({ t: now(), who: 'Registrant', text: `${label(regNames(r))} cancelled via their link` }); V.meConfirm = false; }
+  else if (a === 'mereopen') { const r = S.regs.find(x => x.id === b.dataset.r); r.status = 'pending'; S.log.unshift({ t: now(), who: 'Registrant', text: `${label(regNames(r))} registered again via their link` }); }
+  else if (a === 'mesave') { const r = S.regs.find(x => x.id === b.dataset.r); r.note = $('me-note').value; V.meNote = null; S.log.unshift({ t: now(), who: 'Registrant', text: `${label(regNames(r))} changed their note` }); toast('Gespeichert'); }
+  else return;
+  render();
+});
+
+function pubSend(force) {
+  const p = V.pub, cup = CUPS.find(c => c.id === p.cup);
+  if (!nk(p.name)) { toast('Wir brauchen einen Namen.'); return; }
+  const pair = cup.entry === 'pair' && p.kind === 'pair';
+  if (pair && !nk(p.partner)) { toast('Wer spielt mit dir?'); return; }
+  const names = pair ? [p.name, p.partner] : [p.name];
+  const exists = pair && S.regs.some(r => r.cup === p.cup && r.status === 'pending' && keyOf(p.cup, regNames(r)) === keyOf(p.cup, names));
+  if (exists && !force) { p.warned = true; return; }
+  const id = 'r' + Math.random().toString(36).slice(2, 7);
+  const kind = cup.entry === 'pair' ? (pair ? 'pair' : 'seeking') : 'single';
+  const reg = { id, cup: p.cup, kind, name: p.name.trim(), partner: pair ? p.partner.trim() : '', team: pair ? p.team : '', note: p.note, at: 'just now', status: 'pending', distinct: !!force };
+  // looking for a partner: matched with the longest-waiting unmatched seeker
+  if (kind === 'seeking') {
+    const m = S.regs.find(r => r.cup === p.cup && r.kind === 'seeking' && r.status === 'pending' && !r.matched);
+    if (m) { reg.matched = m.id; m.matched = id; S.log.unshift({ t: now(), who: '—', text: `${reg.name} and ${m.name} matched automatically` }); }
+  }
+  S.regs.push(reg);
+  S.log.unshift({ t: now(), who: 'Public', text: `New entry: ${label(names)} · ${cup.name}${force ? ' (said: different team)' : ''}` });
+  p.warned = false;
+  p.done = { id, label: label(names), cup: p.cup, pair, token: Math.random().toString(36).slice(2, 10) };
+}
+
+document.addEventListener('input', ev => {
+  const t = ev.target;
+  if (t.id === 'q') { V.q = t.value; V.kb = -1; render(); return; }
+  if (t.id === 'dir-q') { V.dirQ = t.value; render(); return; }
+  if (t.id === 'w-name' || t.id === 'w-partner') {
+    V.walk[t.id === 'w-name' ? 'name' : 'partner'] = t.value;
+    const m = walkMsg(); $('w-msg').innerHTML = m ? m.html : '';
+    $('w-add').textContent = m && m.here ? 'Add as someone else' : 'Add';
+    return;
+  }
+  if (t.dataset.pub) { V.pub[t.dataset.pub] = t.value; if (V.pub.warned) { V.pub.warned = false; render(); } return; }
+  if (t.id === 'me-note') V.meNote = t.value;
+});
+document.addEventListener('change', ev => {
+  const t = ev.target;
+  if (t.id === 'w-seek') { V.walk.seek = t.checked; if (t.checked) V.walk.partner = ''; render(); return; }
+  if (t.dataset.pub === 'cup') { V.pub.cup = t.value; V.pub.warned = false; render(); return; }
+  if (t.dataset.a === 'pick') { V.pick[t.dataset.k] = t.dataset.r; return; }
+  if (t.dataset.edit && V.sel && V.sel.ent) {
+    const e = S.ents.find(x => x.id === V.sel.ent);
+    snap();
+    const f = t.dataset.edit;
+    if (f === 'n0' || f === 'n1') { const old = label(e.names); e.names[+f[1]] = t.value.trim() || e.names[+f[1]]; log(`Renamed ${old} → ${label(e.names)}`); }
+    else if (f === 'team') { e.team = t.value; log(`Team name of ${label(e.names)}: ${t.value || '—'}`); }
+    else if (f === 'cup') { e.cup = t.value; log(`Moved ${label(e.names)} to ${cupName(t.value)}`); V.sel = null; }
+    toast('Saved', true);
+    render();
+  }
+});
+document.addEventListener('submit', ev => {
+  if (ev.target.id !== 'walkform') return;
+  ev.preventDefault();
+  const w = V.walk, cup = CUPS.find(c => c.id === V.cup);
+  if (!nk(w.name)) return toast('Give them a name');
+  if (cup.entry === 'pair' && !w.seek && !nk(w.partner)) return toast('Who is the partner? Or tick “No partner yet”.');
+  snap();
+  if (cup.entry === 'pair' && w.seek) {
+    const id = 'r' + Math.random().toString(36).slice(2, 7);
+    const reg = { id, cup: V.cup, kind: 'seeking', name: w.name.trim(), partner: '', team: '', note: '', at: 'walk-in ' + now(), status: 'pending' };
+    const m = S.regs.find(r => r.cup === V.cup && r.kind === 'seeking' && r.status === 'pending' && !r.matched);
+    if (m) { reg.matched = m.id; m.matched = id; }
+    S.regs.push(reg);
+    log(`Walk-in looking for a partner: ${reg.name}${m ? ` · matched with ${m.name}` : ''}`);
+    toast(m ? `${reg.name} matched with ${m.name} · check them in together from Expected` : `${reg.name} is waiting for a partner`, true);
+  } else {
+    let names = cup.entry === 'pair' ? [w.name.trim(), w.partner.trim()] : [w.name.trim()];
+    const m = walkMsg();
+    if (m && m.here) names = names.map((n, i) => i === 0 ? n + ' (2)' : n);
+    S.ents.push({ id: 'e' + Math.random().toString(36).slice(2, 7), cup: V.cup, names, status: 'waiting', at: now() });
+    log(`Walk-in: ${label(names)} · ${cup.name}`);
+    toast(`${label(names)} added`, true);
+  }
+  V.walk = { name: '', partner: '', seek: false };
+  render();
+  $('w-name') && $('w-name').focus();
+});
+document.addEventListener('keydown', ev => {
+  if (V.screen !== 'desk' || V.view !== 'desk') return;
+  const typing = /INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName);
+  if (ev.key === 'Escape') { if (typing) document.activeElement.blur(); V.sel = null; V.kb = -1; render(); return; }
+  if (typing) return;
+  if (ev.key === '/') { ev.preventDefault(); $('q') && $('q').focus(); }
+  else if (ev.key === 'n' && V.phase === 'doors') { ev.preventDefault(); $('w-name') && $('w-name').focus(); }
+  else if (ev.key === 'ArrowDown' || ev.key === 'ArrowUp') {
+    ev.preventDefault();
+    const n = (V._cards || []).length; if (!n) return;
+    V.kb = ev.key === 'ArrowDown' ? Math.min(n - 1, V.kb + 1) : Math.max(0, V.kb - 1);
+    V.sel = { key: V._cards[V.kb].key }; render();
+  }
+  else if (ev.key === 'Enter' && V.kb >= 0 && V.phase === 'doors') {
+    const c = (V._cards || [])[V.kb];
+    if (c && (c.type === 'one' || c.type === 'stack' || c.type === 'matched')) { ev.preventDefault(); checkIn(c.key); render(); }
+  }
+});
+
+render();
+</script>
