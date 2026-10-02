@@ -254,6 +254,7 @@ WELCOME = ("Hier sagen wir dir Bescheid, wenn du dran bist:\n"
            "Und für die nächsten Abende meldest du dich hier mit einem Tipp an.")
 HINT = "<i>Schreib einfach hier, wenn du der Orga etwas sagen willst.</i>"
 ACK_EVERY = 10 * 60
+ASK_FOR = 10 * 60          # how long a "type the name here" question stays open
 
 
 class Me:
@@ -339,9 +340,13 @@ class Conversation:
                 return self.on_stop(uid)
             return self.show_card(uid)
         pending = json.loads(chat.get("pending") or "{}") if chat else {}
-        if pending.get("ask"):
+        if pending.get("ask") and time.time() - pending.get("ts", 0) < ASK_FOR:
             self.wire.set_chat(uid, pending="")
             return self.on_answer(uid, pending, text)
+        if pending.get("ask"):
+            # asked and walked away from: whatever they type now is not the
+            # answer to a question from an hour ago
+            self.wire.set_chat(uid, pending="")
         games = parse_score(text)
         if games and self.store.event.get("player_scores"):
             if self.on_score(uid, games):
@@ -406,7 +411,9 @@ class Conversation:
         self.bot.changed()
         with self.store.lock:
             linked = bool(self.who(uid).person)
-        kb = [[button("🔗 Auch Tischaufrufe beenden", "su?")]] if linked else None
+        kb = [[button("↩ Doch wieder an", "sn:1")]]
+        if linked:
+            kb.append([button("🔗 Auch Tischaufrufe beenden …", "su?")])
         self.say(uid, "🔕 Keine Neuigkeiten mehr von uns."
                  + ("\nTischaufrufe bekommst du weiter, solange du verknüpft bist." if linked else ""),
                  kb)
@@ -603,7 +610,7 @@ class Conversation:
         params = {"chat_id": uid, "message_id": message_id, "text": text,
                   "parse_mode": "HTML", "link_preview_options": {"is_disabled": True}}
         if kb is not None:
-            params["reply_markup"] = {"inline_keyboard": kb}
+            params["reply_markup"] = {"inline_keyboard": [r for r in kb if r]}
         later = getattr(self._ui, "later", None)
         if later is not None:
             later.append(("editMessageText", params))
@@ -614,7 +621,7 @@ class Conversation:
         params = {"chat_id": uid, "text": text, "parse_mode": "HTML",
                   "link_preview_options": {"is_disabled": True}}
         if kb:
-            params["reply_markup"] = {"inline_keyboard": kb}
+            params["reply_markup"] = {"inline_keyboard": [r for r in kb if r]}
         elif reply:
             params["reply_markup"] = {"force_reply": True,
                                       "input_field_placeholder": placeholder[:64]}
@@ -631,6 +638,10 @@ class Conversation:
         on_card = mid and mid == (self.wire.chat(uid) or {}).get("card_msg")
         verb, _, arg = data.partition(":")
         toast = ""
+        # any tap answers whatever we were waiting to be typed: it is dropped,
+        # and a step that asks again sets it again
+        if (self.wire.chat(uid) or {}).get("pending"):
+            self.wire.set_chat(uid, pending="")
         # The button spins until Telegram hears back. Do the thing (local,
         # milliseconds), say it landed, and only then redraw: the redraw is
         # another round trip the player should not be kept waiting through.
@@ -679,11 +690,9 @@ class Conversation:
                 self.wire.set_chat(uid, name=" ".join(x for x in (
                     chat.get("first_name"), chat.get("last_name")) if x))
                 return self.enter(uid, cup_id, kind, mid)
-            self.wire.set_chat(uid, pending=json.dumps(
-                {"ask": "name", "cup": cup_id, "kind": kind, "mid": mid}))
-            self.say(uid, "Wie heißt du? Vor- und Nachname, so wie am Eingang.",
-                     reply=True, placeholder="Vor- und Nachname")
-            return ""
+            return self.ask(uid, mid, "name", cup_id, kind,
+                            "✏️ <b>Wie heißt du?</b>\nSchreib deinen Vor- und Nachnamen "
+                            "hier in den Chat — so, wie am Eingang.")
         if verb == "x?":
             reg = self._my_reg(uid, arg)
             cup = s.cups.get(reg.cup_id)
@@ -771,6 +780,11 @@ class Conversation:
         # results
         if verb in ("k+", "k-"):
             return self.on_claim_answer(uid, int(arg or 0), verb == "k+", mid)
+        if verb == "kw":
+            done = self.withdraw(uid, int(arg or 0))
+            self.edit(uid, mid, "↩ Zurückgezogen — tipp einfach das richtige Ergebnis ein."
+                      if done else "Schon erledigt — das lässt sich nicht mehr zurückziehen.")
+            return "Zurückgezogen" if done else ""
         return ""
 
     def _my_reg(self, uid, rid, any_status=False):
@@ -819,18 +833,31 @@ class Conversation:
         name = name or chat.get("name") or ""
         if not name:
             full = " ".join(x for x in (chat.get("first_name"), chat.get("last_name")) if x)
+            if not full:
+                return self.dispatch(uid, "n", f"{cup_id}:{kind}:e", mid, False)
             self.edit(uid, mid, "Unter welchem Namen sollen wir dich eintragen?",
-                      [[button(f"✓ {full}", f"n:{cup_id}:{kind}:y")] if full else [],
+                      [[button(f"✓ {full}", f"n:{cup_id}:{kind}:y")],
                        [button("✏️ Anderer Name", f"n:{cup_id}:{kind}:e")],
                        [button("← Zurück", "c")]])
             return ""
         if kind == "p":
-            self.wire.set_chat(uid, pending=json.dumps(
-                {"ask": "partner", "cup": cup_id, "kind": kind, "mid": mid}))
-            self.say(uid, "Mit wem spielst du? Vor- und Nachname deiner Partnerin "
-                          "oder deines Partners.", reply=True, placeholder="Partner:in")
-            return ""
+            return self.ask(uid, mid, "partner", cup_id, kind,
+                            "👥 <b>Mit wem spielst du?</b>\nSchreib den Vor- und Nachnamen "
+                            "deiner Partnerin oder deines Partners hier in den Chat.")
         return self._register(uid, cup_id, kind, name, "", mid)
+
+    def ask(self, uid, mid, what, cup_id, kind, text):
+        """Wait for a name to be typed — on the card, with the way out right
+        under the question. The old way was a separate reply prompt with no
+        button at all, and a question nobody answered took whatever they
+        typed next, hours later, as the answer."""
+        self.wire.set_chat(uid, pending=json.dumps(
+            {"ask": what, "cup": cup_id, "kind": kind, "mid": mid, "ts": time.time()}))
+        if mid:
+            self.edit(uid, mid, text, [[button("← Abbrechen", "c")]])
+        else:
+            self.say(uid, text, [[button("← Abbrechen", "c")]])
+        return ""
 
     def register(self, uid, cup_id, kind, name, partner=""):
         """An entry for this account, whichever screen it came from. `kind`
@@ -868,18 +895,26 @@ class Conversation:
     def on_answer(self, uid, pending, text):
         text = " ".join(text.split())[:60]
         cup, kind, mid = pending.get("cup"), pending.get("kind"), pending.get("mid")
+        if len(text) < 2:
+            # not a name: ask again, same place, same way out
+            return self.ask(uid, mid, pending["ask"], cup, kind,
+                            "Das sieht nicht nach einem Namen aus — schreib bitte "
+                            "Vor- und Nachnamen.")
         try:
             if pending["ask"] == "name":
                 self.wire.set_chat(uid, name=text)
-                return self.enter(uid, cup, kind, None)
+                return self.enter(uid, cup, kind, mid)
             if pending["ask"] == "partner":
                 chat = self.wire.chat(uid) or {}
                 with self.store.lock:
                     me = self.who(uid)
                 name = me.person.name if me.person else chat.get("name") or ""
-                self._register(uid, cup, kind, name, text, None)
+                self._register(uid, cup, kind, name, text, mid)
         except ValueError as e:
-            self.say(uid, esc(str(e)))
+            if mid:
+                self.refresh(uid, mid, esc(str(e)))
+            else:
+                self.say(uid, esc(str(e)))
 
     # ------------------------------------------------------------- the orga
 
@@ -969,7 +1004,7 @@ class Conversation:
                 msgs.append([c, sent["message_id"]])
         self.wire.set_claim_msgs(cid, msgs)
         self.bot.changed()
-        return {"status": "sent", "opponent": opp}
+        return {"status": "sent", "opponent": opp, "id": cid}
 
     def answer(self, uid, cid, yes):
         """The other side's answer to a score: gone, stale, agreed, disputed."""
@@ -1001,7 +1036,8 @@ class Conversation:
     SETTLED = {"agreed": "✓ Bestätigt und eingetragen.",
                "disputed": "Uneinig — bitte meldet euch beim Schiri.",
                "replaced": "Ersetzt durch eine neuere Meldung.",
-               "stale": "Erledigt — das Spiel ist schon eingetragen."}
+               "stale": "Erledigt — das Spiel ist schon eingetragen.",
+               "withdrawn": "Zurückgezogen — es kommt gleich eine neue Meldung."}
 
     def _settle(self, c, state):
         """Close a report, and turn every question it asked into its answer,
@@ -1046,7 +1082,19 @@ class Conversation:
             self.say(uid, f"{esc(r['opponent'])} ist nicht über Telegram verbunden — "
                           "bitte trag das Ergebnis beim Schiri ein.")
         elif st == "sent":
-            self.say(uid, f"Danke! {esc(r['opponent'])} muss noch bestätigen.")
+            self.say(uid, f"Danke! {esc(r['opponent'])} muss noch bestätigen.",
+                     [[button("↩ Zurückziehen", f"kw:{r['id']}")]])
+        return True
+
+    def withdraw(self, uid, cid):
+        """Take back a score you sent, before the other side has answered —
+        a typo should not need a referee."""
+        c = self.wire.claim(cid)
+        if not c or c["chat_id"] != uid:
+            raise ValueError("Das ist nicht deine Meldung.")
+        if c["state"] != "open":
+            return False
+        self._settle(c, "withdrawn")
         return True
 
     def on_claim_answer(self, uid, cid, yes, mid):

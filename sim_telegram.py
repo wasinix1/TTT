@@ -78,6 +78,16 @@ class FakeTelegram:
     @staticmethod
     def _msg(params):
         rm = params.get("reply_markup") or {}
+        # what Telegram itself refuses, refused here too: one bad button
+        # takes the whole message down, which on a phone is a dead screen
+        for row in rm.get("inline_keyboard") or []:
+            if not row:
+                raise TgError(400, "Bad Request: keyboard row is empty")
+            for b in row:
+                if not b.get("text"):
+                    raise TgError(400, "Bad Request: button text is empty")
+                if len(b.get("callback_data", "").encode()) > 64:
+                    raise TgError(400, "Bad Request: BUTTON_DATA_INVALID")
         return {"text": params["text"], "kb": rm.get("inline_keyboard") or [],
                 "reply": bool(rm.get("force_reply"))}
 
@@ -316,7 +326,7 @@ def test_doubles_entry():
     app.telegram.pump()
     fake.tap(a, "✓ Ada Kern")
     app.telegram.pump()
-    check(fake.chats[a["id"]][max(fake.chats[a["id"]])]["reply"],
+    check(fake.seen(a, "Mit wem spielst du?"),
           "choosing a partner asks for their name")
     fake.say(a, "Dora Fink")
     app.telegram.pump()
@@ -991,6 +1001,101 @@ def test_players_claim_themselves_from_the_live_page():
     shutil.rmtree(d)
 
 
+def test_every_step_has_a_way_back():
+    print("\n[no dead ends in the chat]")
+    app, fake, d = fresh()
+    s = app.store
+    cup = event(app, entry="pair", kind="groups", config={})
+    nobody = fake.user("", "")               # a Telegram account with no name on it
+    nobody["first_name"] = ""
+    fake.say(nobody, "/start")
+    app.telegram.pump()
+    fake.tap(nobody, "Partner:in gesucht")
+    app.telegram.pump()
+    check(fake.seen(nobody, "Wie heißt du?"),
+          "an account with no name is asked for one, instead of a screen Telegram refuses")
+    fake.tap(nobody, "Abbrechen")
+    app.telegram.pump()
+    check(fake.seen(nobody, "Oktober Open") and not fake.seen(nobody, "Wie heißt du?")
+          and not s.pending_regs(), "and can back out of it to the card")
+    fake.say(nobody, "Kommt jemand mit dem Auto?")
+    app.telegram.pump()
+    check(not s.pending_regs() and any(t["chat_id"] == nobody["id"]
+                                       for t in app.state("admin")["telegram"]["threads"]),
+          "after backing out, what they type is a message again, not a name")
+
+    ada = fake.user("Ada", "Kern")
+    fake.say(ada, "/start")
+    app.telegram.pump()
+    fake.tap(ada, "Mit Partner:in")
+    app.telegram.pump()
+    fake.tap(ada, "✓ Ada Kern")
+    app.telegram.pump()
+    box = fake.chats[ada["id"]]
+    check(fake.seen(ada, "Mit wem spielst du?") and any(
+              b["text"] == "← Abbrechen" for m in box.values() for row in m["kb"] for b in row),
+          "the partner question is asked on the card, with a way out")
+    fake.say(ada, "x")
+    app.telegram.pump()
+    check(fake.seen(ada, "nicht nach einem Namen") and not s.pending_regs(),
+          "something that is not a name is asked again, not entered")
+    fake.say(ada, "Dora Fink")
+    app.telegram.pump()
+    check(s.pending_regs() and s.pending_regs()[0].partner_name == "Dora Fink",
+          "the real answer goes in")
+    check(fake.seen(ada, "Angemeldet für"), "and the same card says so")
+
+    # a question walked away from does not swallow the next message
+    ben = fake.user("Ben", "Ott")
+    fake.say(ben, "/start")
+    app.telegram.pump()
+    fake.tap(ben, "Mit Partner:in")
+    app.telegram.pump()
+    fake.tap(ben, "✓ Ben Ott")
+    app.telegram.pump()
+    p = json.loads(app.telegram.wire.chat(ben["id"])["pending"])
+    p["ts"] -= 3600
+    app.telegram.wire.set_chat(ben["id"], pending=json.dumps(p))
+    fake.say(ben, "Bin heute später da")
+    app.telegram.pump()
+    check(len(s.pending_regs()) == 1, "an hour later, a message is a message, not a partner")
+
+    fake.say(ben, "/stop")
+    app.telegram.pump()
+    fake.tap(ben, "Doch wieder an")
+    app.telegram.pump()
+    check(app.telegram.wire.chat(ben["id"])["news"] == 1, "/stop can be taken back")
+    shutil.rmtree(d)
+
+
+def test_a_typo_in_a_score_can_be_taken_back():
+    print("\n[taking back a score you sent]")
+    from tt import me
+    app, fake, d = fresh()
+    s = app.store
+    cup = event(app, tables=1, phase="doors")
+    app.act("admin", "event_meta", {"player_scores": True})
+    ana, bea = linked_players(app, fake, cup, ["Ana", "Bea"])
+    start_draw(app, cup)
+    app.telegram.pump()
+    fake.say(ana, "11:7 11:9")
+    app.telegram.pump()
+    check(fake.seen(bea, "Stimmt das?"), "the other side is asked")
+    fake.tap(ana, "Zurückziehen")
+    app.telegram.pump()
+    check(fake.seen(ana, "Zurückgezogen") and not fake.seen(bea, "Stimmt das?"),
+          "taking it back turns their question into a note, for both")
+    m = s.matches[s.tables[1].match_id]
+    check(m.status == "live", "and nothing was written")
+    fake.say(ana, "11:7 9:11 11:9")
+    app.telegram.pump()
+    mine = me.view(app.telegram, ana["id"])["reported"]
+    out = me.act(app.telegram, ana, "withdraw", {"id": mine[0]["id"]})
+    check(out["toast"] == "Zurückgezogen" and not out["view"]["reported"],
+          "the app can take one back too")
+    shutil.rmtree(d)
+
+
 def run():
     test_off_changes_nothing()
     test_connecting()
@@ -1017,6 +1122,8 @@ def run():
     test_a_table_call_does_not_wait_behind_cards()
     test_the_console_sees_telegram_move()
     test_players_claim_themselves_from_the_live_page()
+    test_every_step_has_a_way_back()
+    test_a_typo_in_a_score_can_be_taken_back()
     test_the_desk_with_telegram()
 
 
