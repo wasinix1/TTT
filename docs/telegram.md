@@ -64,10 +64,24 @@ How a Telegram account becomes somebody:
 | Registers in the bot | Registration carries the account | The door confirms that registration |
 | Registers on the web, then taps *Per Telegram Bescheid bekommen* | The registration's private token carries the account onto it | The door confirms that registration |
 | Walk-in, or linking later | The door shows a QR code for that person | The account opens it |
+| Taps their own name on the live page (doors or live) | The bot opens with that name | Straight away — taken on trust, see below |
 | Already linked (last month) | Recognised on sight | — |
 
 A linked account is recognised from then on: its next registration is one
 tap, carries the person, and shows at the door as known.
+
+**On the night, a name is taken on trust.** During the doors and the
+evening, the public live page offers a one-time panel: *Wann bist du dran?*
+Type the first letters of your name, tap it, and Telegram opens on the bot,
+which links you there and then. That is a deliberate exception to "never by
+name": what a player account can do is get its table calls, sit itself out
+and report scores — and a score is only written when the other side says the
+same. Two limits keep it honest: a name already linked to another phone is
+never taken over (the door sorts that out), and the link carries the event,
+so last month's page links nobody. Tapping a different name moves the
+account, which is how a wrong tap is undone. The panel shows once per phone
+per event, never in the sandbox or a past event, and *📲 Aufs Handy* in the
+header brings it back.
 
 `person_link` is the one new event. It sets or clears an account on a person
 and takes it off anybody else, so an account is always exactly one person.

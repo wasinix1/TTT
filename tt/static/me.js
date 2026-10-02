@@ -175,7 +175,8 @@ function hero() {
       <div class="line">${esc(who)}</div>
       <div class="sub">${esc(x.best_of)}</div>
       ${V.scores ? (mine
-        ? `<div class="sub" style="margin-top:12px">Gemeldet: ${scoreLine(mine.games)} — ${esc(x.opponent)} bestätigt noch.</div>`
+        ? `<div class="sub" style="margin-top:12px">Gemeldet: ${scoreLine(mine.games)} — ${esc(x.opponent)} bestätigt noch.
+            <button class="link" style="color:inherit" data-act="withdraw" data-id="${mine.id}">Zurückziehen</button></div>`
         : `<div class="row"><button class="btn white wide" data-act="pad">Ergebnis eintragen</button></div>`) : ''}
       ${others}</section>`;
   }
@@ -528,6 +529,7 @@ document.addEventListener('click', async e => {
     return void act('leave', { eid: d.eid, on: !!d.on });
   }
   if (a === 'confirm') return void act('confirm', { id: +d.id, yes: !!d.yes });
+  if (a === 'withdraw') return void act('withdraw', { id: +d.id });
   if (a === 'pad') { buzz('light'); return openPad(); }
   if (a === 'pad-send') {
     const st = padState();

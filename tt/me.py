@@ -284,6 +284,9 @@ def act(bot, user, op, d):
         toast = {"sent": f"Gesendet — {r.get('opponent', '')} bestätigt",
                  "agreed": "Eingetragen ✓",
                  "disputed": "Passt nicht zusammen — ab zum Schiri"}[st]
+    elif op == "withdraw":
+        toast = ("Zurückgezogen" if c.withdraw(uid, int(d.get("id") or 0))
+                 else "Schon erledigt")
     elif op == "confirm":
         r = c.answer(uid, int(d.get("id") or 0), bool(d.get("yes")))
         toast = {"agreed": "Eingetragen ✓", "disputed": "Okay — ab zum Schiri",
