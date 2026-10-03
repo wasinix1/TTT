@@ -405,6 +405,8 @@ class Store:
             t.paused = bool(p["paused"])
         if "cup_id" in p:
             t.cup_id = p["cup_id"] or None
+        if "loan" in p:
+            t.loan = bool(p["loan"])
         self.tables[n] = t
 
     def _ev_table_remove(self, p, seq):
@@ -695,6 +697,7 @@ class Store:
         m.done_ts = None
         if n in self.tables:
             self.tables[n].match_id = m.id
+            self.tables[n].loan = False      # a loan is for one game
 
     def _ev_match_unassign(self, p, seq):
         m = self.matches.get(p["match_id"])
@@ -958,6 +961,11 @@ class Store:
     def cup_of_format(self, f):
         c = f.config.get("cup_id") if f else None
         return c if c in self.cups else None
+
+    def auto_lend(self):
+        """Whether an idle reserved table is lent to a waiting cup for one
+        game without anybody asking. On unless the organiser turned it off."""
+        return self.event.get("auto_lend", True) is not False
 
     def tables_for_cup(self, cup_id):
         """Table numbers a format tagged `cup_id` may be dispatched to: the

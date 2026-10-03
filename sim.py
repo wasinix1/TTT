@@ -268,6 +268,7 @@ def test_cups_and_tables():
     print("\n[cups: two tournaments sharing five tables with a strict split]")
     app, d = fresh()
     s = app.store
+    app.act("admin", "event_meta", {"auto_lend": False})    # this is the strict case
     app.act("admin", "set_table", {"number": 4, "name": "Table 4"})
     app.act("admin", "set_table", {"number": 5, "name": "Table 5"})
     cup_a = app.act("admin", "add_cup", {"name": "Cup A"})["cup_id"]
@@ -1207,6 +1208,47 @@ def test_table_split_and_share():
     app.act("admin", "share_tables", {})
     check(all(t.cup_id is None for t in s.tables.values()),
           "sharing again clears every reservation")
+    shutil.rmtree(d)
+
+
+def test_lending_a_table_for_one_game():
+    print("\n[lending a reserved table for one game]")
+    app, d = fresh()
+    s = app.store
+    a, b = pool_event(app, cups=2)
+    app.act("admin", "split_tables", {"assignments": {"1": a, "2": b}})
+    app.act("admin", "event_meta", {"auto_lend": False})
+    for n in ("Cleo", "Dan", "Eve", "Fay"):
+        admit(app, n, b)
+    app.act("admin", "set_table", {"number": 3, "cup_id": a})
+    app.act("admin", "start_format", {"id": s.cups[b].format_id})
+    busy_b = [t.number for t in s.tables.values() if t.match_id]
+    check(2 in busy_b and 1 not in busy_b and 3 not in busy_b,
+          "without a loan the other cup's tables stay empty")
+    app.act("admin", "lend_table", {"number": 1})
+    m = s.matches.get(s.tables[1].match_id) if s.tables[1].match_id else None
+    check(m is not None and s.cup_of_format(s.formats[m.format_id]) == b,
+          "the waiting cup is seated on the lent table")
+    check(not s.tables[1].loan and s.tables[1].cup_id == a,
+          "the loan is spent and the reservation is still the owner's")
+    check(s.tables[3].match_id is None, "other reserved tables are untouched")
+    shutil.rmtree(d)
+
+
+def test_idle_reserved_tables_are_lent_by_themselves():
+    print("\n[idle reserved tables lent automatically]")
+    app, d = fresh()
+    s = app.store
+    a, b = pool_event(app, cups=2)
+    app.act("admin", "split_tables", {"assignments": {"1": a, "2": b}})
+    app.act("admin", "event_meta", {"auto_lend": False})
+    for n in ("Cleo", "Dan", "Eve", "Fay"):
+        admit(app, n, b)
+    app.act("admin", "start_format", {"id": s.cups[b].format_id})
+    check(s.tables[1].match_id is None, "switched off, the idle table stays empty")
+    app.act("admin", "event_meta", {"auto_lend": True})
+    check(s.tables[1].match_id is not None, "switched on, it is lent without asking")
+    check(s.tables[1].cup_id == a, "and it is still reserved for its owner")
     shutil.rmtree(d)
 
 
@@ -2676,6 +2718,8 @@ if __name__ == "__main__":
     test_correcting_a_result_in_place()
     test_housekeeping()
     test_table_split_and_share()
+    test_lending_a_table_for_one_game()
+    test_idle_reserved_tables_are_lent_by_themselves()
     test_phase()
     test_public_payload()
     test_new_event()

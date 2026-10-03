@@ -268,8 +268,10 @@ function renderTables() {
     + (idle.length ? idle.map(w => `<div class="warn">
       Table ${w.table} is reserved and standing empty while
       ${esc(w.waiting_for.join(' and '))} ${w.waiting_for.length > 1 ? 'have' : 'has'}
-      people waiting. Share it out in Setup → Tables, or leave it if the
-      reservation is the point.</div>`).join('') : '');
+      people waiting.
+      <div class="inline"><button class="primary tiny" data-act="lend-table"
+        data-t="${w.table}">Share table ${w.table} for 1 game</button></div>
+      </div>`).join('') : '');
   $('tables').innerHTML = vis.map(t => {
     const m = t.match;
     const cls = ['table-card', m ? 'live' : '', t.paused ? 'paused' : ''].join(' ');
@@ -1258,7 +1260,11 @@ function tablesSection() {
           : 'Every cup draws from one pool and the table goes to whichever cup is furthest ' +
             'from finishing, so nothing stands idle — but you cannot tell anyone which ' +
             'table they are on until they are called.'),
-    tools, body);
+    tools, body + (many ? `<label class="pick"><input type="checkbox" data-autolend="1"
+      ${S.event.auto_lend !== false ? 'checked' : ''}> Lend an idle reserved table to a waiting cup for one game</label>
+      ${why('A cup with nothing ready — a Swiss round waiting on its last match — would leave ' +
+            'its tables empty. This seats whoever is waiting there for one game; the table ' +
+            'is the owner’s again after it.')}` : ''));
 }
 
 /* Format settings, defined once and bound to a prefix, so the Formats tab
@@ -2374,6 +2380,10 @@ document.addEventListener('change', e => {
     return;
   }
   if (wizInput(e)) return;
+  if (e.target.dataset.autolend) {
+    api('event_meta', { auto_lend: e.target.checked });
+    return;
+  }
   if (e.target.dataset.tgscores) {
     api('event_meta', { player_scores: e.target.checked });
     return;
@@ -2677,6 +2687,7 @@ document.addEventListener('click', async e => {
     return void api('set_table', { number: n, name: 'Table ' + n });
   }
   if (a === 'rm-table') return void api('remove_table', { number: +b.dataset.t });
+  if (a === 'lend-table') return void api('lend_table', { number: +b.dataset.t });
   if (a === 'share-tables') {
     if (!confirm('Put every table back into the shared pool?')) return;
     return void api('share_tables', {});
