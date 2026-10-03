@@ -729,6 +729,16 @@ class Store:
             m.status = "pending"
         m.meta["deferred"] = int(m.meta.get("deferred", 0)) + 1
 
+    def _ev_match_order(self, p, seq):
+        """Set where a waiting fixture stands in its draw's line: the same
+        counter put-back raises (order_key leads with it), set outright. Seat
+        now puts it below every other, which is the front; Undo writes back
+        the value it had."""
+        m = self.matches.get(p["match_id"])
+        if not m:
+            return
+        m.meta["deferred"] = int(p.get("deferred", 0))
+
     def _ev_match_result(self, p, seq):
         m = self.matches.get(p["match_id"])
         if not m:

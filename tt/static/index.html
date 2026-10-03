@@ -3,74 +3,84 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta name="theme-color" content="#ffffff">
+<meta name="theme-color" content="#EDE6DB">
 <title>Table tennis console</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Syne:wght@400..800&display=swap" rel="stylesheet" media="print" onload="this.media='all'">
-<noscript><link href="https://fonts.googleapis.com/css2?family=Syne:wght@400..800&display=swap" rel="stylesheet"></noscript>
-<link rel="stylesheet" href="/static/style.css">
+<link rel="preload" href="/static/fonts/syne.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="/static/fonts.css">
+<link rel="stylesheet" href="/static/console.css">
 </head>
 <body>
+<!-- The console: admin (/a/<key>), referee (/r/<key>), and the public view on
+     a desk (/?console). Same Focus language as the phone page: bone, ink, one
+     red, the painted table. Live is the room; Door is the registration desk;
+     Setup is the evening's shape. Everything inside is drawn by app.js. -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <filter id="chalk" x="-2%" y="-2%" width="104%" height="104%">
+    <feTurbulence type="fractalNoise" baseFrequency=".9" numOctaves="1" seed="2" result="g"/>
+    <feDisplacementMap in="SourceGraphic" in2="g" scale="1.1" result="d"/>
+    <feTurbulence type="fractalNoise" baseFrequency="1.6" numOctaves="1" seed="9" result="t"/>
+    <feColorMatrix in="t" type="matrix" values="0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0 0 0 -.45 1.3" result="tex"/>
+    <feComposite in="d" in2="tex" operator="in"/>
+  </filter>
+  <filter id="paint" x="-4%" y="-4%" width="108%" height="108%">
+    <feTurbulence type="fractalNoise" baseFrequency=".02 .09" numOctaves="3" seed="11" result="n"/>
+    <feColorMatrix in="n" type="matrix" values="0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0 0 0 -1.2 1.08" result="shade"/>
+    <feComposite in="SourceGraphic" in2="shade" operator="arithmetic" k1="0" k2="1" k3="-.14" k4="0" result="streak"/>
+    <feTurbulence type="fractalNoise" baseFrequency=".08" numOctaves="2" seed="4" result="edge"/>
+    <feDisplacementMap in="streak" in2="edge" scale="1.5"/>
+  </filter>
+</svg>
+<div class="grain" aria-hidden="true"></div>
 <div id="sim-bar" class="sim-bar" hidden></div>
-<header class="bar">
-  <div class="bar-left">
-    <span class="mark wordmark" aria-hidden="true">TTT</span>
-    <h1 id="ev-name">Loading</h1>
-  </div>
-  <div class="bar-right">
-    <button id="tg-btn" class="ghost tg-btn" hidden title="Per Telegram Bescheid bekommen, wenn du dran bist" aria-label="Aufs Handy">📲<span> Aufs Handy</span></button>
-    <span id="role-tag" class="role-tag"></span>
-    <button id="setup-btn" class="ghost" hidden>Setup</button>
-    <span id="pulse" class="pulse" title="live"></span>
-  </div>
-</header>
 
-<nav id="cup-tabs" class="cup-tabs" hidden></nav>
+<header class="bar"><div class="wrap">
+  <span class="tt" aria-hidden="true">TTT</span>
+  <div class="ev"><h1 id="ev-name">Loading</h1><small id="ev-when"></small></div>
+  <nav class="modes" id="modes" aria-label="Mode" hidden></nav>
+  <button id="tg-btn" class="ghost tiny tg-btn" type="button" hidden title="Per Telegram Bescheid bekommen, wenn du dran bist" aria-label="Aufs Handy">📲<span> Aufs Handy</span></button>
+  <span id="role-tag" class="role-tag"></span>
+</div></header>
 
-<nav id="jump" class="jump" aria-label="Sections">
-  <a href="#tables" data-to="tables">Tables</a>
-  <a href="#board" data-to="board">Up next<span class="count"></span></a>
-  <a href="#standings" data-to="standings">Standings</a>
-  <a href="#recent" data-to="recent">Results</a>
-</nav>
-
-<main>
-  <div id="warn"></div>
-  <section id="tables"></section>
-
-  <div class="cols">
-    <div class="col">
-      <div id="board"></div>
-    </div>
-    <div class="col">
-      <div id="standings"></div>
-      <div id="brackets"></div>
-    </div>
-    <div class="col">
-      <div id="manual-entry"></div>
-      <div id="recent"></div>
+<main id="live" class="view">
+  <div class="wrap">
+    <nav id="cup-tabs" class="strip" aria-label="Cups: progress and view" hidden></nav>
+    <nav id="jump" class="jump" aria-label="Sections">
+      <a href="#tables" data-to="tables">Tables</a>
+      <a href="#board" data-to="board">Up next<span class="count"></span></a>
+      <a href="#standings" data-to="standings">Standings</a>
+      <a href="#recent" data-to="recent">Results</a>
+    </nav>
+    <div id="warn"></div>
+    <section id="tables"></section>
+    <div id="bycup"></div>
+    <div class="cols">
+      <div class="col"><div id="board"></div></div>
+      <div class="col"><div id="brackets"></div><div id="standings"></div></div>
+      <div class="col"><div id="manual-entry"></div><div id="recent"></div></div>
     </div>
   </div>
 </main>
 
+<main id="door" class="view" hidden></main>
+
 <div id="sheet" class="sheet" hidden>
   <div class="sheet-inner">
     <div class="sheet-head">
-      <nav id="tabs" class="tabs"></nav>
-      <button id="sheet-close" class="ghost">Close</button>
+      <nav id="tabs" class="tabs" aria-label="Setup sections"></nav>
+      <button id="sheet-close" class="ghost">Back to Live</button>
     </div>
     <div id="sheet-body" class="sheet-body"></div>
   </div>
 </div>
 
-<div id="editor" class="sheet" hidden></div>
-<div id="team-modal" class="sheet" style="z-index:60" hidden></div>
-<div id="tg-modal" class="sheet" style="z-index:60" hidden></div>
+<div id="editor" class="sheet modal" hidden></div>
+<div id="team-modal" class="sheet modal" style="z-index:60" hidden></div>
+<div id="tg-modal" class="sheet modal" style="z-index:60" hidden></div>
 
 <div id="tg-nudge" class="nudge" hidden></div>
 <div id="toast" class="toast" hidden></div>
 
+<script src="/static/paint.js"></script>
 <script src="/static/app.js"></script>
 </body>
 </html>

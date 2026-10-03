@@ -4,76 +4,75 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Coming up</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Syne:wght@400..800&display=swap" rel="stylesheet" media="print" onload="this.media='all'">
-<noscript><link href="https://fonts.googleapis.com/css2?family=Syne:wght@400..800&display=swap" rel="stylesheet"></noscript>
-<link rel="stylesheet" href="/static/style.css">
+<meta name="theme-color" content="#EDE6DB">
+<link rel="preload" href="/static/fonts/syne.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="/static/fonts.css">
 <style>
-/* Sized for a room, not a hand: everything here has to be readable from the
-   far side of a hall, so there is no chrome, no controls and no scrolling.
-   v2: queue only. Each cup is a chapter — 5px ink rule, display title —
-   the same move as Up next / Standings / Results on the phone. Values are
-   the 1920×1080 mock in px ÷ 10.8 (vh) or ÷ 19.2 (vw). */
-body{overflow:hidden;padding-bottom:0}
+/* The wall display, in the Focus language. Sized for a room, not a hand:
+   everything has to be readable from the far side of a hall, so there is no
+   chrome, no controls and no scrolling — who is on which table now, who is
+   next and roughly when, per cup. Bright by default: bone ground, ink type,
+   and red for what is live (the tables in play, "get ready").
+   Sizes are the 1920×1080 mock in px ÷ 10.8 (vh) or ÷ 19.2 (vw). */
+:root{
+  --bone:#EDE6DB; --sheet:#F5F0E8; --ink:#1B1B1B; --ink-2:#5B5750; --ink-3:#8A857C;
+  --red:#E8262A; --on-red:#FBF8F3; --rule:rgba(27,27,27,.13);
+  --syne:"Syne","Archivo",system-ui,sans-serif;
+  --grot:"Archivo","Archivo Amp",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --shape:38% 38% 36% 36% / 30% 30% 32% 32%;
+}
+/* a dark hall: same layout, ink ground; the red does not change, because it
+   is the one thing that has to mean the same in both */
+:root.dark{--bone:#151413;--sheet:#1f1e1c;--ink:#F2ECE2;--ink-2:#C2BAAE;--ink-3:#958E83;--rule:rgba(242,236,226,.14)}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%}
+body{background:var(--bone);color:var(--ink);font-family:var(--grot);overflow:hidden;-webkit-font-smoothing:antialiased}
 /* pointed at the sandbox (/board?sim=1): a wall showing a made-up evening
    has to say so from the far side of the hall */
-body.sim .screen{box-shadow:inset 0 0 0 .74vh var(--signal)}
-body.sim .head-left::after{content:"SIM";font-size:2.78vh;font-weight:800;color:var(--signal)}
+body.sim .screen{box-shadow:inset 0 0 0 .74vh var(--red)}
+body.sim .head-left::after{content:"SIM";font:800 2.78vh/1 var(--syne);color:var(--red)}
 .screen{padding:4.07vh 2.5vw 3.33vh;height:100vh;display:flex;flex-direction:column;gap:2.96vh}
-.screen h1{font-size:5.56vh;font-weight:700;letter-spacing:-.03em;line-height:.9;margin:0}
-.screen .sub{font-size:2.78vh;font-weight:600;color:var(--muted);margin:0}
 .head{display:flex;align-items:baseline;justify-content:space-between;gap:2vw;flex:none}
-/* the wordmark, matching the landing page */
-.head .mark{
-  width:auto;height:auto;border-radius:0;background:none;
-  font-size:5.93vh;font-weight:800;letter-spacing:-.05em;line-height:.9;color:var(--signal);
-}
-.head-left{display:flex;align-items:baseline;gap:1.46vw}
+.head-left{display:flex;align-items:baseline;gap:1.46vw;min-width:0}
+.head .mark{font:800 5.93vh/.9 var(--syne);letter-spacing:-.05em;position:relative;display:inline-block;color:var(--ink);--ball-top:-.2em}
+.head .mark::after{content:"";position:absolute;left:calc(50% - .02em);top:var(--ball-top,-.12em);width:.24em;height:.24em;border-radius:50%;background:var(--red);transform:translateX(-50%);pointer-events:none}
+.screen h1{font:700 5.56vh/.95 var(--syne);letter-spacing:-.03em;margin:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.screen .sub{font:700 4.6vh/1 var(--syne);letter-spacing:-.03em;color:var(--ink);margin:0;font-variant-numeric:tabular-nums}
 
 .cups{display:flex;gap:3.75vw;flex:1;min-height:0;padding-top:1.48vh}
-.cup{flex:1;display:flex;flex-direction:column;min-width:0;min-height:0;
-     border:none;border-radius:0;overflow:hidden;background:none}
+.cup{flex:1;display:flex;flex-direction:column;min-width:0;min-height:0;overflow:hidden}
 .cup h2{
-  font-size:5.93vh;font-weight:800;letter-spacing:-.04em;line-height:1;margin:0;
-  padding:1.85vh 0 0;border-top:max(3px,.46vh) solid var(--chalk);border-bottom:none;
+  font:800 5.93vh/1 var(--syne);letter-spacing:-.04em;margin:0;
+  padding:1.85vh 0 0;border-top:max(4px,.55vh) solid var(--ink);
   display:flex;align-items:baseline;justify-content:space-between;gap:1vw;flex:none;
 }
-.cup h2 span{
-  float:none;font-size:2.04vh;color:var(--muted);font-weight:700;
-  letter-spacing:.06em;text-transform:uppercase;
-}
-.live{display:grid;grid-template-columns:repeat(var(--cols,1),minmax(0,1fr));gap:4px;padding:2.96vh 0 1.85vh;border-bottom:none;flex:none}
+.cup h2 span{font:700 2.04vh/1 var(--grot);color:var(--ink-2);letter-spacing:.08em;text-transform:uppercase;white-space:nowrap}
+.live{display:grid;grid-template-columns:repeat(var(--cols,1),minmax(0,1fr));gap:1.1vh .8vw;padding:2.96vh 0 1.85vh;flex:none}
 .live:empty{display:none}
-/* the match happening right now */
-.now{background:var(--signal);border-radius:8px;padding:1.85vh 1.25vw;min-width:0}
-.now .t{
-  font-size:1.85vh;color:rgba(255,255,255,.86);font-weight:700;
-  letter-spacing:.1em;text-transform:uppercase;
-}
-.now .p{
-  font-size:3.15vh;font-weight:700;letter-spacing:-.02em;color:#fff;margin-top:.74vh;
-  line-height:1.15;overflow-wrap:anywhere;text-wrap:pretty;
-}
+/* the match happening right now: a painted table, the number on its net */
+.now{position:relative;isolation:isolate;border-radius:2.2vh;padding:1.85vh 1.25vw 2.1vh;min-width:0;color:var(--on-red)}
+.now::before{content:"";position:absolute;inset:0;border-radius:inherit;background:var(--red);filter:url(#paint);z-index:-1}
+.now::after{content:"";position:absolute;inset:.55vh;border:1.5px solid rgba(251,248,243,.55);border-radius:1.7vh;pointer-events:none}
+.now .t{font:700 1.85vh/1 var(--grot);letter-spacing:.12em;text-transform:uppercase;color:rgba(251,248,243,.9)}
+.now .p{font:700 3.15vh/1.15 var(--grot);letter-spacing:-.015em;margin-top:.9vh;overflow-wrap:anywhere}
+/* one side per line, the net between them, as on the table itself */
+.now .p span{display:block;text-wrap:balance}
+.now .p span + span{margin-top:.75vh;padding-top:.75vh;border-top:1.5px solid rgba(251,248,243,.45)}
+.now.idle{color:var(--ink-2)}
+.now.idle::before{background:transparent;filter:none;border:2px dashed var(--rule)}
+.now.idle::after{display:none}
 
-.list{flex:1;min-height:0;overflow:hidden;padding:0}
-.q{display:flex;align-items:baseline;gap:1.04vw;padding:2.04vh 0;font-size:2.78vh;
-   border-bottom:1px solid var(--edge)}
-.q .n{color:var(--dim);font-size:2.22vh;font-weight:700;width:1.2em;flex:none}
-.q .w{
-  flex:1;min-width:0;font-weight:600;letter-spacing:-.015em;line-height:1.2;
-  overflow-wrap:anywhere;text-wrap:pretty;
-}
-.q .e{font-size:2.22vh;font-weight:600;color:var(--muted);flex:none}
-.q.more .w{color:var(--muted);font-weight:500}
-.q.ondeck{background:none}
-.q.ondeck .n{color:var(--dim)}
-.q.ondeck .w{font-weight:600}
-.q.ondeck .e.when{
-  font-size:2.04vh;color:#fff;background:var(--signal);border-radius:6px;
-  padding:.46vh .625vw;font-weight:700;
-}
-.foot{display:flex;justify-content:space-between;gap:2vw;font-size:2.04vh;font-weight:500;color:var(--dim);flex:none}
+.list{flex:1;min-height:0;overflow:hidden}
+.q{display:flex;align-items:baseline;gap:1.04vw;padding:2.04vh 0;font-size:2.78vh;border-bottom:1px solid var(--rule)}
+.q .n{font:700 2.4vh/1 var(--syne);color:var(--ink-3);width:1.5em;flex:none;font-variant-numeric:tabular-nums}
+.q .w{flex:1;min-width:0;font-weight:600;letter-spacing:-.015em;line-height:1.2;overflow-wrap:anywhere;text-wrap:pretty}
+.q .e{font-size:2.22vh;font-weight:600;color:var(--ink-2);flex:none}
+.q .w .v{display:block;font-weight:500;color:var(--ink-2);font-size:.86em;margin-top:.3vh}
+.q.more .w{color:var(--ink-2);font-weight:500}
+.q.ondeck .n{color:var(--ink)}
+.q.ondeck .w{font-weight:700}
+.q.ondeck .e.when{font-size:2.04vh;color:var(--on-red);background:var(--red);border-radius:999px;padding:.55vh .9vw .6vh;font-weight:700;letter-spacing:.02em}
+.foot{display:flex;justify-content:space-between;gap:2vw;font-size:2.04vh;font-weight:500;color:var(--ink-3);flex:none}
 
 /* A portrait screen — a spare monitor turned on its side, or a phone held up
    at the door. The columns stack, so each cup owns a third of the height and
@@ -82,41 +81,32 @@ body.sim .head-left::after{content:"SIM";font-size:2.78vh;font-weight:800;color:
 @media (orientation:portrait){
   .screen{padding:4.07vmin 2.5vw 3.33vmin;gap:2.96vmin}
   .screen h1{font-size:5.56vmin}
-  .screen .sub{font-size:2.78vmin}
+  .screen .sub{font-size:4.6vmin}
   .head .mark{font-size:5.93vmin}
   .cups{flex-direction:column;gap:3.75vmin;padding-top:1.48vmin}
-  .cup h2{font-size:5.93vmin;padding:1.85vmin 0 0;border-top-width:max(3px,.46vmin)}
+  .cup h2{font-size:5.93vmin;padding:1.85vmin 0 0;border-top-width:max(4px,.55vmin)}
   .cup h2 span{font-size:2.04vmin}
-  .live{padding:2.96vmin 0 1.85vmin}
-  .now{padding:1.85vmin 1.25vw}
+  .live{padding:2.96vmin 0 1.85vmin;gap:1.1vmin .8vw}
+  .now{padding:1.85vmin 1.25vw 2.1vmin;border-radius:2.2vmin}
+  .now::after{inset:.55vmin;border-radius:1.7vmin}
   .now .t{font-size:1.85vmin}
-  .now .p{font-size:3.15vmin;margin-top:.74vmin}
+  .now .p{font-size:3.15vmin;margin-top:.9vmin}
+  .now .p span + span{margin-top:.75vmin;padding-top:.75vmin}
   .q{padding:2.04vmin 0;font-size:2.78vmin}
-  .q .n{font-size:2.22vmin}
+  .q .n{font-size:2.4vmin}
   .q .e{font-size:2.22vmin}
-  .q.ondeck .e.when{font-size:2.04vmin;padding:.46vmin .625vw}
+  .q.ondeck .e.when{font-size:2.04vmin;padding:.55vmin .9vw .6vmin}
   .foot{display:none}
 }
-/* A dark hall. Same layout, inverted ground — the red is unchanged, because
-   it is the one thing that has to mean the same in both. */
-/* Bright by default. The TTT mark in the corner is a hidden switch to the dark
-   hall look (remembered on this screen); ?dark and ?light also work. */
-:root.dark{
-    --ground:#0a0a0a;
-    --surface:#161616;
-    --raised:#222222;
-    --edge:#2a2a2a;
-    --hair:rgba(255,255,255,.09);
-    --chalk:#f4f4f2;
-    --muted:#b4b4ae;   /* 7.4:1 on the dark ground */
-    --dim:#8e8e88;
-    --signal-wash:rgba(216,36,26,.16);
-  }
 
 /* the mark doubles as the theme switch, and looks like nothing but a logo */
 button.mark{background:none;border:none;padding:0;margin:0;cursor:default;font:inherit}
-button.mark:hover{background:none}
-button.mark:focus-visible{outline:2px solid var(--signal);outline-offset:4px}
+button.mark:focus-visible{outline:2px solid var(--red);outline-offset:4px}
+/* the rule over each cup is painted, like the tables and the console's rules */
+.cup h2{position:relative;border-top-color:transparent}
+.cup h2::before{content:"";position:absolute;left:0;right:0;top:calc(-1 * max(4px,.55vh));height:max(4px,.55vh);background:var(--ink);filter:url(#rule);pointer-events:none}
+@media (orientation:portrait){.cup h2::before{top:calc(-1 * max(4px,.55vmin));height:max(4px,.55vmin)}}
+@media (prefers-reduced-motion:reduce){*{transition:none!important}}
 </style>
 <script>
 /* dark is opt-in: ?dark, ?light, or a tap on the mark (remembered) */
@@ -134,6 +124,22 @@ button.mark:focus-visible{outline:2px solid var(--signal);outline-offset:4px}
 </script>
 </head>
 <body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <filter id="paint" x="-4%" y="-4%" width="108%" height="108%">
+    <feTurbulence type="fractalNoise" baseFrequency=".02 .09" numOctaves="3" seed="11" result="n"/>
+    <feColorMatrix in="n" type="matrix" values="0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0 0 0 -1.2 1.08" result="shade"/>
+    <feComposite in="SourceGraphic" in2="shade" operator="arithmetic" k1="0" k2="1" k3="-.14" k4="0" result="streak"/>
+    <feTurbulence type="fractalNoise" baseFrequency=".08" numOctaves="2" seed="4" result="edge"/>
+    <feDisplacementMap in="streak" in2="edge" scale="1.5"/>
+  </filter>
+  <filter id="rule" x="0" y="-60%" width="100%" height="220%">
+    <feTurbulence type="fractalNoise" baseFrequency=".004 .35" numOctaves="2" seed="7" result="g"/>
+    <feDisplacementMap in="SourceGraphic" in2="g" scale="5" result="d"/>
+    <feTurbulence type="fractalNoise" baseFrequency=".006 .5" numOctaves="2" seed="3" result="t"/>
+    <feColorMatrix in="t" type="matrix" values="0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0 0 0 -1.3 1.35" result="a"/>
+    <feComposite in="d" in2="a" operator="in"/>
+  </filter>
+</svg>
 <div class="screen">
   <div class="head">
     <div class="head-left">

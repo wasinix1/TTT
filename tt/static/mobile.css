@@ -1,0 +1,381 @@
+/* TTT mobile — the player's and the spectator's phone.
+
+   One stylesheet for both shells: the public live page (role public, picked
+   name, read-only) and the Telegram Mini App (verified, with actions).
+
+   Rules carried from the Focus work:
+   - bone, ink, one red. Red means "you" or "needs you": your table, your
+     turn, a decision. Nothing is red for decoration.
+   - Syne only for the few big words: the hero numeral, the opponent, the
+     section heads, the table numbers. Archivo for everything else.
+   - the table is the one object. Out of focus while you wait (blur is
+     distance), sharp when you are on it; painted, with painted lines.
+   - rules, not boxes. Explanations are short; nothing pulses or glows. */
+
+:root{
+  --bone:#EDE6DB;
+  --sheet:#F5F0E8;
+  --ink:#1B1B1B;
+  --ink-2:#5B5750;
+  --ink-3:#8A857C;
+  --red:#E8262A;
+  --red-deep:#A91D22;
+  --red-wash:rgba(232,38,42,.08);
+  --rule:rgba(27,27,27,.14);
+  --syne:"Archivo Amp","Syne","Archivo",ui-sans-serif,system-ui,sans-serif;
+  --grot:"Archivo Amp","Archivo",ui-sans-serif,system-ui,"Helvetica Neue",Arial,sans-serif;
+  --ease:cubic-bezier(.22,.9,.24,1);
+  --slow:1.5s;
+  --pad:20px;
+  --shape:38% 38% 36% 36% / 30% 30% 32% 32%;
+  color-scheme:light;
+}
+*{box-sizing:border-box}
+html,body{background:var(--bone);color:var(--ink)}
+body{margin:0;font-family:var(--grot);font-size:15px;line-height:1.4;font-variant-numeric:tabular-nums;-webkit-tap-highlight-color:transparent}
+button,input,textarea{font:inherit;color:inherit}
+button{background:none;border:0;padding:0;cursor:pointer}
+:focus-visible{outline:1.5px solid var(--ink);outline-offset:3px}
+[hidden]{display:none!important}
+.app{max-width:460px;margin:0 auto;padding-bottom:120px;position:relative;overflow:hidden}
+.grain{position:fixed;inset:0;pointer-events:none;z-index:40;opacity:.07;mix-blend-mode:multiply;
+  background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='180' height='180'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0 0 0 .6 0'/></filter><rect width='180' height='180' filter='url(%23n)'/></svg>")}
+.micro{font-size:10.5px;font-weight:600;letter-spacing:.09em;text-transform:uppercase;line-height:1.2}
+.muted{color:var(--ink-2)}
+.link{font-size:13px;font-weight:600;color:var(--ink-2);text-decoration:underline;text-underline-offset:3px}
+
+/* ------------------------------------------------ bar */
+.bar{display:flex;align-items:baseline;gap:12px;padding:16px var(--pad) 0}
+.bar .tt{font-family:var(--syne);font-weight:800;font-size:18px;letter-spacing:-.04em}
+.bar .ev{flex:1;min-width:0;color:var(--ink-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.bar .live{width:7px;height:7px;border-radius:50%;background:var(--ink-3);align-self:center}
+.bar .live.on{background:var(--red)}
+.sim{background:var(--ink);color:var(--bone);padding:8px var(--pad);font-size:12.5px;font-weight:600}
+
+/* ------------------------------------------------ way in (web shell, no name picked) */
+.me-pill{margin:18px var(--pad) 0;display:flex;align-items:center;justify-content:space-between;gap:12px;width:calc(100% - 2*var(--pad));
+  padding:13px 16px;border:1.5px solid var(--ink);border-radius:999px;text-align:left}
+.me-pill b{font-weight:600}
+.me-pill span{font-size:13px;color:var(--ink-2)}
+.me-pill.known{border-color:var(--red)}
+.me-pill.known b{color:var(--red)}
+
+/* ------------------------------------------------ the hero (Focus) */
+.hero{position:relative;height:500px;isolation:isolate}
+.hero .who{position:absolute;left:var(--pad);right:var(--pad);top:18px;display:flex;justify-content:space-between;gap:12px;color:var(--ink-2);z-index:3}
+.hero .who button{color:var(--ink-2);text-decoration:underline;text-underline-offset:3px}
+.obj{position:absolute;z-index:0;left:var(--x);top:var(--y);width:var(--w);height:var(--h);border-radius:var(--shape);filter:blur(var(--b));
+  transition:left var(--slow) var(--ease),top var(--slow) var(--ease),width var(--slow) var(--ease),height var(--slow) var(--ease),filter var(--slow) var(--ease)}
+.obj .skin{position:absolute;inset:0;border-radius:inherit;background:var(--red);filter:url(#paint)}
+.obj .skin::after{content:"";position:absolute;inset:0;border-radius:inherit;background:radial-gradient(90% 70% at 35% 25%,rgba(255,110,90,.35),transparent 60%),radial-gradient(80% 60% at 70% 95%,rgba(120,10,20,.35),transparent 60%);transition:opacity var(--slow)}
+.obj.sharp .skin::after{opacity:.25}
+/* painted lines: same 2px, a hair of shadow, an uneven edge; the centre line meets the edge */
+.obj .edge{position:absolute;inset:7px;border:2px solid var(--bone);border-radius:inherit;opacity:var(--lines,.5);transition:opacity var(--slow);
+  box-shadow:0 1px 0 rgba(90,8,12,.42),inset 0 1px 0 rgba(90,8,12,.34);filter:url(#chalk)}
+.obj .line{position:absolute;left:50%;top:7px;bottom:7px;width:2px;margin-left:-1px;background:var(--bone);opacity:var(--lines,.5);transition:opacity var(--slow);
+  box-shadow:.8px 1px 0 rgba(90,8,12,.42);filter:url(#chalk)}
+
+.num{position:absolute;z-index:2;left:14px;top:92px;font-family:var(--syne);font-weight:800;font-size:216px;line-height:.78;letter-spacing:-.06em;white-space:nowrap}
+.num.word{font-size:92px;letter-spacing:-.05em;top:150px;left:18px}
+.num.score{font-size:112px;top:150px}
+.num.on{left:0;right:0;text-align:center;color:var(--bone);font-size:176px;top:var(--ny);opacity:.9;filter:url(#chalk)}
+.num.on span{text-shadow:.8px 1px 0 rgba(90,8,12,.42)}
+.num span{display:inline-block}
+.num.in span{animation:focusIn .9s var(--ease) both}
+@keyframes focusIn{from{filter:blur(16px);opacity:0;transform:translateX(-18px) scaleX(1.12)}to{filter:none;opacity:1;transform:none}}
+
+/* one text system for every moment: what the number means, one line of facts, the opponent at the foot */
+.lab{position:absolute;z-index:2;left:var(--pad);right:var(--pad);top:var(--ly,318px);transition:top var(--slow) var(--ease)}
+.lab .m{display:block;font-size:17px;font-weight:600;line-height:1.15}
+.lab .f{display:flex;flex-wrap:wrap;gap:4px 6px;margin-top:8px;color:var(--ink-2)}
+.lab .f i{font-style:normal;opacity:.5}
+.lab.center{text-align:center}
+.lab.center .f{justify-content:center}
+.opp{position:absolute;z-index:2;left:var(--pad);right:var(--pad);bottom:22px;display:flex;align-items:baseline;justify-content:space-between;gap:12px;
+  border-top:1.5px solid var(--ink);box-shadow:inset 0 1px 0 rgba(255,255,255,.55);padding-top:12px}
+.opp .micro{color:var(--ink-2);flex:none}
+.opp b{font-family:var(--syne);font-size:26px;font-weight:700;letter-spacing:-.035em;line-height:1;text-align:right;min-width:0}
+.opp b.soft{font-family:var(--grot);font-size:16px;font-weight:600;letter-spacing:0;color:var(--ink-2)}
+
+.tag{font-size:10.5px;font-weight:800;letter-spacing:.06em;padding:5px 8px 4px;border-radius:2px;background:var(--ink);color:var(--bone);white-space:nowrap}
+
+/* actions under the hero (Telegram shell only) */
+.acts{display:flex;gap:10px;flex-wrap:wrap;padding:0 var(--pad);margin-top:-4px}
+.btn{height:46px;padding:0 20px;border-radius:999px;background:var(--ink);color:var(--bone);font-weight:600;display:inline-flex;align-items:center;justify-content:center;gap:8px}
+.btn.red{background:var(--red)}
+.btn.ghost{background:transparent;color:var(--ink);box-shadow:inset 0 0 0 1.5px var(--ink)}
+.btn.wide{flex:1}
+.also{margin:14px var(--pad) 0;display:grid;gap:2px}
+.also div{display:flex;justify-content:space-between;gap:12px;padding:9px 0;border-bottom:1px solid var(--rule);font-size:14px}
+.also div:first-child{border-top:1px solid var(--rule)}
+.also b{font-weight:600}
+.also span{color:var(--ink-2)}
+.also .st2{display:flex;gap:10px;align-items:baseline}
+.also .link{font-size:13px}
+.also .red{color:var(--red);font-weight:600}
+
+/* a result the opponent reported, waiting for you (Telegram) */
+.ask{margin:16px var(--pad) 0;padding:16px;border-radius:16px;background:var(--ink);color:var(--bone)}
+.ask .sc{font-size:26px;font-weight:700;letter-spacing:-.01em;margin:8px 0 4px;font-variant-numeric:tabular-nums}
+.ask .row{display:flex;gap:10px;margin-top:12px}
+.ask .btn{background:var(--bone);color:var(--ink);flex:1}
+.ask .btn.no{background:transparent;color:var(--bone);box-shadow:inset 0 0 0 1.5px rgba(237,230,219,.5)}
+
+/* ------------------------------------------------ heads */
+.h{display:flex;justify-content:space-between;align-items:baseline;gap:12px;margin:32px var(--pad) 14px}
+.h b{font-family:var(--syne);font-size:26px;font-weight:700;letter-spacing:-.035em;white-space:nowrap}
+.h .micro{min-width:0}
+.h .micro{color:var(--ink-2);text-align:right}
+.sub{margin:18px var(--pad) 6px;color:var(--ink-2)}
+
+/* ------------------------------------------------ cup strip (more than one cup) */
+.strip{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin:22px var(--pad) 0}
+.strip button{display:flex;flex-direction:column;gap:6px;text-align:left;padding:10px 12px 11px;border-radius:14px;box-shadow:inset 0 0 0 1px var(--rule);min-width:0}
+.strip button.on{background:var(--sheet);box-shadow:inset 0 0 0 1.5px var(--ink)}
+.strip .all{grid-column:1/-1}
+.strip .t{display:flex;justify-content:space-between;align-items:baseline;gap:8px;min-width:0}
+.strip .t span{font-weight:600;font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.strip .t b{font-family:var(--syne);font-size:19px;font-weight:700;letter-spacing:-.03em;white-space:nowrap}
+.strip .t b small{font-family:var(--grot);font-size:11.5px;font-weight:600;opacity:.6;letter-spacing:0}
+.strip .bar2{height:3px;border-radius:2px;background:rgba(27,27,27,.1);overflow:hidden}
+.strip .bar2 i{display:block;height:100%;background:var(--ink)}
+.strip .e{font-size:11px;color:var(--ink-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.strip .mine{color:var(--red)}
+
+/* ------------------------------------------------ tables (spectator) */
+/* One table is shown large; two or more sit in two columns; an odd last table is
+   centred at the same size, so every table is the same size and the nets line up. */
+.grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));column-gap:12px;row-gap:14px;padding:0 var(--pad)}
+.slot{grid-column:span 2;min-width:0}
+.grid.n1 .slot{grid-column:1/-1;justify-self:center;width:72%}
+.grid.c2 .slot.o1{grid-column:2 / span 2}
+/* more than six tables: three columns, smaller, same rules */
+.grid.c3{grid-template-columns:repeat(6,minmax(0,1fr));column-gap:9px;row-gap:11px}
+.grid.c3 .slot.o1{grid-column:3 / span 2}
+.grid.c3 .slot.o2a{grid-column:2 / span 2}
+.grid.c3 .slot.o2b{grid-column:4 / span 2}
+.grid.c3 .tb .lbl{display:none}
+.grid.c3 .tb .a{bottom:calc(50% + 13cqi)}
+.grid.c3 .tb .b{top:calc(50% + 13cqi)}
+.tb{position:relative;aspect-ratio:1/1.22;border-radius:var(--shape);container-type:inline-size;color:var(--bone)}
+.tb .skin{position:absolute;inset:0;border-radius:inherit;background:var(--red);filter:url(#paint)}
+.tb .edge{position:absolute;inset:5px;border:1.5px solid var(--bone);border-radius:inherit;opacity:.85}
+.tb .cl{position:absolute;left:50%;top:5px;bottom:5px;width:1.5px;margin-left:-.75px;background:var(--bone);opacity:.16}
+.tb .net{position:absolute;left:0;right:0;top:50%;height:0;border-top:2px solid var(--bone);display:flex;justify-content:center}
+.tb .no{position:absolute;top:0;transform:translateY(-50%);background:var(--bone);color:var(--red);font-family:var(--syne);font-weight:800;letter-spacing:-.04em;line-height:1;
+  font-size:clamp(13px,11cqi,30px);padding:.2em .5em .22em;border-radius:999px;min-width:2.1em;text-align:center}
+.tb .side{position:absolute;left:10%;right:10%;display:flex;flex-direction:column;align-items:center;text-align:center;font-weight:600;line-height:1.08;font-size:clamp(12px,9.6cqi,26px)}
+.tb .side span{display:block;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tb .side .amp{font-weight:500;opacity:.7;font-size:.8em;margin:.08em 0}
+.tb .a{bottom:calc(50% + 9cqi)}
+.tb .b{top:calc(50% + 9cqi)}
+.tb .lbl{position:absolute;left:0;right:0;top:9%;text-align:center;font-size:clamp(8px,5.2cqi,12px);font-weight:600;letter-spacing:.08em;text-transform:uppercase;opacity:.75}
+/* when a name is known, the other tables step back and yours stays full red */
+.grid.someone .tb:not(.mine) .skin{opacity:.72;filter:url(#paint) saturate(.8)}
+.tb.mine{box-shadow:0 18px 30px -18px rgba(150,15,20,.55)}
+.tb.free,.tb.paused,.tb.other{color:var(--ink)}
+.tb.free .skin,.tb.paused .skin,.tb.other .skin{background:transparent;filter:none;border:1.5px dashed rgba(27,27,27,.4)}
+.tb.free .edge,.tb.free .cl,.tb.paused .edge,.tb.paused .cl,.tb.other .edge,.tb.other .cl{display:none}
+.tb.free .net,.tb.paused .net,.tb.other .net{border-top:1.5px dashed rgba(27,27,27,.3)}
+.tb.free .no,.tb.paused .no,.tb.other .no{color:var(--ink-2);box-shadow:0 0 0 1.5px rgba(27,27,27,.25)}
+.tb.free .side,.tb.paused .side,.tb.other .side{color:var(--ink-2);font-weight:500}
+
+/* ------------------------------------------------ lists: up next, standings, results */
+.list{padding:0 var(--pad)}
+.r{display:grid;grid-template-columns:30px 1fr auto;gap:10px;align-items:center;padding:11px 0;border-bottom:1px solid var(--rule)}
+.r:first-child{border-top:1.5px solid var(--ink)}
+.r .i{font-size:11px;font-weight:700;color:var(--ink-2)}
+.r .nm{font-weight:500;line-height:1.3;min-width:0}
+.r .nm .v{display:block;color:var(--ink-2);font-size:13.5px}
+.r.me .nm,.r.me .i{color:var(--red);font-weight:600}
+.r.me .nm .v{color:var(--red);opacity:.75}
+.ready{font-size:10.5px;font-weight:700;letter-spacing:.09em;text-transform:uppercase;color:var(--red)}
+.chip{font-size:10px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;padding:3px 7px 2px;border-radius:999px;box-shadow:inset 0 0 0 1.2px var(--rule);color:var(--ink-2);white-space:nowrap}
+.more{display:block;margin:10px var(--pad) 0;font-size:13px;font-weight:600;color:var(--ink-2);text-decoration:underline;text-underline-offset:3px}
+.cuphead{display:flex;justify-content:space-between;align-items:baseline;margin:22px var(--pad) 6px}
+.cuphead b{font-weight:700;font-size:13px;letter-spacing:.09em;text-transform:uppercase}
+.cuphead span{color:var(--ink-2);font-size:12.5px}
+
+.st{display:grid;grid-template-columns:26px minmax(0,1fr) 28px 28px 40px;gap:8px;padding:8px 0;border-bottom:1px solid var(--rule);align-items:baseline;font-size:14.5px}
+.st.swiss{grid-template-columns:26px minmax(0,1fr) 28px 36px 40px}
+.st.head{border-bottom:1.5px solid var(--ink);padding-bottom:6px}
+.st.head span{font-size:10px;font-weight:600;letter-spacing:.08em;color:var(--ink-2);text-transform:uppercase}
+.st span:nth-child(n+3){text-align:right}
+.st span:nth-child(2){overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.st .pos{font-size:12px;font-weight:700;color:var(--ink-2)}
+.st.q .pos{color:var(--ink)}
+.st.cut{border-bottom:1px dashed var(--ink-3)}
+.st.me{color:var(--red);font-weight:600}
+.grp{margin:16px 0 6px;color:var(--ink-2)}
+
+.ko{margin:4px 0 18px}
+.ko.wide{overflow-x:auto;margin-left:calc(-1*var(--pad));margin-right:calc(-1*var(--pad));padding:0 var(--pad);scrollbar-width:none;scroll-behavior:smooth}
+.ko.wide::-webkit-scrollbar{display:none}
+.kt{position:relative}
+.kt svg{position:absolute;left:0;top:0;overflow:visible}
+.kt path{fill:none;stroke:rgba(27,27,27,.26);stroke-width:1.5}
+.kt path.me{stroke:var(--red);stroke-width:2}
+.kh{position:absolute;top:0;color:var(--ink-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.kc{position:absolute;height:50px;border-radius:12px;background:var(--sheet);box-shadow:0 0 0 1px rgba(27,27,27,.1);display:flex;flex-direction:column;justify-content:center;gap:1px;padding:0 10px;font-size:13.5px}
+.kc .s{display:flex;justify-content:space-between;align-items:baseline;gap:8px;line-height:1.3;min-width:0}
+.kc .s span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+.kc .s b{font-weight:700;font-variant-numeric:tabular-nums}
+.kc .s.w{font-weight:700}
+.kc .s.l{color:var(--ink-3)}
+.kc .s.me{color:var(--red)}
+.kc .s.tbd{color:var(--ink-3)}
+.kc.tbd{background:transparent;box-shadow:none;border:1.2px dashed rgba(27,27,27,.28)}
+.kc.live{box-shadow:0 0 0 1.5px var(--ink)}
+.kc .kl{position:absolute;right:8px;top:-8px;background:var(--ink);color:var(--bone);font-style:normal;font-size:9.5px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;padding:2px 7px 1px;border-radius:999px;white-space:nowrap}
+.kw{position:absolute;display:flex;flex-direction:column;gap:2px;padding-left:10px}
+.kw .micro{color:var(--ink-2)}
+.kw b{font-family:var(--syne);font-size:21px;font-weight:700;letter-spacing:-.03em;line-height:1.05}
+.kw b.me{color:var(--red)}
+.ko-x{margin:0 0 18px}
+.ko-x .micro{color:var(--ink-2);margin-bottom:6px}
+.ko-x .kc{position:relative}
+.res{display:flex;justify-content:space-between;gap:12px;padding:10px 0;border-bottom:1px solid var(--rule)}
+.res:first-child{border-top:1.5px solid var(--ink)}
+.res .w{font-weight:600}
+.res .meta{display:block;color:var(--ink-2);font-size:12.5px;margin-top:2px}
+.res .s{font-weight:700;white-space:nowrap}
+.res.me .w,.res.me .s{color:var(--red)}
+.find2{display:flex;gap:10px;align-items:center;margin:0 var(--pad) 10px;border-bottom:1.5px solid var(--rule);padding:6px 0}
+.find2 input{flex:1;border:0;background:transparent;outline:none;font-size:15px}
+
+details.fold{margin:0 var(--pad);border-bottom:1px solid var(--rule)}
+details.fold summary{list-style:none;display:flex;justify-content:space-between;align-items:baseline;padding:14px 0;cursor:pointer}
+details.fold summary::-webkit-details-marker{display:none}
+details.fold summary b{font-family:var(--syne);font-size:18px;font-weight:700;letter-spacing:-.025em}
+details.fold summary span{color:var(--ink-2);display:flex;gap:10px;align-items:baseline}
+details.fold summary i{font-style:normal;color:var(--ink);font-size:18px;transition:transform .35s var(--ease)}
+details.fold[open] summary i{transform:rotate(45deg)}
+details.fold .in{padding-bottom:12px}
+details.fold .in .list,details.fold .in .h,details.fold .in .cuphead{padding:0;margin-left:0;margin-right:0}
+
+/* ------------------------------------------------ Telegram-only blocks */
+.card2{margin:0 var(--pad);padding:14px 16px;border-radius:14px;background:var(--sheet);box-shadow:0 0 0 1px rgba(27,27,27,.06)}
+.card2 textarea{width:100%;border:0;border-bottom:1.5px solid var(--rule);background:transparent;resize:none;outline:none;padding:6px 0;font-size:15px}
+.set{display:flex;justify-content:space-between;align-items:center;padding:12px 0;border-bottom:1px solid var(--rule);margin:0 var(--pad)}
+.tog{width:38px;height:22px;border-radius:999px;background:rgba(27,27,27,.18);position:relative}
+.tog::after{content:"";position:absolute;left:3px;top:3px;width:16px;height:16px;border-radius:50%;background:var(--bone);transition:transform .25s var(--ease)}
+.tog.on{background:var(--red)}.tog.on::after{transform:translateX(16px)}
+
+/* score pad (Telegram, when the event lets players report) */
+.pad{position:fixed;inset:auto 0 0 0;z-index:70;max-width:460px;margin:0 auto;background:var(--bone);border-radius:22px 22px 0 0;padding:18px var(--pad) calc(22px + env(safe-area-inset-bottom,0px));
+  box-shadow:0 -20px 40px -20px rgba(0,0,0,.3);transform:translateY(105%);transition:transform .45s var(--ease)}
+.pad.on{transform:none}
+.pad h3{margin:0 0 12px;font-family:var(--syne);font-size:24px;font-weight:700;letter-spacing:-.03em}
+.pad .sheet{display:grid;grid-template-columns:1fr repeat(var(--g),44px);gap:6px;align-items:center}
+.pad .nm{font-weight:600;font-size:15px;min-width:0}
+.pad .gh{font-size:10px;font-weight:600;letter-spacing:.08em;color:var(--ink-2);text-align:center}
+.pad input{width:44px;height:46px;border-radius:10px;border:1px solid var(--rule);background:#FBF8F3;text-align:center;font-size:20px;font-weight:600;outline:none}
+.pad input:focus{border-color:var(--ink)}
+.pad .hint{font-size:12.5px;color:var(--ink-2);margin:10px 0 14px}
+
+/* ------------------------------------------------ name picker (web shell) */
+.scrim{position:fixed;inset:0;background:rgba(27,27,27,.28);opacity:0;pointer-events:none;transition:opacity .4s var(--ease);z-index:70}
+.scrim.on{opacity:1;pointer-events:auto}
+.picker{position:fixed;left:0;right:0;bottom:0;z-index:71;max-width:460px;margin:0 auto;background:var(--bone);border-radius:22px 22px 0 0;
+  padding:10px var(--pad) calc(22px + env(safe-area-inset-bottom,0px));transform:translateY(105%);transition:transform .5s var(--ease);max-height:82vh;display:flex;flex-direction:column}
+.picker.on{transform:none}
+.picker .grab{width:36px;height:4px;border-radius:2px;background:rgba(27,27,27,.2);margin:0 auto 16px}
+.picker h3{margin:0;font-family:var(--syne);font-size:28px;font-weight:700;letter-spacing:-.035em}
+.picker p{margin:4px 0 14px;color:var(--ink-2);font-size:14px}
+.picker input{width:100%;padding:12px 0;border:0;border-bottom:1.5px solid var(--ink);background:transparent;outline:none;font-size:16px}
+.picker .names{overflow:auto;margin-top:6px}
+.nm-row{display:grid;grid-template-columns:1fr auto;gap:10px;align-items:baseline;width:100%;text-align:left;padding:13px 0;border-bottom:1px solid var(--rule)}
+.nm-row b{font-weight:600;font-size:16px}
+.nm-row b small{font-weight:500;color:var(--ink-2);font-size:13.5px;margin-left:6px}
+.nm-row .s{color:var(--ink-2)}
+.nm-row .s.red{color:var(--red)}
+.nm-row.picked{color:var(--red)}
+
+/* the focus pull between "everyone" and "you" */
+.view{transition:filter .55s var(--ease),opacity .55s var(--ease),transform .55s var(--ease)}
+.view.out{filter:blur(14px);opacity:0;transform:scale(.985);pointer-events:none}
+
+.toast{position:fixed;left:50%;bottom:calc(20px + env(safe-area-inset-bottom,0px));transform:translate(-50%,160%);z-index:80;width:min(420px,calc(100% - 24px));
+  background:var(--ink);color:var(--bone);border-radius:14px;padding:12px 16px;font-size:14px;transition:transform .45s var(--ease)}
+.toast.on{transform:translate(-50%,0)}
+
+/* ------------------------------------------------ added for the merged page */
+.hero.out .num,.hero.out .lab,.hero.out .opp{opacity:0;transition:opacity .4s var(--ease)}
+.note{margin:6px 0 0;color:var(--ink-2);font-size:13.5px;line-height:1.35}
+.btn.small{height:36px;padding:0 16px;font-size:14px}
+.btn[disabled]{opacity:.35;pointer-events:none}
+.acts.flush{padding:0;margin-top:12px}
+.acts .note{margin:0}
+.more{background:none;border:0;cursor:pointer}
+.gap{padding:4px 0 0 2px;color:var(--ink-3);letter-spacing:.2em;font-size:12px;line-height:1}
+.bar2.none{background:transparent}
+.res .l{color:var(--ink-2)}
+.res .wl{font-size:10.5px;font-weight:700;letter-spacing:.06em;padding:3px 6px 2px;border-radius:2px;box-shadow:inset 0 0 0 1.2px var(--rule);color:var(--ink-2);margin-right:4px;vertical-align:1px}
+.res .wl.won{background:var(--ink);color:var(--bone);box-shadow:none}
+.ko .m span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ko .m span:nth-child(even){text-align:right}
+.ko .m .live{grid-column:1/-1;justify-self:start}
+.ko .me{color:var(--red);font-weight:700}
+.cards{display:grid;gap:10px}
+.card2.entry .t{display:flex;justify-content:space-between;align-items:baseline;gap:10px}
+.card2.entry .t b{font-family:var(--syne);font-size:20px;font-weight:700;letter-spacing:-.03em}
+.card2 .q{margin:12px 0 0;font-weight:600}
+.card2 .link{display:inline-block;margin-top:10px}
+.card2 label.micro{color:var(--ink-2)}
+.in1{width:100%;margin-top:10px;padding:10px 0;border:0;border-bottom:1.5px solid var(--ink);background:transparent;outline:none;font-size:16px}
+.seg{display:grid;grid-template-columns:1fr 1fr;margin-top:12px;border-radius:999px;box-shadow:inset 0 0 0 1.5px var(--ink);padding:3px}
+.seg button{height:36px;border-radius:999px;font-size:13.5px;font-weight:600}
+.seg button.on{background:var(--ink);color:var(--bone)}
+.settings{margin-top:28px}
+.set>span{display:flex;flex-direction:column;gap:2px;min-width:0}
+.set .muted{font-size:13px}
+.foot{text-align:center;color:var(--ink-3);margin:24px 0 0}
+.pad .grab{width:36px;height:4px;border-radius:2px;background:rgba(27,27,27,.2);margin:0 auto 14px}
+.pad h3+.note{margin:-6px 0 14px}
+.pad .verdict{margin:12px 0;font-family:var(--syne);font-weight:700;font-size:20px;letter-spacing:-.02em}
+.pad .verdict.win{color:var(--red)}
+.pad .hint{text-align:center;margin:10px 0 0}
+.pad .btn{width:100%}
+.toast.bad{background:var(--red-deep)}
+.empty{padding:60px var(--pad);text-align:center}
+.empty h1{font-family:var(--syne);font-size:30px;letter-spacing:-.035em;margin:0 0 8px}
+
+/* closed sheets are gone, not just moved: out of reach of a screen reader and a tab key */
+.picker:not(.on),.pad:not(.on),.toast:not(.on){visibility:hidden;transition:transform .45s var(--ease),visibility 0s .5s}
+
+@media (prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important;transition:none!important}}
+
+/* ------------------------------------------------ the cup switch, as on the console:
+   a name, and a hairline of progress along the tile's foot */
+.strip button{position:relative;justify-content:center;min-height:46px;padding:11px 12px 13px}
+.strip .bar2{position:absolute;left:12px;right:12px;bottom:8px;height:3px}
+.strip .t span{font-size:14.5px}
+.strip .mine .t span{color:var(--red)}
+
+/* the cup switch: the name, centred, on a firmer tile; the chosen one in ink
+   (your own cup's name stays red until it is the one chosen) */
+.strip button{align-items:center;justify-content:center;text-align:center;min-height:46px;padding:12px;box-shadow:inset 0 0 0 1.5px rgba(27,27,27,.3)}
+.strip button.on{background:var(--ink);color:var(--bone);box-shadow:none}
+.strip .t{justify-content:center}
+.strip .t span{font-size:15px;font-weight:700}
+.strip .on.mine .t span{color:var(--bone)}
+.strip .bar2{display:none}
+.strip button:not(.all):last-child:nth-child(even){grid-column:1/-1}   /* an odd last cup takes the row, as on the console */
+
+/* every table stays full red; yours is the one with the ink ring */
+.grid.someone .tb:not(.mine) .skin{opacity:1;filter:url(#paint)}
+.tb.mine{outline:2px solid var(--ink);outline-offset:4px;border-radius:var(--shape)}
+/* names on red labels, as on the console's tables, so the painted lines never run through them */
+.tb:not(.free):not(.paused):not(.other) .side span{background:var(--red);padding:0 .3em;border-radius:4px}
+.tb:not(.free):not(.paused):not(.other) .side .amp{padding:0 .2em}
+/* the ring frayed like the table's own paint: drawn as an outline of its
+   own, through the same #paint filter */
+.tb.mine{outline:0}
+.tb.mine::after{content:"";position:absolute;inset:-6px;border:2px solid var(--ink);border-radius:var(--shape);filter:url(#paint);pointer-events:none}
+.tb .b{top:calc(50% + 12cqi)}   /* the lower side a little further from the net */
+.tb .a{bottom:calc(50% + 13cqi)}.tb .b{top:calc(50% + 13cqi)}   /* each side toward the middle of its own half */
+.tb .lbl{top:7%}   /* room for a pair once the sides moved in */
+/* the mark: ink, with a red ball over the middle T */
+.bar .tt{position:relative;display:inline-block;color:var(--ink);text-shadow:none}.bar .tt::after{content:"";position:absolute;left:calc(50% - .02em);top:var(--ball-top,-.12em);width:.24em;height:.24em;border-radius:50%;background:var(--red);transform:translateX(-50%);pointer-events:none}
+/* no live dot in the header: the mark carries the red there */
+.bar #dot{display:none}

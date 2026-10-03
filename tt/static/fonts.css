@@ -1,0 +1,11 @@
+/* Self-hosted, so the page never waits on Google over hall wifi, and so the
+   ampersand is the one we chose: "Archivo Amp" is Archivo v1.003 cut down to
+   the single glyph U+0026 (fontTools subset). The stacks in mobile.css put it
+   first; unicode-range means the browser only ever uses it for "&".
+   Syne and Archivo are latin subsets of the variable fonts. All OFL-1.1. */
+@font-face{font-family:"Syne";src:url(/static/fonts/syne.woff2) format("woff2");font-weight:400 800;font-display:swap}
+@font-face{font-family:"Archivo";src:url(/static/fonts/archivo.woff2) format("woff2");font-weight:100 900;font-stretch:62% 125%;font-display:swap}
+@font-face{font-family:"Archivo Amp";src:url(/static/fonts/archivo-amp-400.woff2) format("woff2");font-weight:400;unicode-range:U+0026}
+@font-face{font-family:"Archivo Amp";src:url(/static/fonts/archivo-amp-500.woff2) format("woff2");font-weight:500;unicode-range:U+0026}
+@font-face{font-family:"Archivo Amp";src:url(/static/fonts/archivo-amp-600.woff2) format("woff2");font-weight:600;unicode-range:U+0026}
+@font-face{font-family:"Archivo Amp";src:url(/static/fonts/archivo-amp-700.woff2) format("woff2");font-weight:700;unicode-range:U+0026}
