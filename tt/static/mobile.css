@@ -379,3 +379,5 @@ details.fold .in .list,details.fold .in .h,details.fold .in .cuphead{padding:0;m
 .bar .tt{position:relative;display:inline-block;color:var(--ink);text-shadow:none}.bar .tt::after{content:"";position:absolute;left:calc(50% - .02em);top:var(--ball-top,-.12em);width:.24em;height:.24em;border-radius:50%;background:var(--red);transform:translateX(-50%);pointer-events:none}
 /* no live dot in the header: the mark carries the red there */
 .bar #dot{display:none}
+.tg-offer{flex-direction:column;align-items:flex-start;margin-top:14px}
+a.btn{text-decoration:none}

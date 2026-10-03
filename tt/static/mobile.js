@@ -94,7 +94,8 @@ const STR = {
     findP: 'Find a player', showAll: n => `Show all ${n}`, showLess: 'Show fewer', noResult: 'No result with that name.', nothingPlayed: 'Nothing played yet.',
     noTables: 'No tables yet.',
     // telegram
-    report: 'Enter result', reported: (s, o) => `Reported ${s} — ${o} still has to confirm`,
+    report: 'Enter result', reported: (s, o) => `Reported ${s} — ${o} still has to confirm`, withdraw: 'Take it back',
+    tgOffer: 'We’ll message you on Telegram when you’re up and when your table is free.', tgGo: 'Table calls on Telegram',
     claimBy: b => `${b} reported a result`, claimQ: (w, a, b) => `${w ? 'You win' : 'You lose'} ${a}:${b} — right?`,
     yes: 'Right', no: 'Not right',
     pause: 'Break', back: 'I’m back', leave: 'I’m going home', stay: 'Still here',
@@ -156,7 +157,8 @@ const STR = {
     beat: n => 'gegen ' + n, walkover: 'kampflos', bye: 'Freilos',
     findP: 'Spieler:in suchen', showAll: n => `Alle ${n} zeigen`, showLess: 'Weniger zeigen', noResult: 'Kein Ergebnis mit diesem Namen.', nothingPlayed: 'Noch nichts gespielt.',
     noTables: 'Noch keine Tische.',
-    report: 'Ergebnis eintragen', reported: (s, o) => `Gemeldet: ${s} — ${o} bestätigt noch`,
+    report: 'Ergebnis eintragen', reported: (s, o) => `Gemeldet: ${s} — ${o} bestätigt noch`, withdraw: 'Zurückziehen',
+    tgOffer: 'Wir schreiben dir auf Telegram — wenn du gleich dran bist, und wenn dein Tisch frei ist.', tgGo: 'Tischaufrufe aufs Handy',
     claimBy: b => `${b} meldet ein Ergebnis`, claimQ: (w, a, b) => `${w ? 'Du gewinnst' : 'Du verlierst'} ${a}:${b} — stimmt das?`,
     yes: 'Stimmt', no: 'Stimmt nicht',
     pause: 'Pause', back: 'Ich bin wieder da', leave: 'Ich gehe heim', stay: 'Doch noch da',
@@ -662,14 +664,29 @@ function shortState(o) {
   return `<span>${esc(L.inDraw)}</span>`;
 }
 
+/* The web page, once it knows who you are: the way onto Telegram for your
+   table calls (tt/bot.py links you on /start c_<event>_<player>). The same
+   offer the console's public view makes; never in the sandbox. */
+function tgOffer() {
+  const p = myPlayer();
+  const bot = S && S.telegram && S.telegram.on && S.telegram.username;
+  if (!p || !bot || new URLSearchParams(location.search).has('sim')) return '';
+  if (S.phase !== 'doors' && S.phase !== 'live') return '';
+  const href = `https://t.me/${encodeURIComponent(bot)}?start=c_${encodeURIComponent(((S.event && S.event.id) || '') + '_' + p.id)}`;
+  return `<div class="acts tg-offer"><p class="note">${esc(L.tgOffer)}</p>
+      <a class="btn ghost" href="${href}" target="_blank" rel="noopener">${esc(L.tgGo)} →</a></div>`;
+}
+
 function actions(H) {
+  if (SHELL === 'web') return tgOffer();
   if (SHELL !== 'tg' || !H || !H.x) return '';
   const x = H.x;
   if (x.state === 'playing') {
     if (!V.scores) return '';
     const mine = (V.reported || [])[0];
     return mine
-      ? `<div class="acts"><p class="note">${esc(L.reported(scoreLine(mine.games), nice(x.opponent)))}</p></div>`
+      ? `<div class="acts"><p class="note">${esc(L.reported(scoreLine(mine.games), nice(x.opponent)))}</p>
+          <button class="btn ghost small" data-act="withdraw" data-id="${esc(mine.id)}">${esc(L.withdraw)}</button></div>`
       : `<div class="acts"><button class="btn red wide" data-act="pad">${esc(L.report)}</button></div>`;
   }
   if (x.state === 'resting') return `<div class="acts">
@@ -1366,6 +1383,7 @@ document.addEventListener('click', async e => {
   if (a === 'rest') return void act('rest', { eid: d.eid, on: !!d.on });
   if (a === 'leave') { if (d.on && !(await ask(L.leaveQ))) return; return void act('leave', { eid: d.eid, on: !!d.on }); }
   if (a === 'confirm') return void act('confirm', { id: +d.id, yes: !!d.yes });
+  if (a === 'withdraw') return void act('withdraw', { id: +d.id });
   if (a === 'pad') { buzz('light'); return openPad(); }
   if (a === 'pad-send') { const st = padState(); if (!st.decided) return; return void act('score', { games: st.done }, closePad); }
   if (a === 'message') { const text = ui.msg.trim(); if (!text) return; return void act('message', { text }, () => { ui.msg = ''; }); }
