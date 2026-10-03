@@ -628,6 +628,17 @@ class App:
                 f"table {n} has a match on it — score it or put it back first")
         s.append("table_remove", p)
 
+    def op_lend_table(self, p):
+        """Open a reserved table to any cup for its next match only.
+
+        The reservation is untouched; the dispatcher seats whoever is waiting
+        and the loan is spent with that match, so the owner has it back."""
+        n = int(p["number"])
+        t = self.store.tables.get(n)
+        if not t:
+            raise ValueError("no such table")
+        self.store.append("table_set", {"number": n, "loan": True})
+
     def op_share_tables(self, p):
         """Every table back into the shared pool.
 
@@ -1593,7 +1604,7 @@ class ArchiveApp(App):
 
 OP_LEVEL = {
     "add_player": 2, "update_player": 2, "add_team": 2, "update_entrant": 2,
-    "set_table": 2, "remove_table": 2, "share_tables": 2, "split_tables": 2,
+    "set_table": 2, "remove_table": 2, "share_tables": 2, "lend_table": 2, "split_tables": 2,
     "add_format": 2, "update_format": 2, "start_format": 2, "remove_format": 2,
     "reset_format": 2, "swiss_cut_ko": 2, "set_resting": 1, "withdraw": 2,
     "add_cup": 2, "update_cup": 2, "remove_cup": 2, "merge_cups": 2,

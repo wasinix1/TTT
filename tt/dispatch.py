@@ -7,7 +7,12 @@ Two things decide where a match goes.
 
 *Reservations.* A table tagged for a cup is reserved for that cup's formats
 only, so two tournaments running at once don't cross-pollinate each other's
-tables. An untagged table stays shared.
+tables. An untagged table stays shared. A reservation can be lent for one
+game (`Table.loan`): any cup may take the table next, and the loan is spent
+as soon as a match sits down, so the table is the owner's again after it.
+The same lending happens by itself (`Store.auto_lend`, on unless switched off)
+whenever the owner has nothing to put on its table and another cup does: a
+Swiss cup waiting on its last match would otherwise hold its tables empty.
 
 *Fair share of the shared pool.* Cups used to be served in creation order,
 which is not a bias but outright starvation: whichever cup was made first
@@ -221,15 +226,27 @@ def tick(store):
                 if not offers:
                     continue
                 key = _rank(store, running)
-                for tnum in free:
-                    tcup = store.cup_of_table(store.tables[tnum])
-                    can = [c for c in offers
-                           if tcup is None or c == tcup]
-                    if not can:
-                        continue
-                    pick = min(can, key=key)
-                    seated = (tnum, offers[pick])
-                    break
+                # reservations first; only then lend. Otherwise a lent table
+                # could be used while a shared one stands free.
+                for lend in (False, True):
+                    if lend and not store.auto_lend():
+                        break
+                    for tnum in free:
+                        t = store.tables[tnum]
+                        tcup = store.cup_of_table(t)
+                        if lend:
+                            # its own cup has nothing to put there right now
+                            can = list(offers) if tcup not in offers else []
+                        else:
+                            can = [c for c in offers
+                                   if tcup is None or c == tcup or t.loan]
+                        if not can:
+                            continue
+                        pick = min(can, key=key)
+                        seated = (tnum, offers[pick])
+                        break
+                    if seated:
+                        break
                 if seated:
                     break
             if not seated:

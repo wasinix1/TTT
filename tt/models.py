@@ -124,6 +124,7 @@ class Table:
     paused: bool = False
     match_id: Optional[str] = None
     cup_id: Optional[str] = None       # None = shared; tagged = reserved for that cup
+    loan: bool = False                 # open to any cup for its next match only
 
     def to_dict(self):
         return asdict(self)
