@@ -514,7 +514,10 @@ class Conversation:
         st = self.app.entrant_status(e)
         out = {"state": st, "table": "", "match": None, "opponent": "", "partners": [],
                "label": "", "best_of": "", "eta_min": None, "position": None,
-               "on_deck": False, "tables": ""}
+               "on_deck": False, "tables": "",
+               # for the phone: the table's number (the hero paints it), when
+               # the match started, and how many matches go before yours
+               "table_no": None, "since": None, "ahead": None}
         if st == "playing":
             for t in s.tables.values():
                 m = s.matches.get(t.match_id) if t.match_id else None
@@ -523,14 +526,17 @@ class Conversation:
                     mates, opp = _opponents(self.app, m, pid)
                     out.update(table=table_de(t), match=m.id, opponent=opp, partners=mates,
                                label=label_de(m.label), best_of=best_of(m),
-                               bo=m.scoring.best_of, need=m.scoring.games_to_win())
+                               bo=m.scoring.best_of, need=m.scoring.games_to_win(),
+                               table_no=t.number, since=m.started_ts)
                     break
         elif st in ("waiting", "drawn"):
             r = self._row_for(e.id)
             if r:
                 out.update(on_deck=bool(r.get("on_deck")), eta_min=r.get("eta_min"),
-                           position=r.get("position"), label=label_de(r.get("label", "")))
-                if r["kind"] == "fixture":
+                           position=r.get("position"), label=label_de(r.get("label", "")),
+                           ahead=r.get("ahead"))
+                # a pairing in open play names its opponent as surely as a fixture
+                if r["kind"] in ("fixture", "pairing"):
                     other = [x for x in r.get("entrants") or [] if x and x != e.id]
                     out["opponent"] = s.entrant_name(other[0]) if other else ""
         out["won"], out["lost"] = _record(s, e)

@@ -83,6 +83,12 @@ account, which is how a wrong tap is undone. The panel shows once per phone
 per event, never in the sandbox or a past event, and *📲 Aufs Handy* in the
 header brings it back.
 
+Since the redesign, phones at the plain URL get the phone page rather than
+the console. There the same link is offered once the phone knows who it is
+(*Playing tonight? Tap your name*): under your table or your place in the
+queue, *Tischaufrufe aufs Handy* opens the bot with your name, on the same
+terms. The console's panel stays for a screen showing the public console.
+
 `person_link` is the one new event. It sets or clears an account on a person
 and takes it off anybody else, so an account is always exactly one person.
 

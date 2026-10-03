@@ -173,6 +173,9 @@ def cup_board(store, cup_id, app):
             r["_slot"] = seat
             seat += 1
     for r in rows:
+        # how many matches go before this one — the number on a player's
+        # phone. Order, not time, so it is exact.
+        r["ahead"] = r["_slot"]
         secs = _eta(r.pop("_slot"), share, per, free)
         r["eta_min"] = _round_to(secs)
         r["tables"] = tables

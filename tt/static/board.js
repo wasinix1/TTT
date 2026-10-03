@@ -4,6 +4,8 @@
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c =>
   ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const $ = id => document.getElementById(id);
+// pairs read as people say them: "Anna & Max", with the same ampersand as everywhere
+const nm = s => String(s ?? '').split(' / ').join(' & ');
 
 /* Columns for the tables in play, so the blocks are always equal and never a
    full-width straggler: 3 tables are 3 across (or stacked when cups share the
@@ -47,11 +49,14 @@ function fit() {
   });
 }
 
+// the clock in the corner: 24-hour, and it keeps time between updates
+function tick() { const d = new Date(); $('sub').textContent = d.getHours() + ':' + String(d.getMinutes()).padStart(2, '0'); }
+setInterval(tick, 15000);
+
 function render(S) {
   $('title').textContent = S.event.name || 'Coming up';
   const bs = (S.board || []);
-  const clock = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-  $('sub').textContent = clock;
+  tick();
   if (!bs.length) {
     $('cups').innerHTML = `<div class="cup"><h2>Nothing running yet</h2></div>`;
     $('note').textContent = '';
@@ -61,12 +66,12 @@ function render(S) {
     const cup = S.cups.find(c => c.id === b.cup_id);
     const now = b.playing.map(m => `<div class="now">
       <div class="t">Jetzt · Tisch ${m.table}</div>
-      <div class="p">${esc(m.a)} — ${esc(m.b)}</div></div>`).join('')
-      || `<div class="now"><div class="t">&nbsp;</div><div class="p">No match on yet</div></div>`;
+      <div class="p"><span>${esc(nm(m.a))}</span><span>${esc(nm(m.b))}</span></div></div>`).join('')
+      || `<div class="now idle"><div class="t">&nbsp;</div><div class="p">No match on yet</div></div>`;
     const rows = b.up.map(r => `
       <div class="q ${r.on_deck ? 'ondeck' : ''}" data-r>
         <span class="n">${r.position}</span>
-        <span class="w">${esc(r.a)}${r.b ? ' — ' + esc(r.b) : ''}</span>
+        <span class="w">${esc(nm(r.a))}${r.b ? `<span class="v">${esc(nm(r.b))}</span>` : ''}</span>
         ${when(r) ? `<span class="e when">${esc(when(r))}</span>` : ''}
       </div>`).join('');
     return `<div class="cup">

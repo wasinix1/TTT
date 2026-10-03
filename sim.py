@@ -1100,6 +1100,38 @@ def test_put_back_comes_round_again():
     shutil.rmtree(d)
 
 
+def test_seat_now_moves_to_the_front():
+    print("\n[Seat now moves a waiting match to the front, and Undo puts it back]")
+    app, d = fresh()
+    solo_field(app, 6)
+    f = app.act("admin", "add_format", {"kind": "groups", "name": "Solo",
+        "config": {"n_groups": 1, "then_ko": False},
+        "entrant_ids": entrant_ids(app)})["format_id"]
+    app.act("admin", "start_format", {"id": f})
+    s = app.store
+    line = lambda: [r["id"] for b in app.state("admin")["board"] for r in b["up"]]
+    before = line()
+    last = before[-1]
+    out = app.act("admin", "queue_front", {"match_id": last})
+    check(line()[0] == last or out.get("table"), "the match is first in line (or on a table)")
+    check(set(line()) | ({last} if out.get("table") else set()) >= set(before) - {last},
+          "nobody else left the line")
+    check(all(r.get("deferred", 0) <= 0 for b in app.state("admin")["board"] for r in b["up"]),
+          "nothing is marked put back by it")
+    app.act("admin", "queue_front", {"match_id": last, "restore": out["was"]})
+    if not out.get("table"):
+        check(line() == before, "Undo puts the line back exactly as it was")
+    try:
+        app.act("referee", "queue_front", {"match_id": before[0]})
+        check(False, "a referee cannot reorder the line")
+    except PermissionError:
+        check(True, "a referee cannot reorder the line")
+    drain(app)
+    check(all(m.status == "done" for m in s.matches.values() if m.format_id == f),
+          "and every match still gets played")
+    shutil.rmtree(d)
+
+
 def test_undo_unwinds_a_bracket():
     print("\n[undoing a result takes back what it decided]")
     app, d = fresh()
@@ -1766,7 +1798,13 @@ def test_routing():
     check("site.js" in get("/join")[1], "/join is the site")
     check(get("/api/public")[0] == 200, "/api/public answers")
     app.act("admin", "set_phase", {"phase": "live"})
-    check("app.js" in get("/")[1], "once live the plain URL is the console")
+    check("/static/mobile.js" in get("/")[1], "once live the plain URL is the phone page")
+    check("/static/app.js" in get("/?console")[1], "and ?console still opens the console")
+    check("/static/app.js" in get("/?sim=1")[1], "so does the sandbox")
+    check("/static/mobile.js" in get("/tg")[1], "the Mini App is the same page")
+    st = json.loads(get("/api/state")[1])
+    check(all("ahead" in r for b in st["board"] for r in b["up"]),
+          "every board row says how many matches go before it")
     app.act("admin", "set_phase", {"phase": "done"})
     check("site.js" in get("/")[1], "afterwards the site comes back")
     srv.shutdown()
@@ -2714,6 +2752,7 @@ if __name__ == "__main__":
     test_put_back_returns_players()
     test_put_back_frees_the_table()
     test_put_back_comes_round_again()
+    test_seat_now_moves_to_the_front()
     test_undo_unwinds_a_bracket()
     test_correcting_a_result_in_place()
     test_housekeeping()

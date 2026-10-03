@@ -467,7 +467,9 @@ def bracket_view(store, fid):
             "round": r,
             "name": items[0].meta.get("round_name", f"Round {r+1}"),
             "matches": [{
-                "id": m.id, "status": m.status,
+                # where it sits in the draw: slot i feeds slot i // 2 of the
+                # next round. Byes are not matches, so list order cannot say it
+                "id": m.id, "slot": m.meta.get("slot", 0), "status": m.status,
                 "a": store.entrant_name(m.entrant_a) if m.entrant_a else None,
                 "b": store.entrant_name(m.entrant_b) if m.entrant_b else None,
                 "winner": m.winner, "games": m.games, "table": m.table,

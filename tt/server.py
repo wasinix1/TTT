@@ -240,6 +240,8 @@ class App:
             "winner": m.winner, "scoring": m.scoring.to_dict(),
             "meta": m.meta, "seq": m.seq,
             "cup_id": s.cup_of_format(s.formats.get(m.format_id)),
+            # when it went onto its table: the phone's "since 21:52"
+            "started_ts": m.started_ts,
         }
 
     def state_json(self, role):
@@ -836,6 +838,31 @@ class App:
         seated = [s.matches[t.match_id] for t in s.tables.values() if t.match_id]
         return {"reseated": any(pair and pair == {x.entrant_a, x.entrant_b} - {None}
                                 for x in seated)}
+
+    def op_queue_front(self, p):
+        """Seat now: move a waiting fixture to the front of its draw's line,
+        so the next table that can take it goes to it. If a table is free for
+        it right now, that is this instant: the dispatcher runs after every
+        action, and the answer says where it went.
+
+        Undo is the same op with `restore`, the place it had (which the first
+        answer hands back as `was`)."""
+        s = self.store
+        m = s.matches[p["match_id"]]
+        if m.status != "pending":
+            raise ValueError("that match is not waiting any more")
+        was = int(m.meta.get("deferred", 0))
+        if "restore" in p:
+            s.append("match_order", {"match_id": m.id, "deferred": int(p["restore"])})
+            return {"was": was}
+        f = s.formats.get(m.format_id)
+        if not f:
+            raise ValueError("that match belongs to no draw")
+        line = [x for x in f.pending_fixtures(s) if x.id != m.id]
+        front = min([int(x.meta.get("deferred", 0)) for x in line] + [0]) - 1
+        s.append("match_order", {"match_id": m.id, "deferred": front})
+        dispatch.tick(s)
+        return {"was": was, "table": m.table if m.status == "live" else None}
 
     def op_reopen_match(self, p):
         """Undo a result. The match becomes unplayed again and anything it
@@ -1609,7 +1636,7 @@ OP_LEVEL = {
     "reset_format": 2, "swiss_cut_ko": 2, "set_resting": 1, "withdraw": 2,
     "add_cup": 2, "update_cup": 2, "remove_cup": 2, "merge_cups": 2,
     "join_queue": 1, "leave_queue": 1,
-    "report": 1, "void_match": 1, "reopen_match": 1, "put_back": 2, "assign": 2,
+    "report": 1, "void_match": 1, "reopen_match": 1, "put_back": 2, "assign": 2, "queue_front": 2,
     "manual_match": 2, "manual_result": 1, "event_meta": 2, "rewind": 2,
     "new_event": 2, "create_event": 2, "set_phase": 2, "past_events": 2,
     "register": 0, "update_registration": 2,
@@ -1772,8 +1799,15 @@ class Handler(BaseHTTPRequestHandler):
         #
         # The bare root is phase-driven: the site before the doors open, the
         # console once they have.
-        if path.startswith(("/a/", "/r/")) or self.app.store.shows_console():
+        if path.startswith(("/a/", "/r/")):
             return self._static("index.html")
+        if self.app.store.shows_console():
+            # the bare root on a phone in the hall: the mobile page (see
+            # docs/mobile-redesign.md). The sandbox and the archive keep the
+            # console, which knows how to ask for them.
+            if "sim" in q or "past" in q or "console" in parse_qs(u.query, keep_blank_values=True):
+                return self._static("index.html")
+            return self._static("live.html")
         return self._site_page()
 
     def do_POST(self):
@@ -1973,6 +2007,9 @@ class Handler(BaseHTTPRequestHandler):
             data = fh.read()
         self._send(200, data, ctype + ("; charset=utf-8" if "text" in ctype
                                        or "javascript" in ctype else ""))
+
+
+mimetypes.add_type("font/woff2", ".woff2")       # self-hosted fonts (tt/static/fonts)
 
 
 def lan_ip():

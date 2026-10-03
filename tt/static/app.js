@@ -87,8 +87,6 @@ async function poll(force) {
     const r = await fetch('/api/state?token=' + encodeURIComponent(TOKEN) + simq('&'),
                           { headers: h });
     if (r.status === 404 && (SIM || PAST)) return simGone();
-    $('pulse').classList.add('on');
-    setTimeout(() => $('pulse').classList.remove('on'), 320);
     if (r.status === 304) return;
     etag = r.headers.get('ETag');
     const s = await r.json();
@@ -133,12 +131,123 @@ function simGone() {
   dead = true;
 }
 
-function toast(msg) {
+/* The toast: what just happened in bold, what it means under it, and Undo
+   when it can be taken back — the TTT Admin toast. Called with one string it
+   is the plain note it always was. */
+let toastUndo = null;
+function toast(msg, sub, undo) {
   const t = $('toast');
-  t.textContent = msg;
+  t.innerHTML = `<span class="tt2"><b>${esc(msg)}</b>${sub ? `<span>${esc(sub)}</span>` : ''}</span>${
+    undo ? '<button class="tundo" type="button" data-act="toast-undo">Undo</button>' : ''}`;
+  toastUndo = undo || null;
+  t.classList.toggle('rich', !!(sub || undo));
   t.hidden = false;
   clearTimeout(t._h);
-  t._h = setTimeout(() => { t.hidden = true; }, 3800);
+  t._h = setTimeout(() => { t.hidden = true; toastUndo = null; }, undo ? 5000 : 3800);
+}
+
+/* On a touch screen there is no hover, so the actions a mouse finds by
+   hovering a row (Edit result, Seat now · Sit out · Enter result, a
+   knockout match's Edit) stay out of sight until the row is tapped: the row
+   takes a faint ground and its actions open on a line beneath it. Tapping
+   it again, or another row, closes it; doing one of them closes it too. The
+   open row survives the redraws a result or a poll brings. */
+const touch = () => matchMedia('(hover: none)').matches;
+let tapKey = null;
+const tapKeyOf = el => { const b = el.querySelector('[data-m],[data-e]'); return b ? (b.dataset.m || b.dataset.e) : null; };
+function applyTap() {
+  document.querySelectorAll('#live .tapped').forEach(x => x.classList.remove('tapped'));
+  if (!tapKey) return;
+  for (const el of document.querySelectorAll('#live .hoverable, #live .kc'))
+    if (tapKeyOf(el) === tapKey && el.querySelector('.on-hover, .ac')) { el.classList.add('tapped'); return; }
+}
+document.addEventListener('click', e => {
+  if (!touch()) return;
+  if (e.target.closest('.tapped [data-act]')) { tapKey = null; return; }
+  if (e.target.closest('button, a, input, select, label, textarea, summary')) return;
+  const row = e.target.closest('#live .hoverable, #live .kc');
+  if (!row || !row.querySelector('.on-hover, .ac')) return;
+  const k = tapKeyOf(row);
+  tapKey = tapKey === k ? null : k;
+  applyTap();
+});
+addEventListener('DOMContentLoaded', () => {
+  const live = $('live');
+  if (live) new MutationObserver(() => { if (tapKey) requestAnimationFrame(applyTap); })
+    .observe(live, { childList: true, subtree: true });
+});
+
+/* ----------------------------------------------------------------- modes
+
+   The admin's console is three rooms behind one switch: Live (the tables and
+   everything about the play), Door (the registration desk, embedded — the
+   same page the door key opens) and Setup (the evening's shape). Referees and
+   the public only ever have Live. The mode rides in the URL hash so a reload
+   lands where it was. */
+
+let mode = 'live', modeSet = false;
+function setMode(m, quiet) {
+  if (m !== 'live' && !isAdmin()) m = 'live';
+  mode = m;
+  $('live').hidden = m !== 'live';
+  $('door').hidden = m !== 'door';
+  sheetOpen = m === 'setup';
+  $('sheet').hidden = !sheetOpen;
+  document.body.dataset.mode = m;
+  if (m === 'door') openDesk();
+  if (!quiet) {
+    try { history.replaceState(null, '', location.pathname + location.search + (m === 'live' ? '' : '#' + m)); } catch (e) { }
+  }
+  if (S) render();
+  scrollTo({ top: 0 });
+}
+
+/* The desk is its own page with its own payload (/api/desk, see desk.js),
+   so it is framed rather than re-implemented: one door, two ways in. */
+function openDesk() {
+  const box = $('door');
+  if (box.firstElementChild) return;
+  const src = location.pathname.replace(/\/$/, '') + '/desk?embed=1' + (SIM ? '&sim=1' : '');
+  box.innerHTML = `<iframe id="desk-frame" title="Registration desk" src="${esc(src)}"></iframe>`;
+}
+
+function renderModes() {
+  const nav = $('modes');
+  nav.hidden = !isAdmin();
+  if (nav.hidden) return;
+  const waiting = (S.registrations || []).filter(r => r.status === 'pending').length;
+  const unread = tgOn() ? S.telegram.unread : 0;
+  nav.innerHTML = [['live', 'Live'], ['door', 'Door'], ['setup', 'Setup']].map(([k, l]) =>
+    `<button type="button" data-mode="${k}" class="${mode === k ? 'on' : ''}" aria-pressed="${mode === k}">${l}${
+      k === 'door' && waiting ? ` <span class="count" title="${waiting} still expected">${waiting}</span>` : ''}${
+      k === 'setup' && unread ? ` <span class="count" title="${unread} unread on Telegram">${unread}</span>` : ''}</button>`).join('');
+}
+
+/* Where the evening is, as a stepper — in Setup → Event, where it is set.
+   A step pins the evening there; "Follow the clock" lets the start and end
+   times move it again. Changing it has consequences (the public URL turns
+   into the console or back), which is why it lives in Setup and not in the
+   header. */
+const PHASES = ['announced', 'registration', 'doors', 'live', 'done'];
+function phaseStep() {
+  const at = PHASES.indexOf(S.phase);
+  const pinned = !!(S.event || {}).phase_pin;
+  return `<div class="phase-step" role="group" aria-label="Phase">${PHASES.map((p, i) => `${i ? '<i></i>' : ''}<button type="button" data-phase-pin="${p}"
+      class="${i === at ? 'on' : i < at ? 'past' : ''}" aria-pressed="${i === at}" title="${i === at ? (pinned ? 'Pinned here' : 'Here, following the clock') : 'Pin the evening to ' + esc(cap(p))}">${esc(cap(p))}</button>`).join('')}</div>`;
+}
+const cap = s => { s = String(s || ''); return s.charAt(0).toUpperCase() + s.slice(1); };
+
+/* "Thu 2 Oct · 19:00 · Prater Halle" — what the bar says under the name. */
+function whenLine() {
+  const ev = S.event || {};
+  const bits = [];
+  const d = ev.starts_at ? new Date(ev.starts_at) : null;
+  if (d && !isNaN(d)) {
+    bits.push(d.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' }));
+    bits.push(d.getHours() + ':' + String(d.getMinutes()).padStart(2, '0'));
+  }
+  if (ev.venue) bits.push(ev.venue);
+  return bits.join(' · ');
 }
 
 /* --------------------------------------------------------------- render */
@@ -149,25 +258,29 @@ function render() {
   const sel = focus && focus.selectionStart != null ? focus.selectionStart : null;
 
   $('ev-name').textContent = S.event.name || 'Table tennis';
+  $('ev-when').textContent = whenLine();
   const base = PAST ? 'Past event' : S.role === 'admin' ? 'Admin' : S.role === 'referee' ? 'Referee' : 'Live';
+  // the admin sets the phase in Setup → Event; the referee sees it here
   $('role-tag').textContent =
-    (S.phase && S.phase !== 'live' && S.role !== 'public' && !PAST)
+    (S.phase && S.phase !== 'live' && S.role === 'referee' && !PAST)
       ? base + ' · ' + S.phase : base;
-  const waiting = (S.registrations || []).filter(r => r.status === 'pending').length;
-  $('setup-btn').hidden = !isAdmin();
-  const unread = tgOn() ? S.telegram.unread : 0;
-  $('setup-btn').innerHTML = esc(waiting ? `Setup · ${waiting}` : 'Setup') + (unread
-    ? ` <span class="count" title="${unread} unread on Telegram">${unread}</span>` : '');
+  $('role-tag').className = 'role-tag ' + (PAST ? 'past' : S.role);
+  if (!modeSet) {                // a reload keeps the mode it was in
+    modeSet = true;
+    const h = location.hash.slice(1);
+    if (h === 'door' || h === 'setup') return setMode(h, true);
+  }
+  renderModes();
 
   renderNudge();
+  refShell();
   renderCupTabs();
   renderTables();
-  renderBoard();
+  renderBelow();
   renderEditor();
   renderManual();
-  renderStandings();
-  renderBrackets();
   renderRecent();
+  refFolds();
   renderJump();
   spyJump();
   if (sheetOpen) renderSheet();
@@ -196,11 +309,12 @@ function renderJump() {
   const n = (S.board || []).filter(b => inView(b.cup_id)).reduce((s, b) => s + (b.total || 0), 0);
   const c = nav.querySelector('.count');
   if (c) c.textContent = n ? String(n) : '';
-  const tabs = $('cup-tabs');
+  // the section bar sticks directly under the header, and only there. It
+  // used to add the cup strip's height too, which (the strip not being
+  // sticky) left the bar floating a strip's height down the screen, over
+  // whatever scrolled beneath it.
   const bar = document.querySelector('.bar');
-  const top = tabs.hidden
-    ? bar.getBoundingClientRect().height
-    : (parseFloat(getComputedStyle(tabs).top) || 0) + tabs.getBoundingClientRect().height;
+  const top = (parseFloat(getComputedStyle(bar).top) || 0) + bar.getBoundingClientRect().height;
   document.documentElement.style.setProperty('--jump-top', Math.round(top) + 'px');
 }
 
@@ -219,19 +333,99 @@ function spyJump() {
 addEventListener('scroll', spyJump, { passive: true });
 addEventListener('resize', () => { if (S) { renderJump(); spyJump(); } });
 
-/* -- cup tabs ------------------------------------------------------------ */
+/* -- the cup strip ------------------------------------------------------
+
+   One strip that is both the progress and the filter: Everyone, then one
+   tile per cup with how far it has got. Two to four sit in a row, more wrap,
+   one cup is a single tile (and no Everyone). A draw that knows its matches
+   shows a fraction and a bar; open play has no total, so it says how many
+   are playing and how many have been played. Clicking the open cup again
+   goes back to Everyone. */
+
+const nm = name => String(name ?? '').split(' / ').join(' & ');
+/* In lists a pair is its two first names ("Jonas & Ana"), as on the phone
+   page; a team name somebody chose stays whole. On the table faces and at
+   the door, names are given in full. */
+const sidesOf = name => String(name ?? '').split(' / ').map(x => x.trim()).filter(Boolean);
+const nice = name => { const p = sidesOf(name); return p.length > 1 ? p.map(x => x.split(/\s+/)[0]).join(' & ') : (p[0] || ''); };
+/* Every list is five rows, then "+ N more"; a standings table is ten. */
+const LIST_ROWS = 5, TABLE_ROWS = 10;   // "A / B" -> "A & B"
+
+function tablesLabelOf(b) {
+  if (!b) return '';
+  const nums = (b.tables || []).slice().sort((x, y) => x - y);
+  if (!nums.length) return 'no table';
+  if (!b.reserved && nums.length === S.tables.length) return 'all tables';
+  const runs = [];
+  let a = nums[0], p = nums[0];
+  for (const n of nums.slice(1)) { if (n === p + 1) { p = n; continue; } runs.push([a, p]); a = p = n; }
+  runs.push([a, p]);
+  const txt = runs.map(([x, y]) => x === y ? x : `${x}–${y}`).join(', ');
+  return (nums.length === 1 ? 'table ' : 'tables ') + txt;
+}
+
+/* Several reserved tables standing empty for the same reason are one note,
+   not a stack of identical ones: "Tables 2, 3, 7 and 8 are reserved…" */
+function idleNotes(idle) {
+  const groups = new Map();
+  idle.forEach(w => {
+    const k = w.waiting_for.join(' and ');
+    if (!groups.has(k)) groups.set(k, { who: w.waiting_for, tables: [] });
+    groups.get(k).tables.push(w.table);
+  });
+  const and = xs => xs.length < 2 ? String(xs[0]) : xs.slice(0, -1).join(', ') + ' and ' + xs[xs.length - 1];
+  return [...groups.values()].map(g => `<div class="warn">
+      ${g.tables.length > 1 ? 'Tables ' + esc(and(g.tables)) + ' are' : 'Table ' + esc(g.tables[0]) + ' is'} reserved and standing empty while
+      ${esc(g.who.join(' and '))} ${g.who.length > 1 ? 'have' : 'has'}
+      people waiting.
+      <div class="inline">${g.tables.map(t => `<button class="primary tiny" data-act="lend-table"
+        data-t="${t}">Share table ${esc(t)} for 1 game</button>`).join(' ')}</div></div>`).join('');
+}
+
+function cupProgress(cid) {
+  const f = S.formats.find(x => (x.cup_id || '') === (cid || '') && x.status !== 'setup')
+    || S.formats.find(x => (x.cup_id || '') === (cid || ''));
+  const b = (S.board || []).find(x => (x.cup_id || '') === (cid || ''));
+  const done = S.recent.filter(m => (m.cup_id || '') === (cid || '') && !(m.meta && m.meta.bye)).length;
+  const playing = S.tables.filter(t => t.match && (t.match.cup_id || '') === (cid || '')).length;
+  const open = !f || f.uses_queue || f.kind === 'open_play';
+  return { f, b, done, playing, total: open ? null : done + playing + (b ? b.fixtures : 0) };
+}
 
 function renderCupTabs() {
   const bar = $('cup-tabs');
-  if (!S.cups.length) { bar.hidden = true; return; }
+  if (!S.cups.length) { bar.hidden = true; selectedCup = ''; return; }
   if (selectedCup && !S.cups.some(c => c.id === selectedCup)) selectedCup = '';
-  bar.hidden = false;
-  bar.innerHTML = [['', 'All']].concat(S.cups.map(c => [c.id, c.name])).map(([id, name]) =>
-    `<button class="${selectedCup === id ? 'on' : ''}" data-cup="${id}">${esc(name)}</button>`
-  ).join('');
+  const n = S.cups.length;
+  // one cup: nothing to switch between, so no switch
+  bar.hidden = n < 2;
+  if (n < 2) { selectedCup = ''; return; }
+  bar.className = 'strip' + (n === 1 ? ' one' : n > 4 ? ' many' : '');
+  bar.style.setProperty('--n', n);
+  /* A switch, not a scoreboard: the cup's name, centred, and nothing else. The counts that used to sit here ("4 playing",
+     "9 up next", "22 / 23 played", the format, the tables) each already have
+     their place below, in the Tables header, Up next and the cup's own
+     column, so here they were only noise. The numbers stay in the tooltip. */
+  const tile = (id, name, frac, on, cls, tip) => `<button type="button" class="${cls || ''}${on ? ' on' : ''}"
+      data-cup="${esc(on && n > 1 ? '' : id)}" aria-pressed="${!!on}"${tip ? ` title="${esc(tip)}"` : ''}>
+      <span class="t"><span>${esc(name)}</span></span></button>`;
+  bar.innerHTML = (n > 1 ? tile('', 'Everyone', null, !selectedCup, 'all') : '')
+    + S.cups.map(c => {
+      const p = cupProgress(c.id);
+      const tip = p.total ? `${p.done} of ${p.total} played` : `${p.done} played · open play`;
+      return tile(c.id, c.name, p.total ? p.done / p.total : null, selectedCup === c.id || n === 1, '', tip);
+    }).join('');
 }
 
-/* -- tables ------------------------------------------------------------ */
+/* -- tables ------------------------------------------------------------
+
+   Every table is the table from Focus and the spectator view: painted red,
+   one side of the net per side of the match, the number on the net. On a
+   console that can score, each side carries its games as cells painted onto
+   it, so a result is typed the way it is read out — "eleven eight" — and the
+   winner of each game shows at a glance. Every live table is the same full
+   red: nothing is greyed while it is being played. Free, paused, and
+   reserved-but-finishing-another-cup's tables are dashed outlines. */
 
 function renderTables() {
   const all = S.tables;
@@ -243,64 +437,221 @@ function renderTables() {
   const vis = S._visibleTables = all.filter(t => t.match
     ? inView(t.match.cup_id) || (t.cup_id != null && inView(t.cup_id))
     : inView(t.cup_id));
+  const head = note => `<div class="h"><b>On the tables</b>${note ? `<span class="note micro">${esc(note)}</span>` : ''}</div>`;
   if (!all.length) {
     $('warn').innerHTML = '';
-    $('tables').innerHTML =
-      `<div class="table-card"><div class="empty-table">No tables yet.` +
-      (isAdmin() ? ' Add them in Setup.' : '') + `</div></div>`;
+    $('tables').innerHTML = head('') + `<p class="blank">No tables yet.${isAdmin() ? ' Add them in Setup.' : ''}</p>`;
     return;
   }
   if (!vis.length) {
     $('warn').innerHTML = '';
-    $('tables').innerHTML =
-      `<div class="table-card"><div class="empty-table">No tables reserved for this cup — they're all on the other side.</div></div>`;
+    $('tables').innerHTML = head('') +
+      `<p class="blank">No tables reserved for this cup — they're all on the other side.</p>`;
     return;
   }
   const notes = S.formats.filter(f => inView(f.cup_id))
     .flatMap(f => (f.warnings || []).map(w => [f, w]));
   const idle = (S.idle_tables || []).filter(w => inView(w.cup_id));
   $('warn').innerHTML = notes.map(([f, w]) => `<div class="warn">
-      ${esc(f.name)}: ${esc(w)}
+      <b>${esc(f.name)}</b> ${esc(w)}
       ${f.kind === 'swiss' && f.status === 'running' && f.phase !== 'ko'
         ? `<div class="inline"><button class="primary tiny" data-act="cut-ko"
              data-i="${f.id}">Cut to knockout now</button></div>` : ''}
     </div>`).join('')
-    + (idle.length ? idle.map(w => `<div class="warn">
-      Table ${w.table} is reserved and standing empty while
-      ${esc(w.waiting_for.join(' and '))} ${w.waiting_for.length > 1 ? 'have' : 'has'}
-      people waiting.
-      <div class="inline"><button class="primary tiny" data-act="lend-table"
-        data-t="${w.table}">Share table ${w.table} for 1 game</button></div>
-      </div>`).join('') : '');
-  $('tables').innerHTML = vis.map(t => {
-    const m = t.match;
-    const cls = ['table-card', m ? 'live' : '', t.paused ? 'paused' : ''].join(' ');
-    let body;
-    // Pausing only stops the dispatcher sending more work here; it does not
-    // stop the match already on the table. Hiding that match took the score
-    // pad and Put back with it, which is exactly the moment you reach for
-    // them: pause the table, put the match back, seat the one you want.
-    if (!m) {
-      body = `<div class="empty-table">${t.paused ? 'Paused' : 'Free'}</div>`;
-    } else if (!inView(m.cup_id)) {
-      // reserved for this cup, still finishing another cup's match
-      body = `<div class="empty-table">Finishing a ${esc(cupName(m.cup_id) || 'other')} match${
-        t.paused ? ' · paused' : ''}</div>`;
-    } else {
-      body = `<div class="match-label">${esc(m.label)}${
-        t.paused ? ' · paused' : ''}</div><div class="versus">
-        <div class="side"><span class="side-name">${esc(m.a)}</span></div>
-        <div class="vs">plays</div>
-        <div class="side"><span class="side-name">${esc(m.b)}</span></div>
-      </div>` + (canScore() ? scorePad(m) : bestOfLine(m));
-    }
-    return `<div class="${cls}">
-      <div class="table-head">
-        <span class="table-no">${t.number}</span>
-        <span class="table-name">${esc(t.name || ('Table ' + t.number))}</span>
-        ${isAdmin() ? `<button class="ghost tiny" data-act="pause" data-t="${t.number}">${t.paused ? 'Resume' : 'Pause'}</button>` : ''}
-      </div>${body}</div>`;
+    + idleNotes(idle);
+  const busy = vis.filter(t => t.match && inView(t.match.cup_id)).length;
+  const free = vis.filter(t => !t.match && !t.paused).length;
+  const paused = vis.filter(t => !t.match && t.paused).length;
+  const note = [busy ? `${busy} playing` : '', free ? `${free} free` : '', paused ? `${paused} on break` : '']
+    .filter(Boolean).join(' · ');
+  // more than four at once: smaller tables, same parts
+  $('tables').innerHTML = head(note) +
+    (isRef()
+      ? `<div class="tiles plain">${vis.map(t => swapTile(t, sheetTile(t))).join('')}</div>`
+      : `<div class="tiles${vis.length > 4 ? ' compact' : ''}${vis.length > 6 ? ' c3' : ''}${canScore() ? ' scoring' : ''}">${vis.map(t => swapTile(t, tile(t))).join('')}</div>`);
+}
+
+/* A game is over at 11 (or 21) by two, or past it by exactly two. */
+function gameOk(a, b, sc) {
+  const hi = Math.max(a, b), lo = Math.min(a, b), pts = sc.points_to || 11, by = sc.win_by || 2;
+  return hi >= pts && hi - lo >= by && (hi === pts || hi - lo === by);
+}
+
+/* The draft behind a table's cells: games typed so far, who leads, whether
+   it is decided, and one empty game more while it is not. The same rule
+   scorePad uses for the editor. */
+function draftOf(m) {
+  const s = m.scoring;
+  const need = Math.floor(s.best_of / 2) + 1;
+  const d = drafts[m.id] || (drafts[m.id] = [['', '']]);
+  let wa = 0, wb = 0, bad = false;
+  d.forEach(([a, b]) => {
+    if (a === '' || b === '') return;
+    if (!gameOk(+a, +b, s)) bad = true;
+    +a > +b ? wa++ : +b > +a ? wb++ : 0;
+  });
+  const decided = wa >= need || wb >= need;
+  const lastFilled = d.length && d[d.length - 1][0] !== '' && d[d.length - 1][1] !== '';
+  if (!decided && lastFilled && d.length < s.best_of) d.push(['', '']);
+  return { d, wa, wb, decided, bad, need };
+}
+
+/* The referee's table: the plain scoresheet from the first admin mockup.
+   The referee's one job is entering results, so the table is a card to fill
+   in rather than a picture of the room: the small painted table with its
+   number, what is being played and since when, then the two sides as rows
+   with a cell per game under G1 G2 G3. The cells are the same inputs as on
+   the painted tiles (same ids, same drafts), so nothing else changes. */
+const isRef = () => !!S && S.role === 'referee' && !PAST;
+function sheetTile(t) {
+  const m = t.match;
+  const custom = t.name && !/^Table\s+\d+$/.test(t.name) ? t.name : '';
+  const mt = off => `<span class="mt${off ? ' off' : ''}"><span>${t.number}</span></span>`;
+  if (!m || !inView(m.cup_id)) return `<div class="tile pcard off"><div class="top">${mt(true)}<span class="what"><b>${
+      !m ? (t.paused ? 'On break' : 'Free') : `Finishing a ${esc(cupName(m.cup_id) || 'other')} match`}</b>${
+      custom ? `<span class="micro">${esc(custom)}</span>` : ''}</span></div></div>`;
+  const st = draftOf(m), s = m.scoring;
+  const winner = st.decided ? (st.wa > st.wb ? 'a' : 'b') : '';
+  const what = [S.cups.length > 1 ? cupName(m.cup_id) : '', m.label].filter(Boolean).join(' · ');
+  const sub = [`Best of ${s.best_of} to ${s.points_to}`, m.started_ts ? 'since ' + hhmm(m.started_ts) : '', custom, t.paused ? 'table on break' : '']
+    .filter(Boolean).join(' · ');
+  const cells = side => st.d.map(([a, b], i) => {
+    const done = a !== '' && b !== '';
+    const ok = done && gameOk(+a, +b, s);
+    const won = ok && (side === 'a' ? +a > +b : +b > +a);
+    return `<input class="cell${won ? ' won' : ''}${done && !ok ? ' bad' : ''}" id="g-${m.id}-${i}-${side}"
+      data-g="${m.id}|${i}|${side === 'a' ? 0 : 1}" inputmode="numeric" maxlength="2"
+      value="${esc(side === 'a' ? a : b)}" aria-label="Game ${i + 1}, ${esc(side === 'a' ? m.a : m.b)}">`;
   }).join('');
+  const rq = m.meta && (m.meta.phase === 'open' || m.meta.queued);
+  const typed = st.d.some(g => g[0] !== '' || g[1] !== '');
+  return `<div class="tile pcard${winner ? ' decided' : ''}">
+    <div class="top">${mt(false)}<span class="what"><b>${esc(what || 'Match')}</b><span class="micro">${esc(sub)}</span></span></div>
+    <div class="sheet" style="--g:${st.d.length}"><span></span>${st.d.map((_, i) => `<span class="gh">G${i + 1}</span>`).join('')}
+      <span class="nm${winner === 'a' ? ' win' : ''}">${esc(nm(m.a))}</span>${cells('a')}
+      <span class="nm${winner === 'b' ? ' win' : ''}">${esc(nm(m.b))}</span>${cells('b')}</div>
+    ${st.bad ? `<div class="warn2">A game goes to ${s.points_to} and has to be won by ${s.win_by || 2}.</div>` : ''}
+    <div class="acts">
+      <button class="save${st.decided ? ' ready' : ''}" data-act="report" data-m="${m.id}" ${st.decided ? '' : 'disabled'}>${
+        st.decided ? `Save ${esc(nice(winner === 'a' ? m.a : m.b))} win <span class="ar">→</span>` : 'Save result'}</button>
+      ${rq ? `<label class="rq"><input type="checkbox" id="rq-${m.id}" ${(drafts['rq-' + m.id] !== false) ? 'checked' : ''} data-rq="${m.id}"> back in the queue</label>` : ''}
+      ${typed ? `<button class="link" data-act="clear" data-m="${m.id}">Clear</button>` : ''}
+    </div></div>`;
+}
+
+/* When a result is saved or a match put back, the table does what TTT
+   Admin showed: the match slides out, the table stands free for a moment
+   ("Seating the next match…"), and whoever the dispatcher seated slides in.
+   The server has already decided by the time the first frame is drawn; this
+   only lets the eye follow it. Re-renders during the swap (a poll, a
+   keystroke elsewhere) keep their place in the animation rather than
+   restarting it. */
+const swaps = {};                  // table number -> { phase, at, html }
+const SWAP = { leaving: 430, free: 650, arriving: 600 };
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+function freeTile(t) {
+  if (isRef()) return `<div class="tile pcard off"><div class="top"><span class="mt off"><span>${t.number}</span></span>
+    <span class="what"><b>Free</b><span class="micro">Seating the next match…</span></span></div></div>`;
+  return `<div class="tile"><div class="ptable off"><span class="skin"></span>
+    <div class="half a"><span class="lab">free</span></div><div class="net"><span class="no">${t.number}</span></div>
+    <div class="half b"><span class="lab">Seating the next match…</span></div></div></div>`;
+}
+function swapTile(t, html) {
+  const w = swaps[t.number];
+  const tag = h => h.replace(/^\s*<div class="tile/, `<div data-tno="${t.number}" class="tile`);
+  if (!w) return tag(html);
+  const late = `style="animation-delay:-${Math.min(Date.now() - w.at, 2000)}ms"`;
+  if (w.phase === 'leaving') return w.html.replace(/^\s*<div /, `<div ${late} `).replace('class="tile', 'class="tile leaving');
+  if (w.phase === 'free') return tag(freeTile(t));
+  return tag(html).replace(/^<div /, `<div ${late} `).replace('class="tile', 'class="tile arriving');
+}
+async function swapTable(n, run) {
+  const el = document.querySelector(`#tables [data-tno="${n}"]`);
+  if (el) swaps[n] = { phase: 'leaving', at: Date.now(), html: el.outerHTML };
+  renderTables();
+  const t0 = Date.now();
+  let out;
+  try { out = await run(); } catch (e) { out = null; }
+  if (!out) { delete swaps[n]; renderTables(); return out; }
+  await sleep(Math.max(0, SWAP.leaving - (Date.now() - t0)));
+  if (swaps[n]) { swaps[n] = { phase: 'free', at: Date.now() }; renderTables(); }
+  await sleep(SWAP.free);
+  if (swaps[n]) { swaps[n] = { phase: 'arriving', at: Date.now() }; renderTables(); }
+  setTimeout(() => { delete swaps[n]; renderTables(); }, SWAP.arriving);
+  return out;
+}
+// what is on a table now, for the toast
+function nowOn(n) {
+  const t = S.tables.find(x => x.number === n);
+  return t && t.match ? `Table ${n}: ${nm(t.match.a)} vs ${nm(t.match.b)} are on` : `Table ${n} is free`;
+}
+
+/* A side's names on the table face, as the phone page sets them: one
+   person as first name over last, a pair as two names with the ampersand
+   between them on its own line. */
+function face(name) {
+  const p = sidesOf(name);
+  if (p.length === 1) {
+    const w = p[0].split(/\s+/);
+    if (w.length > 1) return `<span>${esc(w[0])}</span><span>${esc(w.slice(1).join(' '))}</span>`;
+  }
+  return p.map(x => `<span>${esc(x)}</span>`).join('<span class="amp">&amp;</span>');
+}
+
+function tile(t) {
+  const m = t.match;
+  const custom = t.name && !/^Table\s+\d+$/.test(t.name) ? t.name : '';
+  const net = `<div class="net"><span class="no">${t.number}</span></div>`;
+  const pause = isAdmin() ? `<button class="link" data-act="pause" data-t="${t.number}">${t.paused ? 'Resume' : 'Pause'}</button>` : '';
+  const off = (top, bottom) => `<div class="tile"><div class="ptable off">
+      <span class="skin"></span>
+      <div class="half a"><span class="lab">${top}</span></div>${net}
+      <div class="half b"><span class="lab">${bottom}</span></div></div>
+      ${pause ? `<div class="acts">${pause}</div>` : ''}</div>`;
+  // Pausing only stops the dispatcher sending more work here; it does not
+  // stop the match already on the table. Hiding that match took the score
+  // pad and Put back with it, which is exactly the moment you reach for
+  // them: pause the table, put the match back, seat the one you want.
+  if (!m) return off(t.paused ? 'break' : 'free', custom ? esc(custom) : '');
+  if (!inView(m.cup_id)) return off(`finishing a ${esc(cupName(m.cup_id) || 'other')} match`, '');
+
+  const sc = canScore();
+  const st = sc ? draftOf(m) : null;
+  const showCup = S.cups.length > 1 && !selectedCup;
+  // what is being played: the cup in Everyone, the round in a cup — and,
+  // for whoever enters results, since when and the table's own name
+  const top = [showCup ? cupName(m.cup_id) : m.label, sc && m.started_ts ? 'since ' + hhmm(m.started_ts) : '',
+    sc ? custom : '', sc && t.paused ? 'table on break' : ''].filter(Boolean).map(esc).join(' · ');
+  const winner = st && st.decided ? (st.wa > st.wb ? 'a' : 'b') : '';
+  const cells = side => !sc ? '' : `<div class="cells">${st.d.map(([a, b], i) => {
+      const done = a !== '' && b !== '';
+      const ok = done && gameOk(+a, +b, m.scoring);
+      const won = ok && (side === 'a' ? +a > +b : +b > +a);
+      return `<input class="cell${won ? ' won' : ''}${done && !ok ? ' bad' : ''}" id="g-${m.id}-${i}-${side}"
+        data-g="${m.id}|${i}|${side === 'a' ? 0 : 1}" inputmode="numeric" maxlength="2" placeholder="–"
+        value="${esc(side === 'a' ? a : b)}" aria-label="Game ${i + 1}, ${esc(side === 'a' ? m.a : m.b)}">`;
+    }).join('')}</div>`;
+  const rq = m.meta && (m.meta.phase === 'open' || m.meta.queued);
+  const typed = st && st.d.some(g => g[0] !== '' || g[1] !== '');
+  const s = m.scoring;
+  return `<div class="tile${winner ? ' decided' : ''}"><div class="ptable">
+      <span class="skin"></span><span class="edge"></span><span class="cl"></span>
+      <div class="half a">${top ? `<span class="lab">${top}</span>` : ''}<span class="pn${winner === 'a' ? ' win' : ''}">${face(m.a)}</span>${cells('a')}</div>
+      ${net}
+      <div class="half b">${cells('b')}<span class="pn${winner === 'b' ? ' win' : ''}">${face(m.b)}</span>
+        ${sc ? `<span class="lab">Best of ${s.best_of} to ${s.points_to}</span>` : ''}</div>
+    </div>
+    ${st && st.bad ? `<div class="warn2">A game goes to ${s.points_to} and has to be won by ${s.win_by || 2}.</div>` : ''}
+    ${sc ? `<div class="acts">
+      <button class="save${st.decided ? ' ready' : ''}" data-act="report" data-m="${m.id}" ${st.decided ? '' : 'disabled'}>${
+        st.decided ? `Save ${esc(nice(winner === 'a' ? m.a : m.b))} win <span class="ar">→</span>` : 'Save result'}</button>
+      ${rq ? `<label class="rq"><input type="checkbox" id="rq-${m.id}" ${(drafts['rq-' + m.id] !== false) ? 'checked' : ''} data-rq="${m.id}"> back in the queue</label>` : ''}
+      ${typed ? `<button class="link" data-act="clear" data-m="${m.id}">Clear</button>` : ''}
+      ${isAdmin() && m.table ? `<button class="link" data-act="put-back" data-m="${m.id}"
+         title="Free this table and send the match to the back of the queue">Put back</button>` : ''}
+      ${pause}
+    </div>` : ''}
+  </div>`;
 }
 
 function bestOfLine(m) {
@@ -362,41 +713,207 @@ function cupName(id) {
   return c ? c.name : '';
 }
 
+/* Who plays next, in order. One row a match: position, the two sides, and
+   on the right either "Get ready" (the first wave) or nothing — the rough
+   time stays a quiet hint for whoever runs the night, never a promise on
+   the row. Seat now / Sit out / Enter result appear on hover. */
+/* An Up next row, as TTT Admin has it: the match the next table goes to is
+   marked Next in red; on any other, hovering shows what can be done with it
+   — Seat now (to the front of the line) and Sit out. Whoever only watches
+   sees Get ready, the players' word, and no actions. */
+function upTail(r) {
+  // the front of the line is Next, as are any that will go on as soon as a
+  // table frees (the board's on_deck); a pair still playing elsewhere is not
+  const next = !r.blocked && (r.on_deck || r.position === 1);
+  const acts = [
+    r.kind === 'fixture' && isAdmin() && !next
+      ? `<button class="link" data-act="seat" data-m="${r.id}">Seat now</button>` : '',
+    r.kind === 'waiting' && canScore()
+      ? `<button class="link" data-act="rest" data-e="${r.id}" data-n="${esc(nice(r.a))}">Sit out</button>` : '',
+    r.kind === 'fixture' && canScore()
+      ? `<button class="link" data-act="score" data-m="${r.id}">Enter result</button>` : '',
+  ].filter(Boolean).join('');
+  return `<span class="tail">
+      ${r.kind === 'pairing' && !(canScore() && next) ? `<span class="chip" title="Worked out by the same rule that will seat them">next</span>` : ''}
+      ${r.deferred > 0 ? `<span class="chip">put back</span>` : ''}
+      ${canScore() ? (next ? '<span class="tag-next">Next</span>' : '') : r.on_deck ? '<span class="ready">Get ready</span>' : ''}
+      ${acts ? `<span class="ac">${acts}</span>` : ''}
+    </span>`;
+}
+function boardRow(r) {
+  return `<div class="r hoverable ${r.on_deck ? 'ondeck' : ''}">
+    <span class="i">${String(r.position).padStart(2, '0')}</span>
+    <span class="nm">${esc(nice(r.a))}${r.b ? `<span class="v">vs ${esc(nice(r.b))}</span>` : '<span class="v">waiting for a match</span>'}</span>
+    ${upTail(r)}
+  </div>`;
+}
+
+let boardAll = false;
 function renderBoard() {
   const bs = (S.board || []).filter(b => inView(b.cup_id));
   if (!bs.length) { $('board').innerHTML = ''; return; }
   $('board').innerHTML = bs.map(b => {
     const name = cupName(b.cup_id);
-    const rows = b.up.map(r => `
-      <div class="row hoverable ${r.on_deck ? 'ondeck' : ''}">
-        <span class="pos">${r.position}</span>
-        <span class="nm">${esc(r.a)}${r.b ? ` — ${esc(r.b)}` : ''}</span>
-        ${r.kind === 'pairing' ? `<span class="chip next" title="Worked out by the same rule that will seat them">next</span>` : ''}
-        ${r.deferred ? `<span class="chip">put back</span>` : ''}
-        ${whenLabel(r) ? `<span class="chip when">${esc(whenLabel(r))}</span>` : ''}
-        ${r.kind === 'fixture' && canScore()
-          ? `<button class="ghost tiny on-hover" data-act="score" data-m="${r.id}">Enter result</button>` : ''}
-        ${r.kind === 'fixture' && isAdmin()
-          ? `<button class="ghost tiny on-hover" data-act="jump" data-m="${r.id}">Seat now</button>` : ''}
-        ${r.kind === 'waiting' && canScore()
-          ? `<button class="ghost tiny on-hover" data-act="rest" data-e="${r.id}">Sit out</button>` : ''}
-      </div>`).join('');
-    const more = b.total > b.up.length
-      ? `<div class="blank" style="padding:10px 15px">and ${b.total - b.up.length} more after that</div>` : '';
+    // a long queue is twelve rows and a button, so Standings and Results
+    // stay within reach; the rest unfolds on request
+    const shown = boardAll ? b.up : b.up.slice(0, LIST_ROWS);
+    const hidden = b.up.length - shown.length;
+    const more = hidden > 0 ? `<button class="link more" data-act="board-all">+ ${hidden} more</button>`
+      : boardAll && b.up.length > LIST_ROWS ? `<button class="link more" data-act="board-all">Show fewer</button>`
+      : b.total > b.up.length ? `<p class="blank">and ${b.total - b.up.length} more after that</p>` : '';
     const note = [
       b.fixtures ? b.fixtures + ' to play' : '',
       b.waiting ? b.waiting + ' waiting' : '',
       // the exact table is only picked the instant one frees up, so a cup
       // on the shared pool gets no number; its own tables are a promise
-      b.tables_label,
+      tablesLabelOf(b),
     ].filter(Boolean).join(' · ');
-    // v2: the chapter is "Up next"; the cup name only when several share the view
     return `<div class="panel">
-      <div class="panel-head"><h2>Up next${bs.length > 1 && name ? ' — ' + esc(name) : ''}</h2>
-        <span class="note">${esc(note)}</span></div>
-      <div class="panel-body flush">${rows || '<div class="blank" style="padding:12px 15px">Nothing queued.</div>'}${more}</div>
+      <div class="panel-head"><h2>Up next${bs.length > 1 && name ? ' · ' + esc(name) : ''}</h2>
+        <span class="note micro">${esc(note)}</span></div>
+      <div class="panel-body flush"><div class="list">${shown.map(boardRow).join('') || '<p class="blank">Nothing queued.</p>'}</div>${more}</div>
     </div>`;
   }).join('');
+}
+
+/* -- below the tables ----------------------------------------------------
+
+   One cup in view: three chapters side by side — Up next, Standings (and the
+   knockout), Results. Everyone, with several cups: one column per cup with
+   the same blocks and the same row counts (three up next, four in the
+   table), so the cups line up and can be compared at a glance; "Open →"
+   switches the view to that cup. Results run underneath, across all cups. */
+
+function renderBelow() {
+  const many = S.cups.length > 1 && !selectedCup;
+  document.querySelector('.cols').classList.toggle('bycup-mode', many);
+  if (!many) {
+    $('bycup').innerHTML = '';
+    renderBoard(); renderStandings(); renderBrackets();
+    return;
+  }
+  ['board', 'standings', 'brackets'].forEach(id => { $(id).innerHTML = ''; });
+  $('bycup').innerHTML = `<div class="bycup" style="--n:${S.cups.length}">${S.cups.map(cupColumn).join('')}</div>`;
+}
+
+/* For the referee everything below the tables is a folded row, opened on
+   demand — the phone page's fold (title, a short note, +). The sections'
+   own containers move into the folds once, so every partial re-render keeps
+   landing in the right place and an open fold stays open. */
+let refBuilt = false;
+function refShell() {
+  if (refBuilt || !isRef()) return;
+  refBuilt = true;
+  document.body.classList.add('ref');
+  const cols = document.querySelector('.cols');
+  const mk = (key, title, ids) => {
+    const d = document.createElement('details');
+    d.className = 'fold'; d.id = 'fold-' + key;
+    d.innerHTML = `<summary><b>${esc(title)}</b><span><em class="fnote"></em><i aria-hidden="true">+</i></span></summary><div class="in"></div>`;
+    ids.forEach(id => d.querySelector('.in').appendChild($(id)));
+    cols.appendChild(d);
+  };
+  mk('board', 'Up next', ['board']);
+  mk('ko', 'Knockout', ['brackets']);
+  mk('stand', 'Standings', ['standings']);
+  mk('recent', 'Results', ['manual-entry', 'recent']);
+  cols.querySelectorAll(':scope > .col').forEach(c => c.remove());
+}
+function refFolds() {
+  if (!isRef()) return;
+  const set = (key, note, show) => {
+    const d = $('fold-' + key); if (!d) return;
+    d.hidden = !show; d.querySelector('.fnote').textContent = note || '';
+  };
+  const filled = id => !!$(id) && $(id).innerHTML.trim() !== '';
+  const bs = (S.board || []).filter(b => inView(b.cup_id));
+  const next = bs.flatMap(b => b.up)[0];
+  set('board', next ? (next.b ? `${nice(next.a)} vs ${nice(next.b)}` : nice(next.a)) : 'nothing queued', filled('board'));
+  const fs = S.formats.filter(f => inView(f.cup_id));
+  const br = fs.map(f => f.view && f.view.bracket).find(Boolean);
+  const rd = br && (br.find(r => r.matches.some(m => !m.winner)) || br[br.length - 1]);
+  set('ko', rd ? rd.name : '', filled('brackets'));
+  const lead = fs.map(f => (f.standings || []).find(g => g.rows.some(r => r.played))).find(Boolean);
+  set('stand', lead && lead.rows[0] ? `${nice(lead.rows[0].name)} leads` : '', filled('standings'));
+  const last = S.recent.find(m => inView(m.cup_id) && !(m.meta && m.meta.bye));
+  set('recent', last ? `${nice(last.winner === 'a' ? last.a : last.b)} beat ${nice(last.winner === 'a' ? last.b : last.a)}` : '', filled('recent') || filled('manual-entry'));
+}
+
+/* A cup's column in Everyone. One skeleton for every cup, so the columns
+   read across as well as down: the cup's name (the anchor) with Open →, then
+   two blocks, each a small heading in ink on the ink rule — Up next, then
+   the standings — and each block a fixed number of slots (three, four), so
+   the second block starts at the same height in every column whatever is in
+   the first. Anything extra sits on the heading's line, never between rows:
+   "+ 4 more" beside Up next, the column labels beside the standings. Empty
+   slots stay empty; there are no placeholder dashes. */
+function cupColumn(c) {
+  const p = cupProgress(c.id);
+  const b = p.b;
+  const rows = b ? b.up.slice(0, 3) : [];
+  const rest = b ? b.total - rows.length : 0;
+  const f = p.f;
+  const body = `<section class="cupcol">
+    <header class="ch"><b>${esc(c.name)}</b><button class="link" data-cup="${c.id}">Open →</button></header>
+    <div class="blk">
+      <div class="bh"><span class="bt">Up next</span>${rest > 0 ? `<button class="link" data-cup="${c.id}">+ ${rest} more</button>` : ''}</div>
+      <div class="list slots3">${rows.map(r => `<div class="r hoverable${r.on_deck ? ' ondeck' : ''}">
+          <span class="i">${String(r.position).padStart(2, '0')}</span>
+          <span class="nm">${esc(nice(r.a))}<span class="v">${r.b ? 'vs ' + esc(nice(r.b)) : 'waiting for a match'}</span></span>
+          ${upTail(r)}</div>`).join('') || `<p class="blank">${f && f.complete ? 'All played.' : 'Nothing queued.'}</p>`}</div>
+    </div>
+    <div class="blk">${standTop(f)}</div>
+  </section>`;
+  if (!isRef()) return body;
+  const k = 'ref_cup_' + c.id, nx = rows[0];
+  return `<details class="fold" data-keep="${k}"${form[k] ? ' open' : ''}><summary><b>${esc(c.name)}</b><span><em class="fnote">${
+    esc(nx ? (nx.b ? `${nice(nx.a)} vs ${nice(nx.b)}` : nice(nx.a)) : 'nothing queued')}</em><i aria-hidden="true">+</i></span></summary><div class="in">${body}</div></details>`;
+}
+
+/* The second block: at most four one-line rows, whatever the format —
+   groups: who is through so far (A1, A2, B1, B2); Swiss: the top four;
+   open play: wins tonight; a knockout: the round being played, a match a
+   line, its table or its score on the right. */
+function standTop(f) {
+  const head = (lbl, cols) => `<div class="bh sth"><span class="bt">${esc(lbl)}</span>${
+    cols ? cols.map(x => `<span class="hc">${x}</span>`).join('') : ''}</div>`;
+  const row = (pos, r, cls, c2) => `<div class="st ${cls || ''}"><span class="pos">${esc(pos)}</span><span>${esc(nice(r.name))}</span>
+    <span>${r.won}</span><span>${c2}</span><span>${r.point_diff > 0 ? '+' : ''}${r.point_diff ?? ''}</span></div>`;
+  const slots = inner => `<div class="slots4">${inner}</div>`;
+  if (!f || f.status === 'setup') return head('Standings') + slots('<p class="blank">Not started.</p>');
+  const br = f.view && f.view.bracket;
+  if (br) {
+    const rd = br.find(r => r.matches.some(m => !m.winner)) || br[br.length - 1];
+    // a match as Up next draws one — side over side — so a narrow column
+    // never cuts both names short; its table or its score on the right
+    return head('Knockout · ' + rd.name) + slots(`<div class="list">${rd.matches.slice(0, 4).map(m => {
+      const nmOf = n => n ? esc(nice(n)) : 'to be decided';
+      const [ga, gb] = (m.games || []).reduce(([x, y], [p, q]) => [x + (p > q), y + (q > p)], [0, 0]);
+      const aW = m.winner === 'a';
+      const top = m.winner ? (aW ? m.a : m.b) : m.a, bot = m.winner ? (aW ? m.b : m.a) : m.b;
+      const tag = m.winner ? `<b class="ks">${aW ? ga + ':' + gb : gb + ':' + ga}</b>` : m.table ? `<span class="tagt">Table ${m.table}</span>` : '';
+      return `<div class="r kr${m.winner ? ' done' : ''}"><span class="i"></span>
+        <span class="nm">${nmOf(top)}<span class="v">${m.winner ? 'beat ' : 'vs '}${nmOf(bot)}</span></span><span class="tail">${tag}</span></div>`;
+    }).join('')}</div>`);
+  }
+  const groups = (f.standings || []).filter(g => g.rows.length);
+  const label = f.kind === 'open_play' ? 'Wins tonight' : groups.length > 1 ? 'Through so far' : 'Standings';
+  const c2 = f.kind === 'swiss' ? 'Bh' : 'L';
+  if (!groups.length || !groups.some(g => g.rows.some(r => r.played))) return head(label) + slots('<p class="blank">Nothing played yet.</p>');
+  let rows;
+  if (f.kind === 'open_play') {
+    rows = groups[0].rows.slice().sort((a, b) => b.won - a.won || a.lost - b.lost).slice(0, 4).map((r, i) => row(i + 1, r, '', r.lost));
+  } else if (f.kind === 'swiss') {
+    rows = groups[0].rows.slice(0, 4).map(r => row(r.rank, r, '', r.buchholz ?? 0));
+  } else if (groups.length > 1) {
+    const adv = +(f.config.advance_per_group || 2);
+    const per = Math.max(1, Math.floor(4 / groups.length));
+    rows = groups.flatMap(g => g.rows.slice(0, Math.min(adv, per)).map(r =>
+      row(String(g.group).replace(/^Group\s+/, '') + r.rank, r, 'q', r.lost))).slice(0, 4);
+  } else {
+    rows = groups[0].rows.slice(0, 4).map(r => row(r.rank, r, '', r.lost));
+  }
+  return head(label, ['W', c2, '±']) + slots(rows.join(''));
 }
 
 /* -- one score editor, for entering, correcting and undoing ------------- */
@@ -520,62 +1037,133 @@ function renderManual() {
 
 /* -- standings --------------------------------------------------------- */
 
+/* Standings, as the phone page has them: per group a small heading (with
+   how many go through), W · L · ± (W · Bh · ± in a Swiss), pairs by first
+   names, the places that go through with their number in ink and a dotted
+   line under the last of them — kept once the knockout is drawn, as the
+   record of who went through. A long table shows ten, then the rest. */
+let standAll = {};
 function renderStandings() {
   const blocks = [];
   for (const f of S.formats) {
     if (!inView(f.cup_id)) continue;
     if (!f.standings || !f.standings.length) continue;
-    const adv = f.kind === 'groups' && f.config.then_ko
-      ? +(f.config.advance_per_group || 2) : 0;
+    const adv = f.kind === 'groups' && f.config.then_ko ? +(f.config.advance_per_group || 2) : 0;
     const swiss = f.kind === 'swiss';
-    const groups = f.standings.filter(g => g.rows.length);
+    const open = f.kind === 'open_play';
+    const groups = f.standings.filter(g => g.rows.length && g.rows.some(r => r.played));
     if (!groups.length) continue;
     const many = groups.length > 1;
-    // v2: one "Standings" chapter per format; groups become sub-heads inside it.
-    // .opt columns (P, Games) drop on phones; .w is the column that ranks.
+    // the column labels ride in the chapter's head, on the title's baseline,
+    // so the ink rule under every chapter sits at the same height and the
+    // first rows of Up next, Standings and Results line up across the page
     blocks.push(`<div class="panel">
-      <div class="panel-head"><h2>Standings</h2>
-        <span class="note">${esc(f.name)}</span></div>
-      <div class="panel-body">${groups.map(g => `
-        ${many ? `<h3 class="ghead">${esc(g.group)}</h3>` : ''}
-        <table class="grid">
-          <tr><th></th><th>Entrant</th><th class="n opt">P</th><th class="n">W</th>
-            ${swiss ? '<th class="n">Buch</th>' : ''}
-            <th class="n opt">Games</th><th class="n">±</th></tr>
-          ${g.rows.map(r => `<tr class="${adv && r.rank <= adv ? 'qualified' : ''}">
-            <td>${r.rank}</td><td>${esc(r.name)}</td>
-            <td class="n opt">${r.played}</td><td class="n w">${r.won}</td>
-            ${swiss ? `<td class="n">${r.buchholz ?? 0}</td>` : ''}
-            <td class="n opt">${r.games}</td><td class="n">${r.point_diff > 0 ? '+' : ''}${r.point_diff}</td>
-          </tr>`).join('')}
-        </table>`).join('')}</div></div>`);
+      <div class="panel-head sth"><h2>${open ? 'Wins tonight' : 'Standings'}</h2><span class="ch">W</span><span class="ch">${swiss ? 'Bh' : 'L'}</span><span class="ch">±</span></div>
+      <div class="panel-body">${groups.map(g => {
+        const rows = open ? g.rows.slice().sort((a, b) => b.won - a.won || a.lost - b.lost) : g.rows;
+        const key = f.id + '|' + g.group, all = standAll[key];
+        const more = rows.length > TABLE_ROWS
+          ? `<button class="link more" data-act="st-all" data-k="${esc(key)}">${all ? 'Show fewer' : `+ ${rows.length - TABLE_ROWS} more`}</button>` : '';
+        return `${many || adv ? `<div class="grp micro">${esc(g.group)}${adv ? ` · Top ${adv} go through` : ''}</div>` : ''}${
+          rows.slice(0, all ? rows.length : TABLE_ROWS).map((r, i) => {
+            const rank = open ? i + 1 : r.rank;
+            return `<div class="st${adv && rank <= adv ? ' q' : ''}${adv && rank === adv ? ' cut' : ''}">
+              <span class="pos">${rank}</span><span>${esc(nice(r.name))}</span><span>${r.won}</span>
+              <span>${swiss ? (r.buchholz ?? 0) : r.lost}</span><span>${r.point_diff > 0 ? '+' : ''}${r.point_diff ?? ''}</span></div>`;
+          }).join('')}${more}`; }).join('')}</div></div>`);
   }
   $('standings').innerHTML = blocks.join('');
 }
 
-/* -- bracket ----------------------------------------------------------- */
+/* -- the knockout, as a tree ---------------------------------------------
+
+   Rounds left to right, each match level with the two that feed it, thin
+   ink brackets joining them; the match being played carries its table, the
+   winner is named under the final, the match for third sits underneath.
+   Placed by bracket slot (slot i feeds slot i>>1), so a match fed by a bye
+   just takes the next free row. Wider than its column it scrolls sideways,
+   opened at the round being played. Same rules as mobile.js koBlock. */
+
+const KO = { mh: 50, gap: 12, cg: 18, top: 22 };   // as mobile.js
+function koTree(rounds, width) {
+  const fi = rounds.findIndex(rd => rd.matches.length === 1);
+  const tree = fi < 0 ? rounds : rounds.slice(0, fi + 1), extra = fi < 0 ? [] : rounds.slice(fi + 1);
+  const R = tree.length;
+  const { mh, gap, cg, top } = KO;
+  let cw = Math.floor((width - (R - 1) * cg) / R);
+  const wide = cw < 150;
+  if (wide) cw = 170;
+  cw = Math.min(cw, 240);
+  const slotOf = (m, i) => m.slot ?? i;
+  const bySlot = tree.map(rd => new Map(rd.matches.map((m, i) => [slotOf(m, i), m])));
+  const Y = tree.map(() => new Map());
+  let rows = 0;
+  const place = (r, sl) => {
+    if (!bySlot[r].has(sl)) return null;
+    const kids = r > 0 ? [place(r - 1, 2 * sl), place(r - 1, 2 * sl + 1)].filter(v => v != null) : [];
+    const y = kids.length ? kids.reduce((a, b) => a + b, 0) / kids.length : top + (rows++) * (mh + gap) + mh / 2;
+    Y[r].set(sl, y);
+    return y;
+  };
+  tree[R - 1].matches.forEach((m, i) => place(R - 1, slotOf(m, i)));
+  tree.forEach((rd, r) => rd.matches.forEach((m, i) => {
+    if (!Y[r].has(slotOf(m, i))) Y[r].set(slotOf(m, i), top + (rows++) * (mh + gap) + mh / 2);
+  }));
+  const fin = tree[R - 1].matches.length === 1 ? tree[R - 1].matches[0] : null;
+  const champ = fin && fin.winner ? (fin.winner === 'a' ? fin.a : fin.b) : null;
+  let H = top + rows * (mh + gap) - gap;
+  if (champ) H = Math.max(H, Y[R - 1].get(slotOf(fin, 0)) + mh / 2 + 62);
+  const Wt = R * cw + (R - 1) * cg;
+  const x = r => r * (cw + cg);
+  const lines = [];
+  for (let r = 1; r < R; r++) tree[r].matches.forEach((m, i) => {
+    const sl = slotOf(m, i);
+    [2 * sl, 2 * sl + 1].forEach(k => {
+      const f = bySlot[r - 1].get(k);
+      if (!f) return;
+      const x1 = x(r - 1) + cw, xm = x1 + cg / 2;
+      lines.push(`<path class="${f.winner ? 'done' : ''}" d="M${x1} ${Y[r - 1].get(k)}H${xm}V${Y[r].get(sl)}H${x(r)}"/>`);
+    });
+  });
+  const card = (m, style) => {
+    const live = m.table && !m.winner;
+    const open = !m.a || !m.b;
+    const sd = (n, which) => {
+      if (!n) return `<div class="s tbd"><span>${m.winner ? 'bye' : 'to be decided'}</span><b></b></div>`;
+      const cls = m.winner ? (m.winner === which ? ' w' : ' l') : '';
+      const g = m.games && m.games.length ? m.games.filter(x => which === 'a' ? x[0] > x[1] : x[1] > x[0]).length : '';
+      return `<div class="s${cls}"><span>${esc(nice(n))}</span><b>${g}</b></div>`;
+    };
+    return `<div class="kc${live ? ' live' : ''}${open && !m.winner ? ' tbd' : ''}"${style ? ` style="${style}"` : ''}>${sd(m.a, 'a')}${sd(m.b, 'b')}${
+      live ? `<i class="kl">Table ${m.table}</i>` : ''}${
+      canScore() && m.winner && m.id ? `<button class="link on-hover ked" data-act="edit" data-m="${m.id}">Edit</button>` : ''}</div>`;
+  };
+  const at = Math.max(0, tree.findIndex(rd => rd.matches.some(m => !m.winner)));
+  return `<div class="ko${wide ? ' wide' : ''}" data-at="${at * (cw + cg)}"><div class="kt" style="width:${Wt}px;height:${H}px">
+      <svg width="${Wt}" height="${H}" aria-hidden="true">${lines.join('')}</svg>
+      ${tree.map((rd, r) => `<span class="kh" style="left:${x(r)}px;width:${cw}px">${esc(rd.name)}</span>`).join('')}
+      ${tree.map((rd, r) => rd.matches.map((m, i) => card(m, `left:${x(r)}px;top:${Y[r].get(slotOf(m, i)) - mh / 2}px;width:${cw}px`)).join('')).join('')}
+      ${champ ? `<div class="kw" style="left:${x(R - 1)}px;top:${Y[R - 1].get(slotOf(fin, 0)) + mh / 2 + 12}px;width:${cw}px">
+        <span>Winner</span><b>${esc(nice(champ))}</b></div>` : ''}
+    </div></div>${extra.map(rd => `<div class="ko-x"><span class="kh">${esc(rd.name)}</span>${
+      rd.matches.map(m => card(m, `width:${cw}px`)).join('')}</div>`).join('')}`;
+}
 
 function renderBrackets() {
+  const box = $('brackets');
   const out = [];
+  const width = Math.max(260, (box.clientWidth || box.parentElement.clientWidth || 360));
   for (const f of S.formats) {
     if (!inView(f.cup_id)) continue;
     const b = f.view && f.view.bracket;
-    if (!b) continue;
+    if (!b || !b.length) continue;
     out.push(`<div class="panel">
-      <div class="panel-head"><h2>Knockout</h2><span class="note">${esc(f.name)}</span></div>
-      <div class="bracket">${b.map(r => `
-        <div class="bround"><h3>${esc(r.name)}</h3>${r.matches.map(m => {
-          const side = (nm, which) => {
-            if (!nm) return `<div><span class="tbd">to be decided</span></div>`;
-            const cl = m.winner ? (m.winner === which ? 'won' : 'lost') : '';
-            const g = m.games && m.games.length
-              ? m.games.filter(x => which === 'a' ? x[0] > x[1] : x[1] > x[0]).length : '';
-            return `<div><span class="${cl}">${esc(nm)}</span><span class="${cl}">${g}</span></div>`;
-          };
-          return `<div class="bmatch ${m.table ? 'live' : ''}">${side(m.a, 'a')}${side(m.b, 'b')}</div>`;
-        }).join('')}</div>`).join('')}</div></div>`);
+      <div class="panel-head"><h2>Knockout</h2></div>
+      <div class="panel-body">${koTree(b, width)}</div></div>`);
   }
-  $('brackets').innerHTML = out.join('');
+  box.innerHTML = out.join('');
+  // a bracket wider than its column opens at the round being played
+  box.querySelectorAll('.ko.wide').forEach(k => { k.scrollLeft = +k.dataset.at || 0; });
 }
 
 /* -- recent ------------------------------------------------------------ */
@@ -583,7 +1171,7 @@ function renderBrackets() {
 /* The server sends every result; the wall only needs the latest few. The
    rest stay one click away, and the search reaches any of them by name, so
    a score entered wrong an hour ago can still be found and put right. */
-const RECENT_SHOWN = 15;
+const RECENT_SHOWN = LIST_ROWS;     // the latest five; everything else is one click away
 
 function renderRecent() {
   const all = S.recent.filter(m => inView(m.cup_id));
@@ -597,41 +1185,37 @@ function renderRecent() {
   // a poll re-renders this panel; keep the search box focused through it
   const had = document.activeElement && document.activeElement.id === 'recent-q';
   const caret = had ? document.activeElement.selectionStart : 0;
+  // the search only appears once the list is opened up: five rows need no
+  // search, and a box in the header was furniture the rest of the time
+  const open = recentAll || !!q;
   $('recent').innerHTML = `<div class="panel">
     <div class="panel-head"><h2>Results</h2>
-      <span class="note">${all.length ? all.length + ' played' : ''}</span>
-      ${all.length > RECENT_SHOWN ? `<input id="recent-q" type="search" placeholder="Find a player"
-        value="${esc(recentQuery)}" style="max-width:150px">` : ''}
-      ${canAdd ? `<button class="ghost tiny" data-act="manual-open"
-        title="For a game nobody arranged — a walk-up match, or one played before anyone was keeping track">Add a result</button>` : ''}</div>
-    <div class="panel-body flush">${all.length ? '' : '<div class="blank" style="padding:12px 15px">Nothing played yet.</div>'}${
-      all.length && !hits.length ? '<div class="blank" style="padding:12px 15px">No result with that name.</div>' : ''}${r.map(m => {
-      // A bye has one side and no winner, so the winner/loser layout below
-      // reads it backwards — "— beat Jana Berger", on the wall, all evening.
-      if (m.meta && m.meta.bye) return `<div class="row result">
-        <span class="rw">${esc(m.a)}</span><span class="rs"></span>
-        <span class="rl"></span><span class="rs l"></span>
-        <span class="rmeta">${esc(m.label || 'bye')}</span></div>`;
-      // v2: winner + games won, loser + games won, then label and game scores
-      const sc = m.games.map(g => `${g[0]}-${g[1]}`).join(', ');
-      const aWon = m.games.filter(g => g[0] > g[1]).length;
-      const bWon = m.games.filter(g => g[1] > g[0]).length;
-      const aWins = m.winner === 'a';
-      const w = aWins ? m.a : m.b, l = aWins ? m.b : m.a;
-      const ws = m.games.length ? (aWins ? aWon : bWon) : '';
-      const ls = m.games.length ? (aWins ? bWon : aWon) : '';
-      const meta = [m.label, m.meta && m.meta.walkover ? 'walkover' : sc]
-        .filter(Boolean).join(' · ');
-      return `<div class="row hoverable result">
-        <span class="rw">${esc(w)}</span><span class="rs">${ws}</span>
-        <span class="rl">${esc(l)}</span><span class="rs l">${ls}</span>
-        ${meta ? `<span class="rmeta">${esc(meta)}</span>` : ''}
-        ${canScore() ? `<button class="ghost tiny on-hover" data-act="edit" data-m="${m.id}">Edit result</button>` : ''}
+      ${canAdd ? `<button class="link" data-act="manual-open"
+        title="For a game nobody arranged — a walk-up match, or one played before anyone was keeping track">+ Add a result</button>` : ''}</div>
+    ${open && all.length > RECENT_SHOWN ? `<label class="find-res"><span aria-hidden="true">⌕</span><input id="recent-q" type="search"
+        placeholder="Find a player" aria-label="Find a player in the results" value="${esc(recentQuery)}" autocomplete="off"></label>` : ''}
+    <div class="panel-body flush">${all.length ? '' : '<p class="blank">Nothing played yet.</p>'}${
+      all.length && !hits.length ? '<p class="blank">No result with that name.</p>' : ''}${r.map(m => {
+      // as the phone page has it: "Winner beat Loser", the games won, and
+      // under it the cup, the round and the games from the winner's side
+      const meta = m.meta || {};
+      const showCup = S.cups.length > 1 && !selectedCup;
+      const lb = m.label && m.label.toLowerCase() !== (cupName(m.cup_id) || '').toLowerCase() ? m.label : '';
+      if (meta.bye) return `<div class="row result"><span class="rt"><span class="w">${esc(nice(m.a))}</span>
+        <span class="meta">${esc([showCup ? cupName(m.cup_id) : '', m.label || 'bye'].filter(Boolean).join(' · '))}</span></span><span class="s"></span></div>`;
+      const aW = m.winner === 'a';
+      const [sa, sb] = (m.games || []).reduce(([x, y], [p, q]) => [x + (p > q), y + (q > p)], [0, 0]);
+      const sc = meta.walkover ? 'walkover' : (m.games || []).map(g => aW ? `${g[0]}:${g[1]}` : `${g[1]}:${g[0]}`).join(' ');
+      const where = [showCup ? cupName(m.cup_id) : '', lb, sc].filter(Boolean).join(' · ');
+      return `<div class="row hoverable result"><span class="rt"><span class="w">${esc(nice(aW ? m.a : m.b))}</span>
+        <span class="l">beat ${esc(nice(aW ? m.b : m.a))}</span><span class="meta">${esc(where)}</span></span>
+        <span class="s">${meta.walkover ? '' : (aW ? `${sa}:${sb}` : `${sb}:${sa}`)}</span>
+        ${canScore() ? `<button class="link on-hover" data-act="edit" data-m="${m.id}">Edit result</button>` : ''}
       </div>`;
-    }).join('')}${hidden > 0
-      ? `<div class="row"><button class="ghost tiny" data-act="recent-all">Show all ${hits.length} results</button></div>`
+    }).join('')}</div>${hidden > 0
+      ? `<button class="link more" data-act="recent-all">Show all ${hits.length}</button>`
       : recentAll && !q && all.length > RECENT_SHOWN
-        ? `<div class="row"><button class="ghost tiny" data-act="recent-all">Show only the latest ${RECENT_SHOWN}</button></div>` : ''}</div></div>`;
+        ? `<button class="link more" data-act="recent-all">Show fewer</button>` : ''}</div>`;
   if (had) {
     const back = $('recent-q');
     if (back) { back.focus(); try { back.setSelectionRange(caret, caret); } catch (x) { } }
@@ -655,14 +1239,13 @@ function renderRecent() {
 
 /* Chat only exists once a Telegram bot is connected: an optional layer
    stays out of sight until it is switched on. */
-const sheetTabs = () => [['door', 'Door'], ['event', 'Event']]
+const sheetTabs = () => [['event', 'Event'], ['door', 'At the door']]
   .concat(tgOn() ? [['chat', 'Chat']] : [])
   .concat([['links', 'Links'], ['more', 'More']]);
 
-/* Before the doors the job is setting the thing up; after them it is
-   letting people in. Open on whichever that is. */
-const defaultTab = () =>
-  (S && (S.phase === 'announced' || S.phase === 'registration')) ? 'event' : 'door';
+/* Setup always opens on Event, the first page. Letting people in has its
+   own mode (Door), so the door page here is only the count and the list. */
+const defaultTab = () => 'event';
 
 let sheetTabSet = false;
 
@@ -682,11 +1265,21 @@ function renderSheet() {
   // this the sheet jumps back to the top under whoever is reading it
   const body = $('sheet-body');
   const top = body.scrollTop;
-  body.innerHTML = ({
+  const [h1, lede] = TAB_HEAD[sheetTab] || TAB_HEAD.event;
+  body.innerHTML = `<header class="page-head"><h1>${esc(h1)}</h1><p class="lede">${esc(lede)}</p></header>` + ({
     door: tabDoor, event: tabEvent, chat: tabChat, links: tabLinks, more: tabMore,
-  }[sheetTab] || tabDoor)();
+  }[sheetTab] || tabEvent)();
   body.scrollTop = top;
 }
+
+/* What each page of Setup is for, in one line under its title. */
+const TAB_HEAD = {
+  door: ['At the door', 'Who is expected, who is here. The desk is where check-in happens; this is the count and the roster as a list.'],
+  event: ['Event', 'What the landing page shows, the cups and their draws, the tables, and the next event.'],
+  chat: ['Chat', 'Write to tonight’s players or everyone following, and read what they write back.'],
+  links: ['Links & posters', 'One link per job, no accounts. Hand out the referee one at the tables; keep this one to yourself.'],
+  more: ['More', 'The club directory, past events, the log you can rewind, and a sandbox to rehearse in.'],
+};
 
 /* ------------------------------------------------------------ small parts */
 
@@ -796,9 +1389,7 @@ function openWizard() {
       ? S.tables.map(t => ({ name: t.name, cup: S.cups.findIndex(c => c.id === t.cup_id) }))
       : [1, 2, 3].map(n => ({ name: 'Table ' + n, cup: -1 })),
   };
-  sheetOpen = true;
-  $('sheet').hidden = false;
-  renderSheet();
+  setMode('setup');
 }
 
 function wizCarried() {
@@ -810,7 +1401,7 @@ function renderWizard() {
     `<button class="${wiz.step === i ? 'on' : ''}" data-wstep="${i}">${i + 1}. ${l}</button>`).join('');
   const body = $('sheet-body');
   const top = body.scrollTop;
-  body.innerHTML =
+  body.innerHTML = `<header class="page-head"><h1>New event</h1><p class="lede">Step ${wiz.step + 1} of ${WIZ_STEPS.length}. Nothing changes until you create it on the last step.</p></header>` +
     [wizEvent, wizCups, wizTables, wizReview][wiz.step]() + wizNav();
   body.scrollTop = top;
 }
@@ -918,26 +1509,23 @@ function wizCups() {
 
 function wizTables() {
   const many = wiz.cups.length > 1;
-  const cols = many ? '28px 1fr 160px auto' : '28px 1fr auto';
+  const cell = (t, i) => `<div class="tcell">
+      <span class="mt" aria-hidden="true"><span>${i + 1}</span></span>
+      <input id="wt-name-${i}" class="tname" value="${esc(t.name)}" data-wt="${i}|name"
+        aria-label="Name of table ${i + 1}" placeholder="Table ${i + 1}">
+      ${many ? `<select id="wt-cup-${i}" class="tcup" data-wt="${i}|cup" aria-label="Table ${i + 1} goes to">
+        <option value="-1" ${t.cup < 0 ? 'selected' : ''}>Shared</option>
+        ${wiz.cups.map((c, ci) =>
+          `<option value="${ci}" ${t.cup === ci ? 'selected' : ''}>${
+            esc(c.name || 'Cup ' + (ci + 1))}</option>`).join('')}
+      </select>` : ''}
+      <span class="tacts"><button class="link" data-act="wiz-rm-table" data-i="${i}">Remove</button></span>
+    </div>`;
   return `<div class="form">
     ${sec('Tables')}
-    ${wiz.tables.length ? `<div class="rows">
-      <div class="hrow" style="--cols:${cols}"><span>#</span><span>Name</span>${
-        many ? '<span>Cup</span>' : ''}<span></span></div>
-      ${wiz.tables.map((t, i) => `<div class="drow" style="--cols:${cols}">
-        <span class="num">${i + 1}</span>
-        <input id="wt-name-${i}" value="${esc(t.name)}" data-wt="${i}|name">
-        ${many ? `<select id="wt-cup-${i}" data-wt="${i}|cup">
-          <option value="-1" ${t.cup < 0 ? 'selected' : ''}>Shared</option>
-          ${wiz.cups.map((c, ci) =>
-            `<option value="${ci}" ${t.cup === ci ? 'selected' : ''}>${
-              esc(c.name || 'Cup ' + (ci + 1))}</option>`).join('')}
-        </select>` : ''}
-        <span class="acts">
-          <button class="ghost tiny" data-act="wiz-rm-table" data-i="${i}">Remove</button>
-        </span></div>`).join('')}
-    </div>` : '<p class="blank">No tables. Add at least one or nothing can be dispatched.</p>'}
-    <div class="inline"><button class="ghost" data-act="wiz-add-table">Add a table</button></div>
+    <div class="tset">${wiz.tables.map(cell).join('')}
+      <button class="tcell addt" data-act="wiz-add-table">+ Add a table</button></div>
+    ${wiz.tables.length ? '' : '<p class="blank">No tables yet. Add at least one, or no match can be sent anywhere.</p>'}
     ${why('A table with no cup is shared by everything running. Give it a cup and it is ' +
           'reserved for that cup — that is how you split the hall between two draws going ' +
           'at once.')}
@@ -1010,12 +1598,10 @@ function tabEvent() {
   const pl = PHASE_LABEL[S.phase] || '';
   const phase = `<div class="phase">
       <span class="plabel">Phase</span>
-      <span class="chip state">${esc(S.phase || 'live')}</span>
-      <span class="sub">${esc(pl.charAt(0).toUpperCase() + pl.slice(1))}</span>
-      <div class="field">
-        ${pick('ev-phase', 'set_phase', 'phase', ev.phase_pin || '',
-          [['', 'Follow the clock']].concat(
-            Object.keys(PHASE_LABEL).map(k => [k, 'Pin to ' + k])), 'aria-label="Phase"')}</div>
+      ${phaseStep()}
+      <span class="sub">${esc(pl.charAt(0).toUpperCase() + pl.slice(1))} · ${ev.phase_pin
+        ? `pinned <button type="button" class="link" data-phase-pin="">Follow the clock</button>`
+        : 'following the clock'}</span>
     </div>`;
 
   const event = sblock('The event',
@@ -1058,7 +1644,7 @@ function tabEvent() {
         <input id="cup-name" value="${esc(form.cupname || '')}" data-f="cupname"
                placeholder="Name another cup" aria-label="Name another cup"></div>
       <button data-act="add-cup">Add</button>
-    </div>`);
+    </div>`).replace('<section class="sblock">', '<section class="sblock wide">');   // the cups take the page's full width
 
   const notInCup = loose.length ? sblock('Not in a cup',
     'These run and share the tables like any other draw, they just have no cup of their own and no door feeding them.',
@@ -1085,7 +1671,7 @@ function cupCard(c) {
   const orphan = fs.length && !intake;
   const mine = tablesOfCup(c.id);
   const taking = (c.registration || 'closed') === 'open';
-  return `<div class="card"><div class="card-body">
+  return `<div class="card cupcard"><div class="card-body">
     <div class="cuphead">
       <div class="field cname">
         ${auto('cn-' + c.id, 'update_cup:' + c.id, 'name', c.name, 'aria-label="Cup name"')}</div>
@@ -1231,35 +1817,45 @@ const tablesAreSplit = () => S.tables.some(t => t.cup_id);
 function tablesSection() {
   const split = tablesAreSplit();
   const many = S.cups.length > 1;
-  const cols = many ? '28px minmax(0,1fr) 160px 150px' : '28px minmax(0,1fr) 150px';
   const tools = many ? `<button class="ghost tiny" data-act="${
     split ? 'share-tables' : 'split-tables'}">${
     split ? 'Share them all' : 'Split between cups'}</button>` : '';
-  const body = `${S.tables.length ? `<div class="rows trows">
-      <div class="hrow" style="--cols:${cols}"><span>#</span><span>Name</span>${
-        many ? '<span>Cup</span>' : ''}<span></span></div>
-      ${S.tables.map(t => `<div class="drow" style="--cols:${cols}">
-        <span class="num">${t.number}</span>
-        ${auto('tn-' + t.number, 'set_table:' + t.number, 'name', t.name)}
-        ${many ? pick('tc-' + t.number, 'set_table:' + t.number, 'cup_id', t.cup_id || '',
-          [['', 'Shared']].concat(S.cups.map(c => [c.id, c.name]))) : ''}
-        <span class="acts">
-          <button class="ghost tiny" data-act="pause" data-t="${t.number}">${t.paused ? 'Resume' : 'Pause'}</button>
-          <button class="ghost tiny" data-act="rm-table" data-t="${t.number}">Remove</button>
-        </span></div>`).join('')}
-    </div>` : '<p class="blank">No tables. Add at least one or nothing can be dispatched.</p>'}
-    <div class="inline"><button data-act="add-table">Add a table</button></div>`;
+  /* One cell per table, laid out like the hall: the painted table with its
+     number, its name, the cup it goes to, and what it is doing now. A paused
+     table is drawn dashed. Remove only shows on a table with nothing on it
+     (the server refuses the other case anyway). */
+  const cell = t => {
+    const busy = !!t.match;
+    // the cup is only worth naming when the cell's own select doesn't say it
+    const own = !many || (t.cup_id && t.cup_id === t.match?.cup_id);
+    const state = t.paused ? 'Paused' : busy ? (own ? 'Playing' : `Playing · ${esc(cupName(t.match.cup_id) || 'a match')}`) : 'Free';
+    return `<div class="tcell${t.paused ? ' paused' : ''}${busy ? ' busy' : ''}">
+      <span class="mt" aria-hidden="true"><span>${t.number}</span></span>
+      ${auto('tn-' + t.number, 'set_table:' + t.number, 'name', t.name,
+        `class="tname" aria-label="Name of table ${t.number}" placeholder="Table ${t.number}"`)}
+      ${many ? pick('tc-' + t.number, 'set_table:' + t.number, 'cup_id', t.cup_id || '',
+        [['', 'Shared']].concat(S.cups.map(c => [c.id, c.name])),
+        `class="tcup" aria-label="Table ${t.number} goes to"`) : ''}
+      <span class="tstate micro">${state}</span>
+      <span class="tacts">
+        <button class="link" data-act="pause" data-t="${t.number}">${t.paused ? 'Resume' : 'Pause'}</button>
+        ${busy ? '' : `<button class="link" data-act="rm-table" data-t="${t.number}">Remove</button>`}
+      </span></div>`;
+  };
+  const body = `<div class="tset">${S.tables.map(cell).join('')}
+      <button class="tcell addt" data-act="add-table">+ Add a table</button></div>
+    ${S.tables.length ? '' : '<p class="blank">No tables yet. Add at least one, or no match can be sent anywhere.</p>'}`;
   return sblock('Tables',
-    many ? 'Tagged tables are reserved for that cup. Untagged ones are shared.'
+    many ? 'Where matches are sent. Give a table to one cup, or leave it shared. Pause one to stop matches going to it.'
          : 'Where matches are sent. Pause one to stop matches going to it.',
     why('Pausing a table stops the dispatcher sending matches to it. Changing a table’s ' +
         'cup takes effect straight away.',
         many && split
           ? 'Each cup only ever plays on its own tables, so “which table” is a real ' +
             'answer for a spectator. A cup with nothing ready leaves its tables standing empty.'
-          : 'Every cup draws from one pool and the table goes to whichever cup is furthest ' +
-            'from finishing, so nothing stands idle — but you cannot tell anyone which ' +
-            'table they are on until they are called.'),
+          : 'A shared table goes to whichever cup is furthest from finishing, so a big cup ' +
+            'can’t starve a small one and nothing stands idle — but you cannot tell anyone ' +
+            'which table they are on until they are called.'),
     tools, body + (many ? `<label class="pick"><input type="checkbox" data-autolend="1"
       ${S.event.auto_lend !== false ? 'checked' : ''}> Lend an idle reserved table to a waiting cup for one game</label>
       ${why('A cup with nothing ready — a Swiss round waiting on its last match — would leave ' +
@@ -1572,7 +2168,32 @@ function doorMatch(q, ...names) {
   return !q || names.some(n => nameKey(n).includes(q));
 }
 
+/* The door itself is the desk (Door, in the bar). Setup keeps the count,
+   the way in, and the roster as one long editable list — the old Door tab,
+   folded away, because everything in it still works and some of it (merge
+   cups, remove all) lives nowhere else. */
 function tabDoor() {
+  const regs = S.registrations || [];
+  const pending = regs.filter(r => r.status === 'pending').length;
+  const here = S.entrants.filter(e => e.status !== 'withdrawn').length;
+  const playing = S.entrants.filter(e => e.status === 'playing').length;
+  const door = location.origin + '/d/' + (S.keys.door || '');
+  return `<div class="doorbox">
+      <div class="dcount">${[[pending, 'Still expected'], [here, 'Here'], [playing, 'Playing']].map(([n, l]) =>
+        `<div><b>${n}</b><span class="micro">${l}</span></div>`).join('')}</div>
+      <div class="dgo"><button class="primary" data-mode="door">Open the desk →</button>
+        <span class="key">${esc(door)}</span></div>
+    </div>
+    ${why('The door link opens the desk and nothing else: check-in, walk-ins, no-shows, names and ' +
+          'partners, sitting out and going home. It cannot score or change draws, cups, tables or ' +
+          'the event, and the log shows what was done with it.')}
+    <details class="fold-old" data-keep="door_old"${form.door_old ? ' open' : ''}>
+      <summary>The roster as a list <span class="micro">every entry and everyone here, editable in place</span></summary>
+      ${tabDoorList()}
+    </details>`;
+}
+
+function tabDoorList() {
   const regs = S.registrations || [];
   const pending = regs.filter(r => r.status === 'pending');
   const walkOpen = !!form.walk_open || !S.entrants.length && !pending.length;
@@ -1962,7 +2583,8 @@ function tabChat() {
   </div>`;
 }
 
-const hhmm = ts => new Date(ts * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+// 9:05, not 09:05 — as the phone page writes it
+const hhmm = ts => { const d = new Date(ts * 1000); return d.getHours() + ':' + String(d.getMinutes()).padStart(2, '0'); };
 
 function threadCard(th) {
   const key = th.chat_id == null ? 'sys' : th.chat_id;
@@ -2230,6 +2852,25 @@ function directoryRows() {
 
 /* --------------------------------------------------------------- events */
 
+/* Typing a score moves on by itself: a digit that cannot begin a two-digit
+   score in this game (anything but 1 when games go to 11, anything but 1 or
+   2 when they go to 21) is the whole number, so the cursor goes on at once;
+   otherwise it waits for the second digit. A to B, then the next game's A,
+   then Save once the result is decided. Deleting never moves it. */
+function scoreDone(v, pts, ev) {
+  if (!ev || !/^insert/.test(ev.inputType || 'insert')) return false;
+  if (v.length >= 2) return true;
+  return v.length === 1 && +v * 10 > (pts || 11) + 8;
+}
+function hopTo(ids, save) {
+  for (const id of ids) {
+    const el = document.getElementById(id);
+    if (el) { el.focus(); try { el.select(); } catch (x) { } return; }
+  }
+  const b = save && document.querySelector(save);
+  if (b && !b.disabled) b.focus();
+}
+
 document.addEventListener('input', e => {
   if (e.target.id === 'nudge-q') { nudgeQ = e.target.value; drawNudgeList(); return; }
   if (e.target.id === 'recent-q') { recentQuery = e.target.value; renderRecent(); return; }
@@ -2241,6 +2882,8 @@ document.addEventListener('input', e => {
     while (manualGames.length <= +i) manualGames.push(['', '']);
     manualGames[+i][+side] = v;
     renderManual();
+    if (scoreDone(v, +manualDraft.pts, e))
+      return hopTo(+side === 0 ? [`mg-${i}-b`] : [`mg-${+i + 1}-a`], '[data-act="manual-result"]');
     const back = document.getElementById(e.target.id);
     if (back) { back.focus(); try { back.setSelectionRange(99, 99); } catch (x) { } }
     return;
@@ -2254,6 +2897,10 @@ document.addEventListener('input', e => {
     while (drafts[mid].length <= +i) drafts[mid].push(['', '']);
     drafts[mid][+i][+side] = v;
     if (editing === mid) renderEditor(); else renderTables();
+    const m = findMatch(mid);
+    if (scoreDone(v, m && m.scoring && m.scoring.points_to, e))
+      return hopTo(+side === 0 ? [`g-${mid}-${i}-b`] : [`g-${mid}-${+i + 1}-a`],
+        `[data-act="report"][data-m="${mid}"]`);
     const back = document.getElementById(e.target.id);
     if (back) { back.focus(); try { back.setSelectionRange(99, 99); } catch (x) { } }
     return;
@@ -2366,6 +3013,14 @@ function flashSaved(el) {
   clearTimeout(el._s);
   el._s = setTimeout(() => el.classList.remove('just-saved'), 900);
 }
+
+// a fold that survives the re-render under it
+document.addEventListener('toggle', e => {
+  const k = e.target.dataset && e.target.dataset.keep;
+  if (k) form[k] = e.target.open;
+  // a knockout opened from its fold is drawn at the width it now has
+  if (e.target.id === 'fold-ko' && e.target.open) renderBrackets();
+}, true);
 
 document.addEventListener('focusout', e => {
   if (e.target.dataset && e.target.dataset.save && e.target.tagName !== 'SELECT') autoSave(e.target);
@@ -2555,6 +3210,8 @@ document.addEventListener('click', async e => {
     return void api('update_registration', { id: b.dataset.r, status: 'dropped' });
   }
   if (a === 'wiz-open') { openWizard(); return; }
+  if (a === 'board-all') { boardAll = !boardAll; renderBoard(); return; }
+  if (a === 'st-all') { standAll[b.dataset.k] = !standAll[b.dataset.k]; renderStandings(); return; }
   if (a === 'wiz-cancel') { wiz = null; renderSheet(); return; }
   if (a === 'wiz-fx') { form['wfx_' + b.dataset.i] = !form['wfx_' + b.dataset.i];
     return renderSheet(); }
@@ -2620,8 +3277,19 @@ document.addEventListener('click', async e => {
     const mid = b.dataset.m;
     const games = (drafts[mid] || []).filter(g => g[0] !== '' && g[1] !== '')
       .map(g => [+g[0], +g[1]]);
-    const ok = await api('report', { match_id: mid, games, requeue: drafts['rq-' + mid] !== false });
-    if (ok) { delete drafts[mid]; delete drafts['rq-' + mid]; if (editing === mid) closeEditor(); }
+    const m = findMatch(mid);
+    const wa = games.filter(g => g[0] > g[1]).length, wb = games.length - wa;
+    const who = m ? nm(wa > wb ? m.a : m.b) : '';
+    const sc = `${Math.max(wa, wb)}–${Math.min(wa, wb)}`;
+    const send = () => api('report', { match_id: mid, games, requeue: drafts['rq-' + mid] !== false });
+    const onTable = m && m.table && editing !== mid;
+    const ok = onTable ? await swapTable(m.table, send) : await send();
+    if (ok) {
+      delete drafts[mid]; delete drafts['rq-' + mid]; if (editing === mid) closeEditor();
+      toast(`Saved · ${who} win ${sc}`, onTable ? nowOn(m.table) : '', async () => {
+        if (await api('reopen_match', { match_id: mid })) toast('Result taken back', 'The match is waiting to be played again');
+      });
+    }
     return;
   }
   if (a === 'manual-result') {
@@ -2640,10 +3308,26 @@ document.addEventListener('click', async e => {
   if (a === 'manual-open') { manualOpen = true; renderManual(); return; }
   if (a === 'manual-close') { manualOpen = false; renderManual(); return; }
   if (a === 'put-back') {
-    const ok = await api('put_back', { match_id: b.dataset.m });
-    if (ok) toast(ok.reseated
-      ? 'Nobody else could take the table, so the same pair went straight back on'
-      : 'Table freed — that pair goes to the back of the line');
+    const m = findMatch(b.dataset.m);
+    const send = () => api('put_back', { match_id: b.dataset.m });
+    const ok = m && m.table ? await swapTable(m.table, send) : await send();
+    if (ok) toast(ok.reseated ? 'Put back' : 'Put back',
+      ok.reseated ? 'Nobody else could take the table, so the same pair went straight back on'
+        : 'Sent to the end of the queue' + (m && m.table ? ' · ' + nowOn(m.table) : ''));
+    return;
+  }
+  if (a === 'seat') {
+    const mid = b.dataset.m;
+    const row = (S.board || []).flatMap(x => x.up || []).find(r => r.id === mid) || {};
+    const out = await api('queue_front', { match_id: mid });
+    if (!out) return;
+    if (out.table) return toast(`Seated on table ${out.table}`, `${nm(row.a)} vs ${nm(row.b)} are on`);
+    return toast('Moved to the front', 'The next free table goes to them',
+      () => api('queue_front', { match_id: mid, restore: out.was }));
+  }
+  if (a === 'toast-undo') {
+    const f = toastUndo; toastUndo = null; $('toast').hidden = true;
+    if (f) await f();
     return;
   }
   if (a === 'jump') {
@@ -2676,7 +3360,13 @@ document.addEventListener('click', async e => {
     return;
   }
   if (a === 'rejoin') return void api('withdraw', { entrant_id: b.dataset.e, withdrawn: false });
-  if (a === 'rest') return void api('set_resting', { entrant_id: b.dataset.e, resting: true });
+  if (a === 'rest') {
+    const e = b.dataset.e;
+    const ok = await api('set_resting', { entrant_id: e, resting: true });
+    if (ok) toast(`${b.dataset.n || 'They'} sit out`, "Nobody pairs them until they're back",
+      () => api('set_resting', { entrant_id: e, resting: false }));
+    return;
+  }
   if (a === 'unrest') return void api('set_resting', { entrant_id: b.dataset.e, resting: false });
   if (a === 'pause') {
     const t = S.tables.find(x => x.number == b.dataset.t);
@@ -2878,10 +3568,17 @@ document.addEventListener('click', async e => {
   }
 });
 
-$('setup-btn').onclick = () => { sheetOpen = true; $('sheet').hidden = false; renderSheet(); };
-$('sheet-close').onclick = () => { sheetOpen = false; $('sheet').hidden = true; };
-$('sheet').addEventListener('click', e => {
-  if (e.target.id === 'sheet') { sheetOpen = false; $('sheet').hidden = true; }
+$('sheet-close').onclick = () => setMode('live');
+document.addEventListener('click', e => {
+  const m = e.target.closest('button[data-mode]');
+  if (m) { setMode(m.dataset.mode); return; }
+  const pin = e.target.closest('[data-phase-pin]');
+  if (pin) {                                          // Setup → Event: the stepper
+    const p = pin.dataset.phasePin;
+    if (p === ((S.event || {}).phase_pin || '')) return;
+    api('set_phase', { phase: p });
+    return;
+  }
 });
 function closeTeamModal() {
   form.team_open = false;
@@ -2911,7 +3608,7 @@ document.addEventListener('keydown', e => {
   if (form.tgm) { form.tgm = null; return renderTgModal(); }
   if (form.team_open) return closeTeamModal();
   if (editing) return closeEditor();
-  if (sheetOpen) { sheetOpen = false; $('sheet').hidden = true; }
+  if (sheetOpen && !wiz) setMode('live');
 });
 $('editor').addEventListener('click', e => {
   if (e.target.id === 'editor') closeEditor();

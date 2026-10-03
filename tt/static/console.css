@@ -1,0 +1,849 @@
+/* TTT console — admin, referee, and the public view on a desk.
+
+   The same language as the phone page (mobile.css): bone, ink, one red.
+   Red means "live" or "needs you": the tables being played, the button that
+   saves a decided match, whoever should be walking over now. Nothing is red
+   for decoration. Syne only for the few big words — table numbers, chapter
+   titles, page titles; Archivo for everything else. Sections are separated
+   by rules, not boxes; explanations sit folded behind "Why"; fields save
+   themselves.
+
+   index.html only. style.css stays as it was for the landing site and the
+   wall display. */
+
+:root{
+  --bone:#EDE6DB;
+  --sheet:#F5F0E8;
+  --field:#FBF8F3;
+  --ink:#1B1B1B;
+  --ink-2:#5B5750;
+  --ink-3:#8A857C;
+  --red:#E8262A;
+  --red-deep:#A91D22;
+  --red-wash:rgba(232,38,42,.08);
+  --rule:rgba(27,27,27,.14);
+  --syne:"Archivo Amp","Syne","Archivo",ui-sans-serif,system-ui,sans-serif;
+  --grot:"Archivo Amp","Archivo",ui-sans-serif,system-ui,"Helvetica Neue",Arial,sans-serif;
+  --ease:cubic-bezier(.22,.9,.24,1);
+  --shape:38% 38% 36% 36% / 30% 30% 32% 32%;
+  --side:clamp(16px,3vw,32px);
+  --barh:64px;
+  color-scheme:light;
+}
+*{box-sizing:border-box}
+html,body{margin:0;padding:0;background:var(--bone);color:var(--ink)}
+body{font-family:var(--grot);font-size:14.5px;line-height:1.45;font-variant-numeric:tabular-nums;-webkit-tap-highlight-color:transparent;-webkit-text-size-adjust:100%}
+button,input,select,textarea{font:inherit;color:inherit}
+h1,h2,h3{margin:0}
+a{color:inherit}
+[hidden]{display:none!important}
+:focus-visible{outline:1.5px solid var(--ink);outline-offset:3px}
+.grain{position:fixed;inset:0;pointer-events:none;z-index:90;opacity:.07;mix-blend-mode:multiply;
+  background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='180' height='180'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0 0 0 .6 0'/></filter><rect width='180' height='180' filter='url(%23n)'/></svg>")}
+.micro{font-size:10.5px;font-weight:600;letter-spacing:.09em;text-transform:uppercase;line-height:1.2}
+.muted{color:var(--ink-2)}
+.wrap{max-width:1360px;margin:0 auto;padding:0 var(--side)}
+
+/* ------------------------------------------------------------- buttons */
+button{background:var(--ink);color:var(--bone);border:0;border-radius:999px;padding:9px 18px;font-weight:600;font-size:13.5px;cursor:pointer;
+  transition:background .2s var(--ease),color .2s,box-shadow .2s,transform .1s}
+button:hover{background:#000}
+button:active{transform:translateY(1px)}
+button:disabled{opacity:.35;cursor:default;transform:none}
+button.primary{background:var(--red);color:var(--bone)}
+button.primary:hover{background:var(--red-deep)}
+button.ghost{background:transparent;color:var(--ink);box-shadow:inset 0 0 0 1.5px var(--rule)}
+button.ghost:hover{box-shadow:inset 0 0 0 1.5px var(--ink)}
+button.solid{background:var(--ink);color:var(--bone)}
+button.danger{background:transparent;color:var(--red);box-shadow:inset 0 0 0 1.5px var(--red)}
+button.danger:hover{background:var(--red);color:var(--bone)}
+button.tiny{padding:6px 13px;font-size:12.5px}
+button.link,.link{background:none;box-shadow:none;padding:0;border-radius:0;font-size:13px;font-weight:600;color:var(--ink-2);text-decoration:underline;text-underline-offset:3px;white-space:nowrap}
+button.link:hover{background:none;color:var(--ink)}
+
+/* ---------------------------------------------------------------- bar */
+.sim-bar{position:sticky;top:0;z-index:31;background:var(--ink);color:var(--bone);padding:8px var(--side);font-size:13px;font-weight:600}
+.sim-bar.over{background:var(--red)}
+.bar{position:sticky;top:0;z-index:30;background:var(--bone);border-bottom:1px solid var(--rule)}
+body.sim .bar{top:34px}
+.bar .wrap{display:flex;align-items:center;gap:22px;height:var(--barh)}
+.tt{font-family:var(--syne);font-weight:800;font-size:20px;letter-spacing:-.04em}
+.ev{min-width:0;flex:0 1 auto}
+/* the event's name as the phone page sets it: small capitals beside the mark */
+.ev h1{font-size:11px;font-weight:600;letter-spacing:.09em;text-transform:uppercase;line-height:1.2;color:var(--ink-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ev small{margin-top:3px}
+.ev small{display:block;color:var(--ink-2);font-weight:500;font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.modes{display:flex;background:rgba(27,27,27,.06);border-radius:999px;padding:3px;margin-left:8px}
+.modes button{background:transparent;color:var(--ink-2);padding:7px 16px;font-size:13.5px;white-space:nowrap}
+.modes button:hover{background:rgba(27,27,27,.06);color:var(--ink)}
+.modes button.on{background:var(--ink);color:var(--bone)}
+.modes .count,.tabs .count{display:inline-grid;place-items:center;min-width:18px;height:18px;padding:0 5px;margin-left:6px;border-radius:9px;background:var(--red);color:var(--bone);font-size:10.5px;font-weight:700;vertical-align:1px}
+.phase-step{display:flex;align-items:center;gap:2px;margin-left:auto}
+.phase-step button{background:transparent;color:var(--ink-3);padding:6px 10px;font-size:12.5px;position:relative}
+.phase-step button:hover{background:rgba(27,27,27,.05);color:var(--ink)}
+.phase-step button.past{color:var(--ink-2)}
+.phase-step button.on{color:var(--ink);background:var(--sheet);box-shadow:0 0 0 1px var(--rule)}
+.phase-step button.on::before{content:"";display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--red);margin-right:7px;vertical-align:1px}
+.phase-step i{width:10px;height:1px;background:var(--rule)}
+.role-tag{font-size:10.5px;font-weight:700;letter-spacing:.09em;text-transform:uppercase;padding:5px 9px 4px;border:1.5px solid var(--ink);border-radius:999px;white-space:nowrap}
+.role-tag.public,.role-tag.past{border-color:var(--rule);color:var(--ink-2)}
+.bar .role-tag{margin-left:auto}
+.pulse{width:8px;height:8px;border-radius:50%;background:var(--ink-3);transition:background .25s;flex:none}
+.pulse.on{background:var(--red)}
+
+.view{animation:viewIn .35s var(--ease)}
+@keyframes viewIn{from{opacity:0;filter:blur(6px)}}
+
+/* ----------------------------------------------------------- cup strip
+   Progress and filter in one. A grid that fits any number of cups: one cup
+   is one tile, two to four sit in a row with Everyone first, five and more
+   wrap, never shrinking below legible. */
+.strip{display:grid;grid-template-columns:repeat(calc(var(--n) + 1),minmax(0,1fr));gap:10px;margin-top:26px}
+.strip.many{grid-template-columns:repeat(auto-fill,minmax(170px,1fr))}
+.strip.many .all{grid-column:1/-1}
+.strip.one{grid-template-columns:minmax(240px,360px)}
+.strip button{display:flex;flex-direction:column;gap:9px;text-align:left;padding:11px 14px 12px;border-radius:14px;background:transparent;color:var(--ink);box-shadow:inset 0 0 0 1px var(--rule);min-width:0;font-weight:400}
+.strip button:hover{background:transparent;box-shadow:inset 0 0 0 1px var(--ink-3)}
+.strip button.on{background:var(--sheet);box-shadow:inset 0 0 0 1.5px var(--ink)}
+.strip.one button{cursor:default}
+.strip .t{display:flex;justify-content:space-between;align-items:baseline;gap:10px;min-width:0}
+.strip .t span{font-weight:600;font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.strip .t b{font-family:var(--syne);font-size:22px;font-weight:700;letter-spacing:-.03em;white-space:nowrap}
+.strip .t b small{font-family:var(--grot);font-size:12.5px;font-weight:600;opacity:.6;letter-spacing:0}
+.strip .all .t b{font-size:26px}
+.strip .bar2{height:4px;border-radius:2px;background:rgba(27,27,27,.1);overflow:hidden}
+.strip .bar2:empty{background:transparent}
+.strip .bar2 i{display:block;height:100%;border-radius:2px;background:var(--ink);transition:width .6s var(--ease)}
+.strip .e{font-size:11.5px;color:var(--ink-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+
+/* ------------------------------------------------------------ heads */
+.h{display:flex;justify-content:space-between;align-items:baseline;gap:16px;margin:34px 0 16px}
+.h b{font-family:var(--syne);font-size:26px;font-weight:700;letter-spacing:-.035em}
+.h .note{color:var(--ink-2);text-align:right}
+.blank{color:var(--ink-2);font-size:14px;margin:0;padding:12px 0}
+.warn{margin:22px 0 0;padding:12px 16px;border-radius:12px;background:var(--red-wash);font-size:13.5px}
+.warn b{font-weight:700}
+.warn .inline{margin-top:8px}
+
+/* -------------------------------------------------------------- tiles
+   One painted table per tile: side A beyond the net, side B before it, the
+   number on the net, the games painted onto each side as cells. */
+.tiles{display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:34px 26px}
+.tile{position:relative;min-width:0}
+.ptable{position:relative;border-radius:var(--shape);color:var(--bone);isolation:isolate;width:min(100%,330px);aspect-ratio:1/1.22;margin:0 auto;container-type:inline-size;
+  display:grid;grid-template-rows:1fr auto 1fr;padding:30px 22px}
+.ptable .skin{position:absolute;inset:0;border-radius:inherit;background:var(--red);filter:url(#paint);z-index:-1}
+.ptable .edge{position:absolute;inset:6px;border:1.5px solid var(--bone);border-radius:inherit;opacity:.85;z-index:-1}
+.ptable .cl{position:absolute;left:50%;top:6px;bottom:6px;width:1.5px;margin-left:-.75px;background:var(--bone);opacity:.16;z-index:-1}
+.half{display:flex;flex-direction:column;align-items:center;gap:10px;text-align:center;min-width:0}
+.half.a{justify-content:flex-end;padding-bottom:16px}
+.half.b{justify-content:flex-start;padding-top:16px}
+.half .lab{font-size:clamp(8px,4cqi,12px);font-weight:600;letter-spacing:.08em;text-transform:uppercase;opacity:.75;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pn{display:flex;flex-direction:column;align-items:center;font-weight:600;font-size:clamp(12px,6.2cqi,19px);line-height:1.08;max-width:100%}
+.pn span{display:block;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pn .amp{font-weight:500;opacity:.7;font-size:.8em;margin:.08em 0}
+.pn.win{font-weight:800}
+.net{position:relative;height:0;border-top:2px solid var(--bone);margin:0 -22px;display:flex;justify-content:center}
+.net .no{position:absolute;top:0;transform:translateY(-50%);background:var(--bone);color:var(--red);font-family:var(--syne);font-weight:800;font-size:clamp(13px,7.5cqi,24px);letter-spacing:-.04em;line-height:1;padding:.2em .5em .22em;border-radius:999px;min-width:2.1em;text-align:center}
+.cells{display:flex;gap:6px}
+.cell{width:40px;height:40px;border-radius:9px;border:1.5px solid rgba(237,230,219,.55);background:rgba(120,10,16,.22);color:var(--bone);font-size:18px;font-weight:600;text-align:center;outline:none;padding:0;transition:border-color .15s,background .15s}
+.cell::placeholder{color:rgba(237,230,219,.35)}
+.cell:focus{border-color:var(--bone);box-shadow:0 0 0 1px var(--bone);background:rgba(120,10,16,.35)}
+.cell.won{background:var(--bone);border-color:var(--bone);color:var(--red);font-weight:700}
+.cell.bad{border-color:var(--ink);box-shadow:0 0 0 1px var(--ink)}
+.tile .acts{display:flex;flex-wrap:wrap;justify-content:center;align-items:center;gap:10px 16px;width:min(100%,330px);margin:14px auto 0}
+.tile .save{flex:1 0 100%;height:42px;border-radius:999px;background:transparent;box-shadow:inset 0 0 0 1.5px var(--rule);color:var(--ink-2);display:flex;align-items:center;justify-content:center;gap:8px}
+.tile .save.ready{background:var(--ink);box-shadow:none;color:var(--bone)}
+.tile .save .ar{transition:transform .3s var(--ease)}
+.tile .save.ready:hover .ar{transform:translateX(3px)}
+.tile .rq{display:flex;align-items:center;gap:6px;font-size:12.5px;font-weight:600;color:var(--ink-2)}
+.tile .rq input{accent-color:var(--ink)}
+.warn2{text-align:center;font-size:12px;color:var(--red);margin-top:8px}
+/* free, paused, or finishing another cup's match: an outline, quiet */
+.ptable.off{color:var(--ink-2)}
+.ptable.off .skin{background:transparent;filter:none;border:1.5px dashed rgba(27,27,27,.4)}
+.ptable.off .net{border-top:1.5px dashed rgba(27,27,27,.3)}
+.ptable.off .net .no{color:var(--ink-2);box-shadow:0 0 0 1.5px rgba(27,27,27,.25)}
+.ptable.off .half .lab{opacity:1;white-space:normal;text-transform:none;letter-spacing:0;font-size:clamp(12px,7cqi,22px);font-weight:500;color:var(--ink-2)}
+.ptable.off .half.b .lab{font-size:12px}
+/* without cells the names carry the table, at the phone page's proportion */
+.tiles:not(.scoring) .pn{font-size:clamp(12px,9.6cqi,26px)}
+.tiles:not(.scoring) .half .lab{font-size:clamp(8px,5.2cqi,12px)}
+/* many at once: smaller tables, same parts */
+.tiles.compact{grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:26px 18px}
+.tiles.compact .ptable{width:min(100%,256px);padding:22px 14px}
+.tiles.compact .cell{width:34px;height:34px;font-size:15.5px;border-radius:8px}
+.tiles.compact .cells{gap:5px}
+.tiles.compact .half{gap:7px}
+.tiles.compact .half.a{padding-bottom:12px}
+.tiles.compact .half.b{padding-top:12px}
+.tiles.compact .net{margin:0 -14px}
+.tiles.compact .tile .acts{width:min(100%,256px);margin-top:10px}
+.tiles.compact .save{height:36px;font-size:13px}
+
+/* ----------------------------------------------------------- chapters
+   Up next, Standings (+ Knockout), Results: a rule, a Syne title, no box. */
+.cols{display:grid;grid-template-columns:minmax(0,1.05fr) minmax(0,1.15fr) minmax(0,1fr);gap:44px;margin-top:40px;align-items:start}
+.col{display:flex;flex-direction:column;gap:40px;min-width:0}
+.col:not(:has(> :not(:empty))){display:none}
+.col > :empty{display:none}
+.cols.bycup-mode{grid-template-columns:minmax(0,1fr)}
+.cols.bycup-mode .col:not(:last-child){display:none}
+.cols.bycup-mode #recent .panel-body{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));column-gap:44px;align-items:start}
+.cols.bycup-mode #recent .row{break-inside:avoid}
+.panel{min-width:0}
+.panel + .panel{margin-top:40px}
+.panel-head{display:flex;align-items:baseline;gap:12px;flex-wrap:wrap;margin-bottom:12px}
+.panel-head h2{font-family:var(--syne);font-size:26px;font-weight:700;letter-spacing:-.035em;line-height:1.1;margin-right:auto}
+.panel-head .note{color:var(--ink-2)}
+.panel-head .note:empty{display:none}
+.panel-head input[type=search]{border:0;border-bottom:1.5px solid var(--rule);background:transparent;padding:4px 0;font-size:13.5px;outline:none;max-width:160px}
+.panel-head input[type=search]:focus{border-bottom-color:var(--ink)}
+.panel-body{min-width:0}
+.ghead{margin:18px 0 6px;font-size:10.5px;font-weight:600;letter-spacing:.09em;text-transform:uppercase;color:var(--ink-2)}
+.ghead:first-child{margin-top:0}
+
+/* rows: up next */
+.list .r{display:grid;grid-template-columns:30px minmax(0,1fr) auto;gap:10px;align-items:center;padding:10px 0;border-bottom:1px solid var(--rule)}
+.list .r:first-child{border-top:1.5px solid var(--ink)}
+.list .i{font-size:11px;font-weight:700;color:var(--ink-2)}
+.list .nm{font-weight:500;line-height:1.3;min-width:0}
+.list .nm .v{display:block;color:var(--ink-2);font-size:13px}
+.list .tail{display:flex;align-items:center;gap:12px;justify-content:flex-end;flex-wrap:wrap}
+
+.ready{font-size:10.5px;font-weight:700;letter-spacing:.09em;text-transform:uppercase;color:var(--red);white-space:nowrap}
+.eta{font-size:12px;color:var(--ink-3);white-space:nowrap}
+.chip{display:inline-block;font-size:10px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;padding:3px 8px 2px;border-radius:999px;box-shadow:inset 0 0 0 1.2px var(--rule);color:var(--ink-2);white-space:nowrap}
+.chip.hot{box-shadow:none;background:var(--red-wash);color:var(--red)}
+.chip.state{box-shadow:none;background:rgba(27,27,27,.07);color:var(--ink)}
+.chip.warn{box-shadow:none;background:var(--red-wash);color:var(--red)}
+.chip.dim{box-shadow:none;color:var(--ink-3);padding-left:0;padding-right:0}
+.chip.tg{color:var(--ink-2)}
+.on-hover{opacity:0;transition:opacity .15s}
+.hoverable:hover .on-hover,.on-hover:focus-visible,.kc:hover .on-hover{opacity:1}
+/* in a list row the hover links take no room until they show, so names get
+   the width; the rough ETA steps aside for them */
+.list .r .on-hover{display:none}
+.list .r.hoverable:hover .on-hover,.list .r .on-hover:focus-visible{display:inline}
+.list .r.hoverable:hover .eta{display:none}
+@media (hover:none){.on-hover{opacity:1}.list .r .on-hover{display:inline}}
+
+/* standings */
+table.grid{width:100%;border-collapse:collapse;font-size:14.5px}
+table.grid th{text-align:left;font-size:10px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-2);padding:0 0 6px 8px;border-bottom:1.5px solid var(--ink)}
+table.grid td{padding:8px 0 8px 8px;border-bottom:1px solid var(--rule)}
+table.grid th:first-child,table.grid td:first-child{width:24px;padding-left:0}
+table.grid td:first-child{font-size:12px;font-weight:700;color:var(--ink-2)}
+table.grid td:nth-child(2){font-weight:500}
+table.grid .n{text-align:right;width:1%;white-space:nowrap}
+table.grid td.w{font-weight:700}
+table.grid tr.qualified td:first-child{color:var(--ink)}
+table.grid tr.qualified td:nth-child(2){font-weight:700}
+table.grid tr.cut td{border-bottom:1px dashed var(--ink-3)}
+
+/* results */
+.row{display:flex;align-items:center;gap:10px;padding:10px 0}
+.row.result{display:grid;grid-template-columns:minmax(0,1fr) auto;column-gap:12px;row-gap:1px;align-items:baseline;padding:10px 0;border-bottom:1px solid var(--rule)}
+.result .rt{min-width:0}
+.result .w{font-weight:600}
+.result .l{color:var(--ink-2)}
+.result .meta{display:block;color:var(--ink-2);font-size:12.5px;margin-top:2px}
+.result .s{font-weight:700;white-space:nowrap}
+.panel-body > .row.result:first-child{border-top:1.5px solid var(--ink)}
+@media (min-width:761px){.cols.bycup-mode #recent .panel-body > .row.result:nth-child(2){border-top:1.5px solid var(--ink)}}
+.row.result{position:relative}
+/* Edit result: in the corner on hover, taking no room otherwise */
+.result .on-hover{position:absolute;right:0;bottom:10px;display:none;background:var(--bone);padding-left:10px}
+.result.hoverable:hover .on-hover,.result .on-hover:focus-visible{display:inline}
+@media (hover:none){.result .on-hover{display:inline}}
+
+/* the knockout tree */
+.ko{margin:2px 0 6px}
+.ko.wide{overflow-x:auto;scrollbar-width:thin;scroll-behavior:smooth;padding-bottom:6px}
+.kt{position:relative}
+.kt svg{position:absolute;left:0;top:0;overflow:visible}
+.kt path{fill:none;stroke:rgba(27,27,27,.24);stroke-width:1.5}
+.kt path.done{stroke:rgba(27,27,27,.5)}
+.kh{position:absolute;top:0;font-size:10.5px;font-weight:600;letter-spacing:.09em;text-transform:uppercase;color:var(--ink-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.kc{position:absolute;height:50px;border-radius:12px;background:var(--sheet);box-shadow:0 0 0 1px rgba(27,27,27,.1);display:flex;flex-direction:column;justify-content:center;gap:1px;padding:0 10px;font-size:13.5px}
+.kc .s{display:flex;justify-content:space-between;align-items:baseline;gap:8px;line-height:1.3;min-width:0}
+.kc .s span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+.kc .s b{font-weight:700}
+.kc .s.w{font-weight:700}
+.kc .s.l{color:var(--ink-3)}
+.kc .s.tbd{color:var(--ink-3)}
+.kc.tbd{background:transparent;box-shadow:none;border:1.2px dashed rgba(27,27,27,.28)}
+.kc.live{box-shadow:0 0 0 1.5px var(--ink)}
+.kc .kl{position:absolute;right:8px;top:-8px;background:var(--ink);color:var(--bone);font-style:normal;font-size:9.5px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;padding:2px 7px 1px;border-radius:999px;white-space:nowrap}
+.kc .ked{position:absolute;right:10px;bottom:-18px;font-size:11.5px}
+.kw{position:absolute;display:flex;flex-direction:column;gap:2px;padding-left:12px}
+.kw span{font-size:10.5px;font-weight:600;letter-spacing:.09em;text-transform:uppercase;color:var(--ink-2)}
+.kw b{font-family:var(--syne);font-size:22px;font-weight:700;letter-spacing:-.03em;line-height:1.05}
+.ko-x{margin:14px 0 0;display:flex;flex-direction:column;gap:6px}
+.ko-x .kh{position:static}
+.ko-x .kc{position:relative}
+
+/* ---------------------------------------------------------- by cup
+   Every cup side by side: same blocks, same row counts, so they line up. */
+.bycup{display:grid;grid-template-columns:repeat(var(--n),minmax(0,1fr));gap:34px;margin-top:40px}
+.cupcol{min-width:0}
+.cupcol .ch{display:grid;grid-template-columns:1fr auto;align-items:baseline;gap:2px 10px}
+.cupcol .ch b{font-family:var(--syne);font-size:24px;font-weight:700;letter-spacing:-.035em;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cupcol .ch .micro{grid-column:1/-1;color:var(--ink-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.cupcol .lbl{margin:20px 0 6px;color:var(--ink-2)}
+.cupcol .list .r{min-height:56px}
+.cupcol .list .nm,.cupcol .list .nm .v{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.cupcol .list .r.empty{opacity:.45}
+.cupcol .blank{padding-top:6px}
+.st{display:grid;grid-template-columns:26px minmax(0,1fr) 28px 32px 40px;gap:8px;padding:8px 0;border-bottom:1px solid var(--rule);align-items:baseline;font-size:14.5px}
+.st.cut{border-bottom:1px dashed var(--ink-3)}
+.grp{margin:16px 0 6px;color:var(--ink-2)}
+.panel-body > .grp:first-child{margin-top:0}
+.st.head{border-bottom:1.5px solid var(--ink);padding-bottom:6px}
+.st.head span{font-size:10px;font-weight:600;letter-spacing:.08em;color:var(--ink-2);text-transform:uppercase}
+.st span:nth-child(n+3){text-align:right}
+.st span:nth-child(2){overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.st .pos{font-size:12px;font-weight:700;color:var(--ink-2)}
+.st.q .pos{color:var(--ink)}
+.st.empty{opacity:.4}
+.kmini{display:grid;gap:6px}
+.km{display:grid;grid-template-columns:minmax(0,1fr) auto minmax(0,1fr);gap:8px;align-items:baseline;padding:8px 10px;border-radius:10px;background:var(--sheet);font-size:13.5px}
+.km span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.km span:last-child{text-align:right}
+.km .w{font-weight:700}.km .l{color:var(--ink-3)}
+.km i{font-style:normal;color:var(--ink-3)}
+.km b{font-size:12px}
+.km.live{box-shadow:inset 0 0 0 1.5px var(--ink)}
+.km.live b{background:var(--ink);color:var(--bone);font-size:9.5px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;padding:2px 7px 1px;border-radius:999px;white-space:nowrap}
+
+/* ------------------------------------------------------------- door */
+#door iframe{display:block;width:100%;height:calc(100vh - var(--barh) - 1px);border:0;background:var(--bone)}
+body.sim #door iframe{height:calc(100vh - var(--barh) - 35px)}
+
+/* ------------------------------------------------------------ setup
+   A page, not a layer: the sections down the left, the page on the right,
+   each block a head on the left and its fields on the right under one rule. */
+#sheet{position:relative;display:block}
+#sheet .sheet-inner{max-width:1360px;margin:0 auto;padding:34px var(--side) 90px;display:grid;grid-template-columns:220px minmax(0,1fr);gap:56px}
+#sheet .sheet-head{position:sticky;top:calc(var(--barh) + 26px);align-self:start;display:flex;flex-direction:column;gap:18px}
+body.sim #sheet .sheet-head{top:calc(var(--barh) + 60px)}
+#sheet .tabs{display:flex;flex-direction:column}
+#sheet .tabs button{display:flex;align-items:center;justify-content:flex-start;text-align:left;background:transparent;color:var(--ink-2);border-radius:0;padding:10px 0;border-bottom:1px solid var(--rule);font-weight:500;font-size:14px}
+#sheet .tabs button:first-child{border-top:1.5px solid var(--ink)}
+#sheet .tabs button:hover{color:var(--ink)}
+#sheet .tabs button.on{color:var(--ink);font-weight:700}
+#sheet .tabs button.on::before{content:"";width:7px;height:7px;border-radius:50%;background:var(--ink);margin-right:10px;flex:none}
+#sheet .tabs button .count{margin-left:auto}
+#sheet #sheet-close{align-self:flex-start}
+#sheet .sheet-body{max-width:900px;min-width:0}
+.page-head h1{font-family:var(--syne);font-size:44px;font-weight:700;letter-spacing:-.04em;line-height:1}
+.page-head .lede{margin:10px 0 26px;color:var(--ink-2);font-size:15px;max-width:60ch}
+
+.form{display:flex;flex-direction:column;gap:14px}
+.form:has(> .sblock){gap:0}
+.sec{display:flex;align-items:baseline;gap:12px;margin:30px 0 6px;border-top:1.5px solid var(--ink);padding-top:12px}
+.form > .sec:first-child{margin-top:0}
+.sec h2{font-size:15px;font-weight:700;white-space:nowrap}
+.sec .line{flex:1}
+.sblock{display:grid;grid-template-columns:200px minmax(0,1fr);gap:32px;padding:26px 0;border-top:1px solid var(--rule)}
+.form > .sblock:first-child{border-top:1.5px solid var(--ink)}
+.shead{display:flex;flex-direction:column;align-items:flex-start;gap:6px}
+.shead h2{font-size:15px;font-weight:700}
+.shead .sdesc{order:1;margin:0;color:var(--ink-2);font-size:13px;line-height:1.45}
+.shead details.why{order:2}
+.shead .stools{order:3;margin-top:6px}
+.sbody{display:flex;flex-direction:column;gap:14px;min-width:0}
+
+.field{display:flex;flex-direction:column;gap:5px;min-width:0}
+.field > label{font-size:10.5px;font-weight:600;letter-spacing:.09em;text-transform:uppercase;color:var(--ink-2)}
+.field input,.field select,.field textarea,.rows input,.rows select,.drow > input,.drow > select{border:0;border-bottom:1.5px solid var(--rule);border-radius:0;background:transparent;padding:6px 0 7px;font-size:15px;font-weight:500;outline:none;width:100%;transition:border-color .2s}
+.field textarea{resize:vertical;min-height:64px;line-height:1.45}
+.field input:hover,.field select:hover,.rows input:hover,.rows select:hover{border-bottom-color:var(--ink-3)}
+.field input:focus,.field select:focus,.field textarea:focus,.rows input:focus,.rows select:focus{border-bottom-color:var(--ink)}
+@keyframes saved{0%{border-bottom-color:var(--red)}100%{border-bottom-color:var(--rule)}}
+.just-saved{animation:saved .9s ease-out}
+.inline{display:flex;gap:14px 22px;flex-wrap:wrap;align-items:flex-end}
+.inline .field{flex:1;min-width:150px}
+.sub{font-size:13px;color:var(--ink-2);margin:0}
+.hr{height:1px;background:var(--rule);margin:8px 0}
+.pick{display:inline-flex;align-items:center;gap:8px;font-size:14px;font-weight:600;cursor:pointer}
+.pick input{accent-color:var(--ink);width:16px;height:16px;margin:0}
+details.why{font-size:13px;color:var(--ink-2)}
+details.why > summary{list-style:none;cursor:pointer;font-size:12px;font-weight:600;color:var(--ink-3);display:inline-flex;gap:6px;align-items:center;width:max-content}
+details.why > summary::-webkit-details-marker{display:none}
+details.why > summary::before{content:"+";font-weight:700;transition:transform .3s var(--ease);display:inline-block}
+details.why[open] > summary::before{transform:rotate(45deg)}
+details.why p{margin:8px 0 0;font-size:12.5px;line-height:1.5}
+.warn-in{background:var(--red-wash);padding:10px 13px;font-size:13px;border-radius:10px}
+.warn-in .inline{margin-top:8px}
+.key{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12.5px;color:var(--ink-2);word-break:break-all;min-width:0}
+.drow > .key{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;word-break:normal}
+
+/* cards: a cup and its draws */
+.card{background:var(--sheet);border-radius:16px;box-shadow:0 0 0 1px rgba(27,27,27,.06);margin-bottom:10px;overflow:hidden}
+.card-body{padding:16px 18px;display:flex;flex-direction:column;gap:14px}
+.card-sub{border-top:1px solid var(--rule);padding:14px 18px;display:flex;flex-direction:column;gap:12px}
+.card-sub.muted{background:rgba(27,27,27,.025)}
+.cuphead{display:flex;align-items:center;gap:12px}
+.cuphead .cname{flex:1;min-width:0}
+.cuphead .cname input{font-family:var(--syne);font-size:21px;font-weight:700;letter-spacing:-.03em}
+.sumline{display:flex;align-items:center;gap:8px 14px;flex-wrap:wrap}
+.sumline .lbl{font-size:10.5px;font-weight:600;letter-spacing:.09em;text-transform:uppercase;color:var(--ink-2)}
+.sumline .what{font-weight:700}
+.sumline .cfg{color:var(--ink-2);font-size:13.5px;flex:1;min-width:160px}
+.sumline .acts{margin-left:auto}
+
+/* rows of settings: one header row, then rows that are values */
+.rows{display:flex;flex-direction:column}
+.hrow,.drow{display:grid;align-items:center;gap:12px;grid-template-columns:var(--cols);padding:9px 0}
+.hrow{font-size:10.5px;font-weight:600;letter-spacing:.09em;text-transform:uppercase;color:var(--ink-2);border-bottom:1.5px solid var(--ink);padding-top:0}
+.drow{border-bottom:1px solid var(--rule)}
+.num{color:var(--ink-2);font-size:12.5px;font-weight:600;text-align:right}
+.acts{display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap;align-items:center}
+.drow[data-dim="1"]{opacity:.5}
+
+/* the roster as a list (folded under At the door) */
+.entry{padding:2px 0;border-bottom:1px solid var(--rule)}
+.entry .drow{border-bottom:0;padding:7px 0}
+.entry .drow.member{padding:4px 0 4px 18px;border-left:2px solid var(--rule);margin-left:2px}
+.entry .tag{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:10px 0 0}
+.subsec{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:16px 0 4px}
+.subsec h3{font-size:10.5px;font-weight:700;letter-spacing:.09em;text-transform:uppercase;color:var(--ink-2)}
+.subsec .count{color:var(--red);margin-left:4px}
+.dupnote{font-size:12.5px;font-weight:600;color:var(--red);background:var(--red-wash);border-radius:8px;padding:7px 10px;margin:2px 0 8px}
+.door-search{max-width:420px}
+.stat{display:flex;align-items:center;gap:6px;min-width:0}
+.stat .tgmark{font-size:12px;color:var(--ink-2)}
+.doorbox{display:flex;gap:40px;flex-wrap:wrap;align-items:center;padding:20px 0;border-top:1.5px solid var(--ink);border-bottom:1px solid var(--rule);margin-bottom:12px}
+.doorbox .dcount{display:flex;gap:28px}
+.doorbox .dcount div{display:flex;flex-direction:column;gap:4px}
+.doorbox .dcount b{font-family:var(--syne);font-size:30px;font-weight:700;letter-spacing:-.03em;line-height:1}
+.doorbox .dcount .micro{color:var(--ink-2)}
+.doorbox .dgo{display:flex;gap:16px;align-items:center;margin-left:auto;min-width:0;flex-wrap:wrap}
+details.fold-old{margin-top:24px;border-top:1px solid var(--rule)}
+details.fold-old > summary{list-style:none;cursor:pointer;display:flex;align-items:baseline;gap:12px;padding:14px 0;font-weight:700}
+details.fold-old > summary::-webkit-details-marker{display:none}
+details.fold-old > summary::before{content:"+";font-weight:700;transition:transform .3s var(--ease)}
+details.fold-old[open] > summary::before{transform:rotate(45deg)}
+details.fold-old > summary .micro{color:var(--ink-2);font-weight:600}
+
+/* phase row on the Event page */
+.phase{display:flex;flex-wrap:wrap;align-items:center;gap:10px 14px;background:var(--sheet);border-radius:12px;padding:12px 14px}
+.phase .plabel{font-size:10.5px;font-weight:600;letter-spacing:.09em;text-transform:uppercase;color:var(--ink-2)}
+.phase .chip.state{background:var(--ink);color:var(--bone)}
+.phase .sub{flex:1;min-width:140px}
+.phase .field{flex:0 0 200px}
+
+/* Telegram */
+.thread .thead{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap}
+.thread .thead .when{margin-left:auto}
+.thread .thead .count{font-size:10.5px;font-weight:700;background:var(--red);color:var(--bone);border-radius:999px;padding:1px 7px}
+.thread.unread{box-shadow:inset 3px 0 0 var(--red),0 0 0 1px rgba(27,27,27,.06)}
+.msgs{display:flex;flex-direction:column;gap:6px}
+.msg{max-width:85%;padding:8px 11px;border-radius:12px;font-size:14px;line-height:1.4;white-space:pre-wrap;overflow-wrap:anywhere;display:flex;flex-direction:column;gap:2px}
+.msg i{font-style:normal;font-size:11px;color:var(--ink-2)}
+.msg.in{align-self:flex-start;background:var(--field);border-bottom-left-radius:4px}
+.msg.out{align-self:flex-end;background:var(--ink);color:var(--bone);border-bottom-right-radius:4px}
+.msg.out i{color:rgba(237,230,219,.6)}
+.msg.sys{align-self:stretch;max-width:none;background:var(--red-wash);color:var(--red);font-weight:600}
+.thread .reply{flex-wrap:nowrap}
+.thread .reply .field{flex:1;min-width:0}
+.qr{display:flex;justify-content:center;padding:8px 0}
+.qr img{width:240px;height:240px;max-width:100%;background:#fff;padding:10px;border-radius:12px}
+
+/* ----------------------------------------------------- small layers
+   The score editor, entering a team, a Telegram code: a card over the page. */
+.sheet.modal{position:fixed;inset:0;z-index:50;background:rgba(27,27,27,.28);display:flex;justify-content:center;align-items:flex-start;padding:7vh 16px 16px;animation:fade .3s var(--ease)}
+@keyframes fade{from{opacity:0}}
+.modal .sheet-inner{background:var(--bone);border-radius:22px;width:100%;max-width:520px;max-height:86vh;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 30px 60px -20px rgba(0,0,0,.35)}
+.modal .sheet-inner.narrow{max-width:500px}
+.modal .sheet-head{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:18px 20px 6px}
+.modal .sheet-head h2{font-family:var(--syne);font-size:24px!important;font-weight:700;letter-spacing:-.03em}
+.modal .sheet-body{padding:8px 20px 22px;overflow-y:auto;display:flex;flex-direction:column;gap:14px}
+.versus{display:flex;flex-direction:column;gap:4px}
+.versus .side{font-weight:700;font-size:17px}
+.versus .vs{font-size:10.5px;font-weight:600;letter-spacing:.09em;text-transform:uppercase;color:var(--ink-3)}
+.pad{display:flex;flex-direction:column;gap:12px}
+.games{display:flex;flex-wrap:wrap;gap:8px}
+.game{display:flex;align-items:center;gap:5px;padding:6px;border-radius:12px;background:var(--sheet)}
+.game input{width:46px;height:44px;border-radius:9px;border:1px solid var(--rule);background:var(--field);text-align:center;font-size:19px;font-weight:600;outline:none;padding:0}
+.game input:focus{border-color:var(--ink);box-shadow:0 0 0 1px var(--ink)}
+.game .sep{color:var(--ink-3);font-weight:700}
+.pad-row{display:flex;flex-wrap:wrap;gap:10px 16px;align-items:center}
+.hint{font-size:12.5px;color:var(--ink-2)}
+.hint input{accent-color:var(--ink)}
+.table-state{font-size:12.5px;color:var(--ink-2)}
+#manual-entry .panel-body{display:flex;flex-direction:column;gap:14px}
+
+.toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);z-index:95;background:var(--ink);color:var(--bone);border-radius:14px;padding:12px 18px;font-size:13.5px;font-weight:600;max-width:min(560px,90vw);box-shadow:0 14px 34px -12px rgba(0,0,0,.4);animation:toastIn .45s var(--ease)}
+@keyframes toastIn{from{transform:translate(-50%,140%)}}
+
+/* ---------------------------------------------------------- jump (phones) */
+.jump{display:none}
+
+/* --------------------------------------------------------------- narrow */
+@media (max-width:1180px){
+  .cols{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .bycup{grid-template-columns:repeat(min(var(--n),2),minmax(0,1fr))}
+}
+@media (max-width:980px){
+  #sheet .sheet-inner{grid-template-columns:1fr;gap:20px}
+  #sheet .sheet-head{position:static;flex-direction:row;align-items:center;flex-wrap:wrap}
+  #sheet .tabs{flex-direction:row;flex-wrap:wrap;gap:4px 18px;flex:1}
+  #sheet .tabs button{border:0!important;padding:4px 0}
+  .sblock{grid-template-columns:1fr;gap:12px}
+  .page-head h1{font-size:34px}
+}
+@media (max-width:760px){
+  .strip,.strip.one{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .strip .all{grid-column:1/-1}
+  .strip.one button{grid-column:1/-1}
+  .cols,.bycup{grid-template-columns:1fr}
+  .cols.bycup-mode #recent .panel-body{grid-template-columns:minmax(0,1fr)}
+  .ev small{display:none}
+  .bar .wrap{gap:12px}
+  .modes{margin-left:auto}
+  .modes button{padding:7px 12px}
+}
+@media (max-width:640px){
+  /* whoever enters results: one table under the other, the cells big */
+  .tiles.scoring,.tiles.scoring.compact{grid-template-columns:1fr;gap:28px}
+  .tiles.scoring.compact .ptable{width:min(100%,330px);padding:30px 22px}
+  .tiles.scoring.compact .cell{width:42px;height:42px;font-size:18px}
+  .cell{width:42px;height:42px}
+  /* anyone else: the phone page's grid — two across (three past six
+     tables), every table the same size, an odd last one centred */
+  .tiles:not(.scoring){grid-template-columns:repeat(2,minmax(0,1fr));gap:14px 12px}
+  .tiles:not(.scoring).c3{grid-template-columns:repeat(3,minmax(0,1fr));gap:11px 9px}
+  .tiles:not(.scoring) .ptable{width:100%;padding:16px 8px}
+  .tiles:not(.scoring) .half{gap:4px}
+  .tiles:not(.scoring) .net{margin:0 -8px}
+  .tiles:not(.scoring):not(.c3) .tile:last-child:nth-child(odd){grid-column:1/-1;width:calc(50% - 6px);justify-self:center}
+  .tiles:not(.scoring).c3 .half .lab{display:none}
+  .role-tag{display:none}
+  .tt{font-size:18px}
+  .jump{display:flex;gap:18px;overflow-x:auto;scrollbar-width:none;position:sticky;top:var(--jump-top,0px);z-index:18;background:var(--bone);padding:12px 0 0;margin:0 calc(-1*var(--side));padding-left:var(--side);border-bottom:1px solid var(--rule)}
+  .jump::-webkit-scrollbar{display:none}
+  .jump a{padding-bottom:10px;margin-bottom:-1px;border-bottom:2px solid transparent;font-size:13.5px;font-weight:600;color:var(--ink-2);text-decoration:none;white-space:nowrap}
+  .jump a.on{color:var(--ink);border-bottom-color:var(--ink)}
+  .jump a .count{color:var(--red);margin-left:5px}
+  .jump a .count:empty{display:none}
+  .hrow{display:none}
+  .drow{display:flex;flex-wrap:wrap;gap:8px}
+  .drow > input,.drow > select{flex:1 1 130px;min-width:0}
+  .drow > span:not(.num):not(.acts){flex:1 1 100%;min-width:0}
+  .drow > .acts{flex:1 1 100%;justify-content:flex-start}
+  .doorbox .dgo{margin-left:0}
+}
+#tables,#board,#standings,#recent{scroll-margin-top:calc(var(--jump-top,0px) + 56px)}
+@media (prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important;transition:none!important}}
+.form > button,.form > a{align-self:flex-start}
+@media (max-width:640px){
+  /* entering results on a phone, a free table is one line rather than a
+     table-sized outline between the ones that need you */
+  .scoring .ptable.off{aspect-ratio:auto;width:100%;border-radius:14px;display:flex;align-items:center;gap:14px;padding:12px 16px}
+  .scoring .ptable.off .skin{border-radius:14px}
+  .scoring .ptable.off .net{order:-1;border:0;margin:0;height:auto}
+  .scoring .ptable.off .net .no{position:static;transform:none;font-size:16px}
+  .scoring .ptable.off .half{padding:0!important;align-items:flex-start;text-align:left}
+  .scoring .ptable.off .half.b{flex:1}
+  .scoring .ptable.off .half .lab{font-size:15px}
+  .tiles.scoring{gap:22px}
+  /* the cup switch two to a row; an odd last one takes the whole row */
+  .strip button:not(.all):last-child:nth-child(even){grid-column:1/-1}
+}
+.panel-body > .more{display:block;margin:14px 0 0}
+
+/* Setup → Tables: the hall as cells. Each is the painted table in small with
+   its number, then its name, its cup, what it is doing, Pause and Remove. */
+.tset{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:14px}
+.tcell{display:flex;flex-direction:column;align-items:center;gap:8px;padding:16px 12px 12px;border-radius:16px;background:var(--sheet);box-shadow:0 0 0 1px rgba(27,27,27,.06);min-width:0}
+.mt{position:relative;width:52px;height:63px;border-radius:var(--shape);flex:none;display:grid;place-items:center;color:var(--bone);margin-bottom:4px}
+.mt::before{content:"";position:absolute;inset:0;border-radius:inherit;background:var(--red);filter:url(#paint)}
+.mt::after{content:"";position:absolute;inset:3px;border:1.2px solid var(--bone);border-radius:inherit;opacity:.8}
+.mt span{position:relative;z-index:1;font-family:var(--syne);font-weight:800;font-size:24px;letter-spacing:-.04em}
+.tcell.paused .mt{color:var(--ink-2)}
+.tcell.paused .mt::before{background:transparent;filter:none;border:1.5px dashed rgba(27,27,27,.35)}
+.tcell.paused .mt::after{display:none}
+.tcell input.tname,.tcell select.tcup{width:100%;border:0;border-bottom:1.5px solid var(--rule);border-radius:0;background:transparent;padding:4px 0;font-size:13.5px;font-weight:600;text-align:center;text-align-last:center;outline:none;color:var(--ink)}
+.tcell select.tcup{font-weight:500;color:var(--ink-2);cursor:pointer}
+.tcell input.tname:hover,.tcell select.tcup:hover{border-bottom-color:var(--ink-3)}
+.tcell input.tname:focus,.tcell select.tcup:focus{border-bottom-color:var(--ink)}
+.tcell .tstate{color:var(--ink-3);text-align:center;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tcell.busy .tstate{color:var(--ink-2)}
+.tcell .tacts{display:flex;gap:14px;justify-content:center}
+.tcell.addt{justify-content:center;border:1.5px dashed var(--ink-3);background:transparent;box-shadow:none;color:var(--ink-2);font-weight:600;font-size:13.5px;min-height:170px;border-radius:16px}
+.tcell.addt:hover{color:var(--ink);border-color:var(--ink);background:transparent}
+@media (max-width:640px){.tset{grid-template-columns:repeat(2,minmax(0,1fr))}}
+
+/* Results: five rows, a link to open the rest, and the search only once open */
+#recent .more{display:inline-block;margin:14px 0 0}
+.find-res{display:flex;align-items:center;gap:10px;border-bottom:1.5px solid var(--ink);padding:4px 0 6px;margin:2px 0 6px;color:var(--ink-3)}
+.find-res input{flex:1;min-width:0;border:0;background:transparent;outline:none;font-size:15px;font-weight:500;color:var(--ink);padding:4px 0}
+.find-res input::placeholder{color:var(--ink-3)}
+
+/* the cup switch: a name, and a hairline of progress along the tile's foot */
+.strip button{position:relative;justify-content:center;min-height:48px;padding:12px 14px 14px}
+.strip .bar2{position:absolute;left:14px;right:14px;bottom:9px;height:3px}
+.strip .t span{font-size:14.5px}
+.find-res > span{font-size:17px;line-height:1}
+.find-res input::-webkit-search-cancel-button{filter:grayscale(1);opacity:.55;cursor:pointer}
+
+/* a free table's word at the size of the names, as on the phone page */
+.tiles .ptable.off .half.a .lab{font-size:clamp(12px,9.6cqi,26px);font-weight:500;color:var(--ink-2);text-transform:none;letter-spacing:0;opacity:1}
+.tiles.scoring .ptable.off .half.a .lab{font-size:clamp(12px,7cqi,22px)}
+/* stacked on a phone the cup columns no longer sit side by side, so the
+   placeholder rows that kept them level have nothing to line up with */
+@media (max-width:760px){.cupcol .r.empty:not(:first-child),.cupcol .st.empty{display:none}}
+.cupcol .list + .more{display:inline-block;margin:10px 0 0}
+
+/* without cells the sides sit where the phone page puts them: a fixed
+   distance from the net in proportion to the table, the label near the top */
+.tiles:not(.scoring) .half.a{padding-bottom:9cqi}
+.tiles:not(.scoring) .half.b{padding-top:9cqi}
+.tiles:not(.scoring) .ptable:not(.off) .half.a .lab{position:absolute;top:9%;left:0;right:0;text-align:center}
+.tiles:not(.scoring) .net .no{font-size:clamp(13px,11cqi,30px)}
+
+/* Setup → Event → Cups: the cup cards take the page's full width, the
+   heading runs above them on one line (title, what a cup is, Why), and the
+   cards get room — wider padding, the three settings on a grid */
+.sblock.wide{grid-template-columns:minmax(0,1fr);gap:18px}
+.sblock.wide .shead{flex-direction:row;flex-wrap:wrap;align-items:baseline;gap:4px 16px}
+.sblock.wide .shead .sdesc{order:1;flex:1 1 320px}
+.sblock.wide .shead details.why{order:2}
+.sblock.wide .shead .stools{order:3;margin:0 0 0 auto}
+.sblock.wide .sbody{gap:18px}
+.cupcard{margin-bottom:0}
+.cupcard .card-body{padding:22px 28px 24px;gap:20px}
+.cupcard .card-sub{padding:18px 28px}
+.cupcard .card-body > .inline{display:grid;grid-template-columns:minmax(150px,220px) minmax(150px,220px) minmax(0,1fr);gap:18px 32px;align-items:end}
+.cupcard .card-body > .inline .field{max-width:none!important;min-width:0!important}
+.cupcard .cuphead{gap:16px}
+@media (max-width:760px){
+  .cupcard .card-body,.cupcard .card-sub{padding-left:18px;padding-right:18px}
+  .cupcard .card-body > .inline{grid-template-columns:1fr 1fr}
+  .cupcard .card-body > .inline .field:last-child{grid-column:1/-1}
+}
+
+/* the cup switch: the name, centred, on a firmer tile; the chosen one in ink */
+.strip button{align-items:center;justify-content:center;text-align:center;min-height:46px;padding:12px 14px;box-shadow:inset 0 0 0 1.5px rgba(27,27,27,.3)}
+.strip button:hover{box-shadow:inset 0 0 0 1.5px var(--ink)}
+.strip button.on{background:var(--ink);color:var(--bone);box-shadow:none}
+.strip .t{justify-content:center}
+.strip .t span{font-size:15px;font-weight:700}
+.strip .bar2{display:none}
+
+/* ---------------------------------------------------------------- referee
+   The referee's view is for entering results. The tables are the plain
+   scoresheet cards; everything else is a folded row below them. */
+.tiles.plain{grid-template-columns:repeat(auto-fill,minmax(330px,1fr));gap:14px}
+.pcard{background:var(--sheet);border-radius:18px;padding:16px 16px 14px;box-shadow:0 0 0 1px rgba(27,27,27,.06),0 1px 0 rgba(27,27,27,.04),0 12px 26px -20px rgba(27,27,27,.35)}
+.pcard .top{display:flex;align-items:center;gap:12px;margin-bottom:12px}
+.pcard.off{background:transparent;box-shadow:inset 0 0 0 1.5px rgba(27,27,27,.18);padding:12px 16px}
+.pcard.off .top{margin:0}
+.pcard .mt{position:relative;width:34px;height:41px;border-radius:var(--shape);flex:none;display:grid;place-items:center;color:var(--bone)}
+.pcard .mt::before{content:"";position:absolute;inset:0;border-radius:inherit;background:var(--red);filter:url(#paint)}
+.pcard .mt::after{content:"";position:absolute;inset:3px;border:1.2px solid var(--bone);border-radius:inherit;opacity:.8}
+.pcard .mt span{position:relative;z-index:1;font-family:var(--syne);font-weight:800;font-size:17px;letter-spacing:-.04em}
+.pcard .mt.off{color:var(--ink-2)}
+.pcard .mt.off::before{background:transparent;filter:none;border:1.5px dashed rgba(27,27,27,.35)}
+.pcard .mt.off::after{display:none}
+.pcard .what{flex:1;min-width:0}
+.pcard .what b{display:block;font-weight:600;font-size:14px}
+.pcard .what .micro{display:block;color:var(--ink-2);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pcard.off .what b{font-weight:500;color:var(--ink-2)}
+.pcard .sheet{display:grid;grid-template-columns:minmax(0,1fr) repeat(var(--g),44px);gap:6px;align-items:center}
+.pcard .sheet .nm{font-weight:500;font-size:15px;line-height:1.15;min-width:0;padding-right:6px;overflow-wrap:anywhere}
+.pcard .sheet .nm.win{font-weight:700}
+.pcard .gh{font-size:10px;font-weight:600;letter-spacing:.08em;color:var(--ink-2);text-align:center}
+.pcard .cell{width:44px;height:44px;border-radius:10px;border:1px solid var(--rule);background:var(--field,#FBF8F3);color:var(--ink);text-align:center;font-size:20px;font-weight:600;outline:none;padding:0;box-shadow:inset 0 1px 1.5px rgba(27,27,27,.07);transition:border-color .15s,box-shadow .15s}
+.pcard .cell:focus{border-color:var(--ink);box-shadow:0 0 0 1px var(--ink);background:var(--field,#FBF8F3)}
+.pcard .cell.won{color:var(--red);font-weight:700;background:var(--field,#FBF8F3);border-color:var(--rule)}
+.pcard .cell.bad{border-color:var(--red);box-shadow:0 0 0 1px var(--red)}
+.pcard .warn2{text-align:left;margin-top:6px}
+.pcard .acts{display:flex;flex-wrap:wrap;align-items:center;gap:10px 16px;margin-top:12px}
+.pcard .save{flex:1 1 100%;height:42px;border-radius:999px;background:transparent;box-shadow:inset 0 0 0 1.5px var(--rule);color:var(--ink-2);display:flex;align-items:center;justify-content:center;gap:8px;font-weight:600}
+.pcard .save.ready{background:var(--ink);box-shadow:none;color:var(--bone)}
+.pcard .rq{display:flex;align-items:center;gap:6px;font-size:12.5px;font-weight:600;color:var(--ink-2)}
+.pcard .rq input{accent-color:var(--ink)}
+
+/* the folded rows, as the phone page has them */
+details.fold{border-bottom:1px solid var(--rule)}
+details.fold summary{list-style:none;display:flex;justify-content:space-between;align-items:baseline;gap:16px;padding:16px 0;cursor:pointer}
+details.fold summary::-webkit-details-marker{display:none}
+details.fold summary b{font-family:var(--syne);font-size:20px;font-weight:700;letter-spacing:-.025em;white-space:nowrap}
+details.fold summary > span{display:flex;gap:12px;align-items:baseline;min-width:0;color:var(--ink-2)}
+details.fold summary em{font-style:normal;font-size:10.5px;font-weight:600;letter-spacing:.09em;text-transform:uppercase;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+details.fold summary i{font-style:normal;color:var(--ink);font-size:20px;line-height:1;transition:transform .35s var(--ease)}
+details.fold[open] summary i{transform:rotate(45deg)}
+details.fold .in{padding:4px 0 24px}
+.ref .cols{display:block;margin-top:34px;border-top:1.5px solid var(--ink)}
+.ref .bycup{display:block;margin-top:34px;border-top:1.5px solid var(--ink)}
+.ref .cols.bycup-mode{margin-top:0;border-top:0}
+.ref .fold .panel-head h2{display:none}
+.ref .fold .panel-head{justify-content:flex-end}
+.ref .fold .panel-head:empty,.ref .fold .panel-head:not(:has(*:not(h2))){display:none}
+.ref .fold .cupcol .ch{display:none}
+.ref .jump{display:none!important}
+.ref .cols.bycup-mode #recent .panel-body{display:block}
+.ref .cols.bycup-mode #recent .panel-body > .row.result:nth-child(2){border-top:0}
+@media (max-width:640px){.tiles.plain{grid-template-columns:minmax(0,1fr)}}
+.tiles.plain{align-items:start}
+.pcard .acts{width:auto;margin:12px 0 0;justify-content:flex-start}
+.pcard .save{text-transform:none;letter-spacing:0;font-size:14px;max-width:none}
+
+/* -------------------------------------------- Seat now, as TTT Admin had it */
+.tag-next{font-size:10.5px;font-weight:700;letter-spacing:.09em;text-transform:uppercase;color:var(--red)}
+.list .r .ac{display:none;gap:12px;align-items:center}
+.list .r.hoverable:hover .ac,.list .r:focus-within .ac{display:flex}
+@media (hover:none){.list .r .ac{display:flex}}
+.cupcol .list .r .ac{gap:10px}
+/* the table changing hands */
+@keyframes leave{to{opacity:0;transform:translateX(-24px);filter:blur(6px)}}
+@keyframes arrive{from{opacity:0;transform:translateX(24px);filter:blur(6px)}}
+.tile.leaving{animation:leave .43s var(--ease) forwards;pointer-events:none}
+.tile.arriving{animation:arrive .6s var(--ease) both}
+@media (prefers-reduced-motion:reduce){.tile.leaving{opacity:0}}
+/* the toast: what happened, what it means, Undo */
+.toast.rich{display:flex;gap:16px;align-items:center;min-width:min(360px,90vw)}
+.toast .tt2{flex:1;min-width:0;font-weight:500}
+.toast .tt2 b{display:block;font-weight:600}
+.toast .tt2 span{display:block;opacity:.75;font-size:13px;margin-top:1px}
+.toast .tundo{background:none;color:var(--bone);padding:0;border-radius:0;font-weight:600;text-decoration:underline;text-underline-offset:3px}
+.toast .tundo:hover{background:none;opacity:.8}
+
+/* ------------------------------------------------ chapters line up
+   Every chapter's head is the same: the title, anything else on its
+   baseline (a note, the standings' column labels, Add a result as a link),
+   and the ink rule under it — so the rules sit at one height across the
+   columns and the first rows of each start together. Nothing inside a
+   chapter draws a second ink rule. */
+.panel-head{flex-wrap:nowrap;margin-bottom:0;padding-bottom:12px;border-bottom:1.5px solid var(--ink);min-height:50px;align-items:baseline}
+.panel-head h2{white-space:nowrap}
+.panel-head .note{text-align:right;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+.panel .list .r:first-child,.panel-body > .row.result:first-child{border-top:0}
+@media (min-width:761px){.cols.bycup-mode #recent .panel-body > .row.result:nth-child(2){border-top:0}}
+.panel-head.sth{display:grid;grid-template-columns:26px minmax(0,1fr) 28px 32px 40px;gap:8px;align-items:baseline}
+.panel-head.sth h2{grid-column:1/3;margin:0}
+.panel-head .ch{font-size:10px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-2);text-align:right}
+.panel-body > .grp:first-child{margin-top:14px}
+.panel-body > .grp{margin:18px 0 4px}
+.find-res{border-bottom:1px solid var(--rule);margin:0}
+#manual-entry .panel-body{padding-top:14px}
+.ref .fold .panel-head{border-bottom:0;min-height:0;padding-bottom:6px}
+.ref .fold .panel-head.sth h2{display:block;visibility:hidden}
+.panel-body > .ko,.panel-body > .ko-x{margin-top:14px}
+
+/* the scoring table: the cells keep clear of the number on the net (half the
+   pill's height, then a little air), and the names sit on red labels, as in
+   TTT Admin, so the painted line and the centre line never run through them */
+.tiles.scoring .ptable:not(.off) .half.a{padding-bottom:calc(clamp(13px,7.5cqi,24px) * .72 + 9px)}
+.tiles.scoring .ptable:not(.off) .half.b{padding-top:calc(clamp(13px,7.5cqi,24px) * .72 + 9px)}
+.tiles.scoring .pn span{background:var(--red);padding:0 6px;border-radius:4px;box-decoration-break:clone;-webkit-box-decoration-break:clone}
+.tiles.scoring .pn .amp{padding:0 4px}
+/* "Get ready" is .ready too; a Save button that is ready is not that */
+.save.ready{font-size:13.5px;font-weight:600;letter-spacing:0;text-transform:none;white-space:nowrap;overflow:hidden}
+.tiles.compact .save.ready{font-size:13px}
+
+/* ------------------------------------------------ Everyone: the cup columns
+   One skeleton per cup: name, then two blocks, each a small ink heading on
+   the ink rule and a fixed number of slots — so the blocks start at the same
+   height in every column. */
+.cupcol .ch{display:flex;justify-content:space-between;align-items:baseline;gap:10px;margin-bottom:18px}
+.cupcol .ch b{font-size:26px}
+.cupcol .ch .micro{display:none}
+.cupcol .blk + .blk{margin-top:30px}
+.cupcol .bh{display:flex;justify-content:space-between;align-items:baseline;gap:10px;padding-bottom:8px;border-bottom:1.5px solid var(--ink);min-height:26px}
+.cupcol .bh .bt{font-size:10.5px;font-weight:700;letter-spacing:.09em;text-transform:uppercase;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+.cupcol .bh .link{font-size:12.5px}
+.cupcol .bh.sth{display:grid;grid-template-columns:26px minmax(0,1fr) 28px 32px 40px;gap:8px}
+.cupcol .bh.sth .bt{grid-column:1/3}
+.cupcol .bh .hc{font-size:10px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-2);text-align:right}
+.cupcol .slots3{min-height:calc(3 * 58px)}
+.cupcol .slots3 .r{min-height:58px;box-sizing:border-box}
+.cupcol .slots3 .r:first-child{border-top:0}
+.cupcol .slots4{min-height:calc(4 * 39px)}
+.cupcol .slots4 .st{height:39px;box-sizing:border-box;align-items:center}
+.cupcol .blank{padding:14px 0 0;color:var(--ink-3)}
+.cupcol .st.q .pos{color:var(--ink)}
+/* a knockout match on one line: the sides, its table or its score */
+.cupcol .st.kr .vs{display:flex;gap:6px;min-width:0;align-items:baseline;overflow:hidden;white-space:nowrap}
+.cupcol .st.kr .vs span{overflow:hidden;text-overflow:ellipsis;min-width:0}
+.cupcol .st.kr .vs i{font-style:normal;color:var(--ink-3);font-size:12.5px;flex:none}
+.cupcol .st.kr .vs .w{font-weight:700}
+.cupcol .st.kr .vs .l{color:var(--ink-3)}
+.cupcol .st.kr .kt{grid-column:3/-1;text-align:right}
+.cupcol .st.kr .tagt{background:var(--ink);color:var(--bone);font-size:9.5px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;padding:3px 8px 2px;border-radius:999px;white-space:nowrap}
+@media (max-width:760px){.cupcol .slots3,.cupcol .slots4{min-height:0}}
+
+.cupcol .bh{height:30px;box-sizing:border-box;align-items:end;padding-bottom:8px;min-height:0}
+.cupcol .bh > *{line-height:1}
+.cupcol .slots4 .list .r{min-height:58px;box-sizing:border-box}
+.cupcol .slots4 .list .r:first-child{border-top:0}
+.cupcol .r.kr.done .nm{font-weight:700}
+.cupcol .r.kr.done .nm .v{font-weight:500}
+.cupcol .r.kr .ks{font-weight:700}
+.cupcol .r.kr .tagt{background:var(--ink);color:var(--bone);font-size:9.5px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;padding:3px 8px 2px;border-radius:999px;white-space:nowrap}
+
+/* ------------------------------------------------ touch: tap a row for its actions
+   No hover on a phone or a tablet, so nothing is shown that a hover would
+   have shown; a tapped row takes a faint ground and opens its actions on a
+   line beneath it. */
+@media (hover:none){
+  .on-hover,.list .r .on-hover,.result .on-hover,.list .r .ac,.kc .on-hover{display:none}
+  #live .hoverable,#live .kc{-webkit-tap-highlight-color:transparent}
+  #live .tapped{background:rgba(27,27,27,.045);box-shadow:-10px 0 0 rgba(27,27,27,.045),10px 0 0 rgba(27,27,27,.045)}
+  .list .r.tapped .tail{display:contents}
+  .list .r.tapped .ac{display:flex;grid-column:2/-1;grid-row:2;gap:22px;padding:0 0 2px}
+  .result.tapped .on-hover{display:block;position:static;background:none;padding:8px 0 2px;grid-column:1/-1;justify-self:start}
+  .kc.tapped{box-shadow:0 0 0 1.5px var(--ink)}
+  .kc.tapped .on-hover{display:inline;opacity:1}
+  #live .tapped .link{font-size:14px;padding:4px 0}
+}
+.tiles:not(.scoring) .half.b{padding-top:12cqi}
+.tiles:not(.scoring) .half.a{padding-bottom:13cqi}.tiles:not(.scoring) .half.b{padding-top:13cqi}
+/* the mark: ink, with a red ball over the middle T */
+.tt{position:relative;display:inline-block;color:var(--ink);text-shadow:none}.tt::after{content:"";position:absolute;left:calc(50% - .02em);top:var(--ball-top,-.12em);width:.24em;height:.24em;border-radius:50%;background:var(--red);transform:translateX(-50%);pointer-events:none}
+/* no live dot in the header: the mark carries the red there */
+#pulse{display:none}
+
+/* the header carries the mark alone; the evening's name stays for screen readers */
+.bar .ev{position:absolute!important;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);clip-path:inset(50%);white-space:nowrap}
+
+/* the phase stepper, in Setup → Event (it left the header): the same steps,
+   now the control that sets the evening's phase */
+.phase .phase-step{margin-left:0;flex-wrap:wrap;row-gap:4px}
+.phase .phase-step button{cursor:pointer}
+.phase .sub{flex:1 1 220px;color:var(--ink-2);font-size:13px}
+.phase .sub .link{margin-left:6px;font-size:13px}
+.phase .phase-step button.on{background:var(--bone)}
+@media (max-width:760px){.phase .phase-step i{display:none}}
+
+/* ------------------------------------------------ Telegram, for players
+   The public console's one-time "Wann bist du dran?" sheet (app.js
+   renderNudge): a card at the foot of the page that leaves the room usable
+   behind it — a nudge, not a gate. In the Focus language: a sheet card,
+   names as rows, the tap in red. */
+.bar .tg-btn{margin-left:auto;font-size:12.5px;white-space:nowrap}
+.bar .tg-btn:not([hidden]) + .role-tag{margin-left:0}
+@media (max-width:480px){.tg-btn span{display:none}}
+.nudge{position:fixed;left:0;right:0;bottom:0;z-index:70;display:flex;justify-content:center;
+  padding:0 12px calc(12px + env(safe-area-inset-bottom));pointer-events:none}
+.nudge[hidden],.tg-btn[hidden]{display:none}
+.nudge-card{pointer-events:auto;position:relative;width:100%;max-width:440px;background:var(--sheet);
+  border-radius:18px;padding:20px 18px 14px;box-shadow:0 0 0 1px rgba(27,27,27,.06),0 18px 40px -18px rgba(27,27,27,.45);
+  display:flex;flex-direction:column;gap:10px;animation:nudge-up .3s var(--ease)}
+@keyframes nudge-up{from{transform:translateY(24px);opacity:0}}
+@media (prefers-reduced-motion:reduce){.nudge-card{animation:none}}
+.nudge-card h2{font-family:var(--syne);font-size:24px;font-weight:800;letter-spacing:-.03em;margin:0;padding-right:28px}
+.nudge-card p{margin:0;color:var(--ink-2);font-size:14px;line-height:1.45}
+.nudge-card input{width:100%;border:0;border-bottom:1.5px solid var(--rule);background:transparent;padding:8px 0 9px;font-size:16px;outline:none}
+.nudge-card input:focus{border-bottom-color:var(--ink)}
+.nudge-x{position:absolute;right:10px;top:10px;border:0;background:transparent;color:var(--ink-2);font-size:24px;line-height:1;padding:4px 8px;cursor:pointer}
+.nudge-list{display:flex;flex-direction:column;max-height:42vh;overflow:auto;border-top:1.5px solid var(--ink)}
+.nudge-name{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:11px 2px;border-bottom:1px solid var(--rule);
+  color:var(--ink);font-weight:600;font-size:16px;text-decoration:none}
+.nudge-name b{color:var(--red)}
+.nudge-name:hover,.nudge-name:active{color:var(--red)}
+.nudge-foot{display:flex;justify-content:space-between;gap:8px;margin-top:2px}
+.nudge-list:empty{border-top:0}
