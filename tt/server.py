@@ -828,6 +828,14 @@ class App:
         m = s.matches[p["match_id"]]
         f = s.formats.get(m.format_id)
         pair = {x for x in (m.entrant_a, m.entrant_b) if x}
+        if m.status == "pending" and f:
+            # already waiting (from the Up next list): no table to free, just
+            # move it behind every other fixture in its draw's line
+            line = [x for x in f.pending_fixtures(s) if x.id != m.id]
+            back = max([int(x.meta.get("deferred", 0)) for x in line] + [int(m.meta.get("deferred", 0)) - 1]) + 1
+            s.append("match_order", {"match_id": m.id, "deferred": back})
+            dispatch.tick(s)
+            return {"reseated": m.status == "live"}
         if f and not f.can_redispatch_pending():
             s.append("match_void", {"match_id": m.id})
         else:
