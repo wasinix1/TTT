@@ -173,10 +173,11 @@ class Format:
         """Phase transitions and round generation. Runtime only."""
         return
 
-    def settings_changed(self, store):
+    def settings_changed(self, store, before=None):
         """The admin just saved this format's settings. Anything already
         drawn that the new settings rule out is taken back here; reading the
-        config afresh is enough for everything that has not been drawn yet."""
+        config afresh is enough for everything that has not been drawn yet.
+        `before` is the config as it was ahead of the save."""
         return
 
     def propose(self, store, busy, force=False):
@@ -894,7 +895,7 @@ class Swiss(Format):
             return False
         return all(store.players[p].active for p in ent.player_ids if p in store.players)
 
-    def _generate_round(self, store, rnd):
+    def _generate_round(self, store, rnd, only=None):
         form = self._form(store)
         meets = store.meetings()
         # Shuffled first, so whatever the sort leaves tied is drawn at random —
@@ -902,7 +903,8 @@ class Swiss(Format):
         # by strength just seeded the favourites into each other. Runs at
         # request time and the matches go into the log, so replay never
         # re-rolls it.
-        pool = [e for e in self.entrant_ids if self._eligible(store, e)]
+        pool = [e for e in self.entrant_ids if self._eligible(store, e)
+                and (only is None or e in only)]
         _draw.shuffle(pool)
         def key(e):
             won, sets, points = form.get(e, (0, 0, 0))
@@ -981,7 +983,39 @@ class Swiss(Format):
         if not live:
             self._generate_round(store, cur)
 
-    def settings_changed(self, store):
+    def _adopt_strict_rounds(self, store):
+        """Paced or free-running turned into strict rounds part-way through.
+
+        Strict rounds read the round off each match, but a draw that pairs on
+        demand numbers its matches as they are made, so the games on the
+        tables meant nothing to it, and everybody not yet seated had no queue
+        to wait in any more: they sat out until the whole lot was over. So
+        every Swiss match is renumbered by games played, the stale queue is
+        cleared, and whoever has not had a game in the current round is drawn
+        into it now, alongside the matches already out."""
+        mine = sorted((m for m in store.matches.values()
+                       if m.format_id == self.id and m.status != "void"
+                       and m.meta.get("phase") == "swiss"),
+                      key=lambda m: m.id)
+        seen = defaultdict(int)
+        for m in mine:
+            who = [e for e in ((m.meta.get("bye"),) if m.meta.get("bye")
+                               else (m.entrant_a, m.entrant_b)) if e]
+            rnd = max((seen[e] for e in who), default=0)
+            for e in who:
+                seen[e] = rnd + 1
+            if m.meta.get("round") != rnd:
+                store.append("match_round", {"match_id": m.id, "round": rnd})
+        for q in [q.entrant_id for q in store.queue if q.format_id == self.id]:
+            store.append("queue_leave", {"entrant_id": q, "opt_out": False})
+        cur = max(seen.values(), default=0)
+        if cur == 0:
+            self._generate_round(store, 0)
+        elif cur < int(self.config.get("rounds", 5)):
+            behind = {e for e in self.entrant_ids if seen.get(e, 0) < cur}
+            self._generate_round(store, cur - 1, only=behind)
+
+    def settings_changed(self, store, before=None):
         """A round count lowered mid-event has to cut off, not just stop
         pairing. Everything reads the count live, so nothing new is drawn
         past it, but whatever was already drawn beyond it used to be played
@@ -992,6 +1026,9 @@ class Swiss(Format):
         A result already in stays — it was played."""
         if self.status != "running" or self.phase == "ko":
             return
+        if before and before.get("continuous") \
+                and not self.config.get("continuous"):
+            self._adopt_strict_rounds(store)
         total = int(self.config.get("rounds", 0) or 0)
         if total <= 0:
             return
