@@ -728,7 +728,7 @@ function upTail(r) {
   const acts = [
     r.kind === 'fixture' && isAdmin() && !next
       ? `<button class="link" data-act="seat" data-m="${r.id}">Seat now</button>` : '',
-    r.kind === 'fixture' && isAdmin() && !r.blocked
+    r.kind === 'fixture' && isAdmin()
       ? `<button class="link" data-act="put-back" data-m="${r.id}">Put back</button>` : '',
     r.kind === 'waiting' && canScore()
       ? `<button class="link" data-act="rest" data-e="${r.id}" data-n="${esc(nice(r.a))}">Sit out</button>` : '',
