@@ -739,6 +739,15 @@ class Store:
             return
         m.meta["deferred"] = int(p.get("deferred", 0))
 
+    def _ev_match_round(self, p, seq):
+        """Renumber a Swiss fixture's round. A draw that paired on demand
+        numbers its matches as they come, which means nothing once the format
+        is changed to strict rounds, so it is put back in step with games
+        played. Its own event so an old log replays as it was recorded."""
+        m = self.matches.get(p["match_id"])
+        if m:
+            m.meta["round"] = int(p["round"])
+
     def _ev_match_result(self, p, seq):
         m = self.matches.get(p["match_id"])
         if not m:

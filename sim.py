@@ -992,6 +992,37 @@ def test_lowering_the_round_count_cuts_off():
         shutil.rmtree(d)
 
 
+def test_paced_to_strict_mid_round_adapts():
+    print("\n[switching paced to strict rounds in round one keeps everyone playing]")
+    app, d = fresh()
+    s = app.store
+    solo_field(app, 10, 5.0, 0.2)
+    cfg = {"rounds": 3, "continuous": True, "paced": True,
+           "then_ko": True, "advance": 4}
+    f = app.act("admin", "add_format", {"kind": "swiss", "name": "Swiss",
+        "config": cfg, "entrant_ids": entrant_ids(app)})["format_id"]
+    app.act("admin", "start_format", {"id": f})
+    for e in entrant_ids(app):
+        app.act("admin", "join_queue", {"entrant_id": e, "format_id": f})
+    mine = lambda: [m for m in s.matches.values() if m.format_id == f
+                    and m.status != "void"]
+    check(len(mine()) >= 1, "paced draw has seated a first game")
+    app.act("admin", "update_format", {"id": f, "config": dict(cfg, continuous=False, paced=False)})
+    seen = {}
+    for m in mine():
+        for e in (m.entrant_a, m.entrant_b):
+            if e:
+                seen[e] = seen.get(e, 0) + 1
+    check(all(seen.get(e, 0) == 1 for e in entrant_ids(app)),
+          "everyone has exactly one first-round game after the switch")
+    check({m.meta.get("round") for m in mine()} == {0}, "all numbered round one")
+    check(not s.queue, "the stale queue is cleared")
+    drain(app)
+    fo = s.formats[f]
+    check(fo.phase == "ko", "and the event runs on through the rounds to the knockout")
+    shutil.rmtree(d)
+
+
 def test_swiss_ko_drops_the_queue():
     print("\n[cutting a continuous Swiss to a knockout closes its queue]")
     app, d = fresh()
@@ -2748,6 +2779,7 @@ if __name__ == "__main__":
     test_paced_swiss_keeps_the_field_level()
     test_paced_swiss_odd_field_catches_up()
     test_swiss_pairs_on_sets_then_points()
+    test_paced_to_strict_mid_round_adapts()
     test_swiss_ko_drops_the_queue()
     test_put_back_returns_players()
     test_put_back_frees_the_table()
