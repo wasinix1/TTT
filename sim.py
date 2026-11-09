@@ -2400,6 +2400,49 @@ def test_web_push_over_the_wire():
           "and only the phone can read it")
 
 
+def test_open_play_pairs_by_tonights_results():
+    print("\n[open play pairs on tonight's results, and ranks by them]")
+
+    def night(by_results, seed=3):
+        app, d = fresh()
+        s = app.store
+        (cup,) = pool_event(app, kind="open_play",
+                            config={"mode": "singles", "by_results": by_results})
+        skill = {}
+        for i, st in enumerate([9.5, 9, 8, 7, 6, 5, 5, 4, 3, 2, 1.5, 1]):
+            e = app.act("admin", "admit", {"name": f"S{i}", "cup_id": cup, "kind": "single",
+                                           "strength": st})["entrant_id"]
+            skill[e] = st
+        app.act("admin", "start_format", {"id": s.cups[cup].format_id})
+        rng = random.Random(seed)
+        for _ in range(45):
+            for n in sorted(s.tables):
+                play_one(app, n, upset=0.15, rng=rng)
+        done = sorted(s.done_matches(), key=lambda m: m.seq)
+        late = done[len(done) // 2:]
+        gap = sum(abs(skill[m.entrant_a] - skill[m.entrant_b]) for m in late) / len(late)
+        played = {e: 0 for e in skill}
+        for m in done:
+            played[m.entrant_a] += 1
+            played[m.entrant_b] += 1
+        rows = s.formats[s.cups[cup].format_id].standings(s)[0]
+        shutil.rmtree(d)
+        return gap, played, rows, skill
+
+    on_gap, played, rows, skill = night(True)
+    off_gap, _, off_rows, _ = night(False)
+    print(f"   skill gap in the second half: {on_gap:.2f} by results, {off_gap:.2f} without")
+    check(on_gap < off_gap - 0.6, "pairing by results brings people of a level together")
+    check(min(played.values()) >= max(played.values()) - 6 and min(played.values()) > 0,
+          "and nobody is left waiting for a close match all night")
+    check(rows["ranked"] and [r["rank"] for r in rows["rows"]] == list(range(1, 13)),
+          "the standings are a ranking")
+    top = sum(skill[r["entrant_id"]] for r in rows["rows"][:4]) / 4
+    bottom = sum(skill[r["entrant_id"]] for r in rows["rows"][-4:]) / 4
+    check(top > bottom + 3, "and it sorts the field: the top four are well above the bottom four")
+    check(not off_rows.get("ranked"), "with it off, standings stay plain wins")
+
+
 def test_the_board_shows_the_next_pairing():
     print("\n[coming up shows a pairing, not a list of strangers]")
     app, d = fresh()
@@ -3178,6 +3221,7 @@ if __name__ == "__main__":
     test_each_cup_says_what_its_players_do()
     test_the_other_side_never_came()
     test_the_board_draws_scramble_doubles_by_four()
+    test_open_play_pairs_by_tonights_results()
     test_web_push_crypto()
     test_web_push_calls()
     test_web_push_over_the_wire()

@@ -92,7 +92,7 @@ const STR = {
     getReady: 'Get ready', nextChip: 'next', putBack: 'put back', waitsMatch: 'waiting for a match',
     more: n => `${n} more`, andMore: n => `and ${n} more after that`, nothingQueued: 'Nothing queued.',
     yourCup: 'you play here',
-    goThrough: n => `Top ${n} go through`, winsTonight: 'Wins tonight', youAre: r => `You’re ${ord(r)}`, leads: n => n + ' leads',
+    goThrough: n => `Top ${n} go through`, winsTonight: 'Wins tonight', ranking: 'Ranking', youAre: r => `You’re ${ord(r)}`, leads: n => n + ' leads',
     colW: 'W', colL: 'L', colBh: 'Bh', colDiff: '±',
     knockout: 'Knockout', champion: 'Winner', tbd: 'to be decided', liveAt: n => 'table ' + n,
     beat: n => 'beat ' + n, walkover: 'walkover', bye: 'bye',
@@ -184,7 +184,7 @@ const STR = {
     getReady: 'Mach dich bereit', nextChip: 'als nächstes', putBack: 'zurückgestellt', waitsMatch: 'wartet auf ein Spiel',
     more: n => `${n} weitere`, andMore: n => `und ${n} weitere danach`, nothingQueued: 'Noch niemand in der Reihe.',
     yourCup: 'du spielst hier',
-    goThrough: n => `Die ersten ${n} kommen weiter`, winsTonight: 'Siege heute', youAre: r => `Du bist ${r}.`, leads: n => n + ' führt',
+    goThrough: n => `Die ersten ${n} kommen weiter`, winsTonight: 'Siege heute', ranking: 'Rangliste', youAre: r => `Du bist ${r}.`, leads: n => n + ' führt',
     colW: 'S', colL: 'N', colBh: 'Bh', colDiff: '±',
     knockout: 'K.o.-Runde', champion: 'Sieger:in', tbd: 'steht noch nicht fest', liveAt: n => 'Tisch ' + n,
     beat: n => 'gegen ' + n, walkover: 'kampflos', bye: 'Freilos',
@@ -1098,7 +1098,8 @@ function standingsBlock(f, ids) {
     const many = groups.length > 1;
     const hd = `<div class="st head${swiss ? ' swiss' : ''}"><span></span><span></span><span>${esc(L.colW)}</span><span>${esc(swiss ? L.colBh : L.colL)}</span><span>${esc(L.colDiff)}</span></div>`;
     out.push(groups.map(g => {
-      const rows = open ? g.rows.slice().sort((a, b) => b.won - a.won || a.lost - b.lost) : g.rows;
+      // ranked by tonight's form, the server's order is the ranking
+      const rows = open && !g.ranked ? g.rows.slice().sort((a, b) => b.won - a.won || a.lost - b.lost) : g.rows;
       const key = f.id + '|' + g.group, open2 = ui.stAll[key];
       const cutAt = open2 ? rows.length : TABLE_ROWS;
       const more = rows.length > TABLE_ROWS
@@ -1209,7 +1210,7 @@ function standingsSection() {
   const fs = (S.formats || []).filter(f => f.status !== 'setup' && inView(f.cup_id));
   const blocks = fs.map(f => ({ f, html: standingsBlock(f, ids) })).filter(x => x.html);
   if (!blocks.length) return '';
-  const title = f => f.kind === 'open_play' ? L.winsTonight : (f.view && f.view.bracket ? L.knockout : L.standings);
+  const title = f => f.kind === 'open_play' ? ((f.standings || [])[0] && f.standings[0].ranked ? L.ranking : L.winsTonight) : (f.view && f.view.bracket ? L.knockout : L.standings);
   if (multiCup() && !selectedCup()) {
     // everyone: one fold per cup, each saying the one thing worth knowing
     return head(L.standings) + blocks.map(({ f, html }) => `<details class="fold"${blocks.length === 1 ? ' open' : ''}>

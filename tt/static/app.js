@@ -923,11 +923,14 @@ function standTop(f) {
     }).join('')}</div>`);
   }
   const groups = (f.standings || []).filter(g => g.rows.length);
-  const label = f.kind === 'open_play' ? 'Wins tonight' : groups.length > 1 ? 'Through so far' : 'Standings';
+  const ranked = groups.length && groups[0].ranked;
+  const label = f.kind === 'open_play' ? (ranked ? 'Ranking' : 'Wins tonight') : groups.length > 1 ? 'Through so far' : 'Standings';
   const c2 = f.kind === 'swiss' ? 'Bh' : 'L';
   if (!groups.length || !groups.some(g => g.rows.some(r => r.played))) return head(label) + slots('<p class="blank">Nothing played yet.</p>');
   let rows;
-  if (f.kind === 'open_play') {
+  if (f.kind === 'open_play' && ranked) {
+    rows = groups[0].rows.slice(0, 4).map(r => row(r.rank, r, '', r.lost));
+  } else if (f.kind === 'open_play') {
     rows = groups[0].rows.slice().sort((a, b) => b.won - a.won || a.lost - b.lost).slice(0, 4).map((r, i) => row(i + 1, r, '', r.lost));
   } else if (f.kind === 'swiss') {
     rows = groups[0].rows.slice(0, 4).map(r => row(r.rank, r, '', r.buchholz ?? 0));
@@ -1084,9 +1087,10 @@ function renderStandings() {
     // so the ink rule under every chapter sits at the same height and the
     // first rows of Up next, Standings and Results line up across the page
     blocks.push(`<div class="panel">
-      <div class="panel-head sth"><h2>${open ? 'Wins tonight' : 'Standings'}</h2><span class="ch">W</span><span class="ch">${swiss ? 'Bh' : 'L'}</span><span class="ch">±</span></div>
+      <div class="panel-head sth"><h2>${open ? (groups[0].ranked ? 'Ranking' : 'Wins tonight') : 'Standings'}</h2><span class="ch">W</span><span class="ch">${swiss ? 'Bh' : 'L'}</span><span class="ch">±</span></div>
       <div class="panel-body">${groups.map(g => {
-        const rows = open ? g.rows.slice().sort((a, b) => b.won - a.won || a.lost - b.lost) : g.rows;
+        // ranked by tonight's form, the server's order is the ranking
+        const rows = open && !g.ranked ? g.rows.slice().sort((a, b) => b.won - a.won || a.lost - b.lost) : g.rows;
         const key = f.id + '|' + g.group, all = standAll[key];
         const more = rows.length > TABLE_ROWS
           ? `<button class="link more" data-act="st-all" data-k="${esc(key)}">${all ? 'Show fewer' : `+ ${rows.length - TABLE_ROWS} more`}</button>` : '';
@@ -1950,7 +1954,16 @@ const fieldsFor = pfx => {
           <option value="0.6" ${v('c_rw', '0.6') === '0.6' ? 'selected' : ''}>Balanced</option>
           <option value="1.2" ${v('c_rw') === '1.2' ? 'selected' : ''}>Strong</option>
         </select></div>
+      <div class="field" style="max-width:190px"><label for="${id('c-res')}">Pair by tonight’s results</label>
+        <select id="${id('c-res')}" data-f="${k('c_res')}">
+          <option value="1" ${v('c_res', '1') !== '0' ? 'selected' : ''}>On — like a Swiss</option>
+          <option value="0" ${v('c_res') === '0' ? 'selected' : ''}>Off — just who waited longest</option>
+        </select></div>
     </div>
+    ${why('With results on, people who are doing about as well as each other tonight are paired, ' +
+          'and the standings become a ranking in that order. The first round or two are as good ' +
+          'as random; after that winners meet winners. Nobody waits for ever for a close match — ' +
+          'the longer somebody waits, the wider the gap they will accept.')}
     ${SHOW_STRENGTH ? why('The gap widens by one every few times a waiting entrant is passed over, so ' +
           'nobody sits all night waiting for a perfect match.',
           'Avoiding rematches is priced in strength points: on a lopsided field, ' +
@@ -2016,6 +2029,7 @@ function formatConfig(pfx, kind) {
     widen_every: n('c_widen') || 3,
     rematch_weight: n('c_rw') ?? 0.6,
     avoid_rematch: (n('c_rw') ?? 0.6) > 0,
+    by_results: v('c_res', '1') !== '0',
   });
   if (kind === 'groups') Object.assign(cfg, {
     n_groups: n('c_groups') || 2, then_ko: v('c_ko') !== false,
@@ -2044,6 +2058,7 @@ function seedFormat(pfx, kind, cfg) {
     set('c_mode', cfg.mode); set('c_gap', cfg.base_gap);
     set('c_widen', cfg.widen_every);
     if (cfg.rematch_weight !== undefined) form[pfx + 'c_rw'] = String(cfg.rematch_weight);
+    form[pfx + 'c_res'] = cfg.by_results === false ? '0' : '1';
   }
   if (kind === 'groups') {
     set('c_groups', cfg.n_groups); set('c_adv', cfg.advance_per_group);
