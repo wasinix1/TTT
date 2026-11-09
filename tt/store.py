@@ -33,12 +33,19 @@ BLANK_EVENT = {
     "starts_at": "",        # naive local "YYYY-MM-DDTHH:MM", "" = unscheduled
     "ends_at": "",          # optional "HH:MM", shown as a range on the landing
     "phase_pin": "",        # admin override; "" = derive from the clock
-    "player_scores": False, # players may enter results over Telegram, both sides agreeing
+    "player_scores": False, # players enter their own results, from Telegram or their phone
+    # an unconfirmed score from one side counts after this many minutes,
+    # unless the other side has said otherwise. 0: it waits for the other
+    # side (or the orga) however long that takes
+    "score_auto_min": 0,
+    # players check themselves in to open play from their phone, and can
+    # walk in without the desk (docs/self-run.md)
+    "self_checkin": False,
 }
 
 # Event fields that are really the club's habits rather than one evening's,
 # so a new event keeps them — decided once, like the tables.
-CARRIED = ("player_scores",)
+CARRIED = ("player_scores", "score_auto_min", "self_checkin")
 
 
 class Store:
@@ -90,6 +97,10 @@ class Store:
         # who was pulled out of which queue, so a scheduled match can hand
         # them back to open play when it finishes
         self.came_from: dict[str, str] = {}
+        # scores players reported for their own match, by the seq that
+        # opened them: open until the other side agrees, disputes, or time
+        # runs out (tt/play.py)
+        self.claims: dict[int, dict] = {}
         self.event: dict = dict(BLANK_EVENT)
         self.seq = 0
         self.version = 0             # bumped on every applied event, for polling
@@ -536,6 +547,7 @@ class Store:
         self.came_from = {}
         self.registrations = {}
         self.registration_order = []
+        self.claims = {}
         for c in self.cups.values():
             c.format_id = None          # the formats it pointed at are gone
         if not p.get("keep_cups", True):
@@ -771,6 +783,30 @@ class Store:
         f = self.formats.get(m.format_id)
         if f:
             f.on_result(self, m)
+
+    def _ev_claim_open(self, p, seq):
+        """One side's word on their match. Writes nothing on its own: the
+        result is a separate match_result, once the claim is settled."""
+        self.claims[seq] = {
+            "id": seq, "match_id": p["match_id"], "qseq": int(p["qseq"]),
+            "side": p["side"], "person_id": p.get("person_id"),
+            "via": p.get("via", ""), "games": [list(g) for g in p["games"]],
+            "ts": self._now, "state": "open", "closed_ts": None}
+
+    def _ev_claim_close(self, p, seq):
+        c = self.claims.get(int(p["id"]))
+        if c and c["state"] == "open":
+            c["state"] = p["state"]
+            c["closed_ts"] = self._now
+
+    def open_claims(self, m):
+        """The reports still standing for this match as it is now — a match
+        put back and seated again is a new match as far as scores go."""
+        if not m or m.status != "live":
+            return []
+        return [c for c in self.claims.values()
+                if c["state"] == "open" and c["match_id"] == m.id
+                and c["qseq"] == m.queued_seq]
 
     def _ev_match_void(self, p, seq):
         m = self.matches.get(p["match_id"])

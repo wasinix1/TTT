@@ -110,7 +110,7 @@ def cup_board(store, cup_id, app):
         if m and store.cup_key(store.formats.get(m.format_id)) == cup_id:
             now.append({"kind": "playing", "id": m.id, "table": n,
                         "a": app.side_name(m, "a"), "b": app.side_name(m, "b"),
-                        "label": m.label})
+                        "label": m.label, "started_ts": m.started_ts})
 
     rows = []
     # scheduled fixtures first — they outrank open play for a table, so they
@@ -137,38 +137,47 @@ def cup_board(store, cup_id, app):
             continue
         qs = sorted([q for q in store.queue if q.format_id == f.id],
                     key=lambda q: (-q.passes, q.joined_seq))
-        if len(qs) >= 2:
+        # scramble doubles draws four people a match, not two
+        need = f.min_entries() if hasattr(f, "min_entries") else 2
+        if len(qs) >= need:
             prop = f.propose(store, busy) or f.propose(store, busy, force=True)
-            if prop and len(prop.entrants) == 2:
-                a, b = prop.entrants
+            if prop and len(prop.entrants) >= 2:
+                ents = list(prop.entrants)
+                meta = (prop.create or {}).get("meta") or {}
                 rows.append({
-                    "kind": "pairing", "id": f"{f.id}:{a}:{b}", "format_name": f.name,
-                    "entrants": [a, b],
-                    "a": store.entrant_name(a), "b": store.entrant_name(b),
+                    "kind": "pairing", "id": f"{f.id}:" + ":".join(ents),
+                    "format_name": f.name, "entrants": ents,
+                    "a": meta.get("name_a") or store.entrant_name(ents[0]),
+                    "b": meta.get("name_b") or store.entrant_name(ents[1]),
                     "label": f.name, "blocked": False,
                 })
-                qs = [q for q in qs if q.entrant_id not in (a, b)]
+                qs = [q for q in qs if q.entrant_id not in ents]
         for q in qs:
             rows.append({
                 "kind": "waiting", "id": q.entrant_id, "format_name": f.name,
                 "entrants": [q.entrant_id],
                 "a": store.entrant_name(q.entrant_id), "b": None,
-                "label": f.name,
+                "label": f.name, "_need": need,
                 "blocked": not store.entrant_available(q.entrant_id, busy),
             })
 
     seat = 0                     # which match-slot this row is waiting for
-    half = None                  # a queued entrant half-way to a pairing
+    fill = None                  # [slot, how many so far, how many it takes]
     for i, r in enumerate(rows):
         r["position"] = i + 1
         if r["kind"] == "waiting":
-            if half is None:
-                half = seat
-                r["_slot"] = seat
-            else:
-                r["_slot"] = half
-                half = None
+            need = r.pop("_need", 2)
+            if fill is None or fill[2] != need:
+                if fill is None:
+                    fill = [seat, 0, need]
+                else:            # a different queue's leftovers: a match of their own
+                    seat += 1
+                    fill = [seat, 0, need]
+            r["_slot"] = fill[0]
+            fill[1] += 1
+            if fill[1] == fill[2]:
                 seat += 1
+                fill = None
         else:
             r["_slot"] = seat
             seat += 1
@@ -196,6 +205,10 @@ def cup_board(store, cup_id, app):
                          else _range_label(tables)),
         "reserved": reserved,
         "match_minutes": int(per // 60),
+        # a match on a table longer than this has probably finished with
+        # nobody entering it: the console and the wall say so (clients do the
+        # clock, since this is cached per state)
+        "overdue_after": int(max(2 * per, per + 600)),
         "waiting": sum(1 for r in rows if r["kind"] == "waiting"),
         "fixtures": sum(1 for r in rows if r["kind"] in ("fixture", "pairing")),
     }

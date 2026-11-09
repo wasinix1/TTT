@@ -8,6 +8,8 @@ from tt import dispatch, formats, simulate
 from tt.simulate import play_one, drain
 
 random.seed(7)
+# an evening that is always still to come, whenever the tests run
+SOON = (datetime.now() + timedelta(days=30)).strftime("%Y-%m-%dT19:00")
 formats._draw.seed(1)           # the Swiss round-one draw, so runs repeat
 
 
@@ -1404,7 +1406,7 @@ def test_wizard():
 
     out = app.act("admin", "create_event", {
         "name": "October open", "venue": "Turnhalle", "blurb": "Bats provided.",
-        "starts_at": "2026-10-04T19:00",
+        "starts_at": SOON,
         "cups": [
             {"name": "Singles cup", "entry": "single", "registration": "open",
              "blurb": "Five rounds.", "kind": "swiss",
@@ -1419,7 +1421,7 @@ def test_wizard():
 
     check(s.event["name"] == "October open" and s.event["venue"] == "Turnhalle",
           "the event is what the wizard was given")
-    check(s.event["starts_at"] == "2026-10-04T19:00", "with its start time")
+    check(s.event["starts_at"] == SOON, "with its start time")
     check(not s.players and not s.entrants, "last month's roster is gone")
     check("Singles" not in [c.name for c in s.cups.values()],
           "and so are the cups it replaced — ids recycle, names do not lie")
@@ -1471,7 +1473,7 @@ def test_site():
     s = app.store
     app.act("admin", "create_event", {
         "name": "October open", "venue": "Turnhalle", "blurb": "Bats provided.",
-        "starts_at": "2026-10-04T19:00",
+        "starts_at": SOON,
         "cups": [{"name": "Singles cup", "entry": "single", "registration": "open",
                   "kind": "swiss", "config": {"rounds": 3,
                                               "scoring": {"best_of": 5, "points_to": 11}}}],
@@ -1519,7 +1521,7 @@ def test_link_preview():
     app.act("admin", "create_event", {
         "name": "October open", "venue": "Turnhalle",
         "blurb": 'Bats & "everything" provided.',
-        "starts_at": "2026-10-04T19:00", "cups": [], "tables": []})
+        "starts_at": SOON, "cups": [], "tables": []})
     html = get("/")
     check("<title>October open</title>" in html, "the page is titled after the event")
     check('og:title" content="October open"' in html, "and carries a link-preview card")
@@ -2045,6 +2047,201 @@ def test_a_reset_draw_leaves_no_old_bracket():
     check(bracket_view(s, f.id) is not None, "a real bracket is shown")
     app.act("admin", "reset_format", {"id": f.id})
     check(bracket_view(s, f.id) is None, "a reset draw shows none")
+    shutil.rmtree(d)
+
+
+# ------------------------------------------------- a night nobody referees
+from tt import server as _srv
+
+
+def self_run_night(app, mode="singles", n=4, tables=1):
+    """An open-play night set up to run itself, with n people checked in."""
+    (cup,) = pool_event(app, kind="open_play", config={"mode": mode})
+    s = app.store
+    for t in list(s.tables)[tables:]:
+        app.act("admin", "remove_table", {"number": t})
+    app.act("admin", "set_phase", {"phase": "doors"})
+    app.act("admin", "event_meta", {"self_checkin": True, "player_scores": True})
+    app.act("admin", "start_format", {"id": s.cups[cup].format_id})
+    keys = {}
+    for i in range(n):
+        out = _srv.phone(app, "", "checkin", {"cup_id": cup, "name": f"P{i}"}, True)
+        keys[f"P{i}"] = out["key"]
+    return cup, keys
+
+
+def on_table(app, keys):
+    """The two keys whose people are on table 1, a-side first."""
+    s = app.store
+    m = s.matches[s.tables[1].match_id]
+    name = lambda pid: s.players[pid].name
+    return m, keys[name(m.side_a[0])], keys[name(m.side_b[0])]
+
+
+def test_phones_check_in_and_come_and_go():
+    print("\n[players check themselves in, take breaks and go home from their phone]")
+    app, d = fresh()
+    s = app.store
+    (cup,) = pool_event(app, kind="open_play", config={"mode": "singles"})
+    app.act("admin", "set_phase", {"phase": "doors"})
+    try:
+        _srv.phone(app, "", "checkin", {"cup_id": cup, "name": "Ana"}, True)
+        ok = False
+    except ValueError:
+        ok = True
+    check(ok, "nobody checks themselves in unless the evening says so")
+    app.act("admin", "event_meta", {"self_checkin": True})
+    check([c["id"] for c in _srv.phone(app, "", "", {}, False)["checkin"]] == [cup],
+          "then a phone is offered the open-play cup")
+    out = _srv.phone(app, "", "checkin", {"cup_id": cup, "name": "Ana"}, True)
+    e = s.entrants[out["entrant_id"]]
+    check(e.cup_id == cup and out["key"], "a walk-in is in the cup, and the phone holds a key")
+    app.act("admin", "set_phase", {"phase": "announced"})
+    reg = app.act("public", "register", {"cup_id": cup, "name": "Ben", "kind": "single"})["registration_id"]
+    app.act("admin", "set_phase", {"phase": "doors"})
+    view = _srv.phone(app, "", "", {}, False)
+    check([r["name"] for r in view["registered"]] == ["Ben"], "an entry made ahead can be found")
+    ben = _srv.phone(app, "", "checkin", {"registration_id": reg}, True)
+    check(s.registrations[reg].status == "confirmed", "and checking it in confirms it, as the door would")
+    app.act("admin", "start_format", {"id": s.cups[cup].format_id})
+    check(app.entrant_status(e) in ("playing", "waiting"), "once it starts they are in the line")
+
+    # a phone that picked a name is that person; a forged key is nobody
+    ana_key = out["key"]
+    check(app.person_for_key(ana_key) == s.players[e.player_ids[0]].person_id,
+          "the key names the person it was given for")
+    try:
+        _srv.phone(app, ana_key[:-1] + ("x" if ana_key[-1] != "x" else "y"), "", {}, False)
+        ok = False
+    except PermissionError:
+        ok = True
+    check(ok, "a key that was not signed here is turned away")
+    picked = _srv.phone(app, "", "claim_name", {"player_id": e.player_ids[0]}, True)["key"]
+    check(picked == ana_key, "picking a name gives the same key, on any phone")
+
+    ben_e = ben["entrant_id"]
+    try:
+        _srv.phone(app, ana_key, "rest", {"eid": ben_e, "on": 1}, True)
+        ok = False
+    except PermissionError:
+        ok = True
+    check(ok, "a phone cannot sit somebody else out")
+    _srv.phone(app, ana_key, "rest", {"eid": e.id, "on": 1}, True)
+    for t in s.tables.values():           # a break starts after the match in hand
+        if t.match_id:
+            app.act("referee", "report", {"match_id": t.match_id, "games": [[11, 3], [11, 3]]})
+    check(app.entrant_status(e) == "resting", "a break from the phone takes them out of the line")
+    _srv.phone(app, ana_key, "rest", {"eid": e.id, "on": 0}, True)
+    check(app.entrant_status(e) in ("waiting", "playing"), "and I'm back puts them back in it")
+    _srv.phone(app, ana_key, "leave", {"eid": e.id, "on": 1}, True)
+    check(app.entrant_status(e) == "withdrawn", "going home signs them out")
+    check(any(h["by"] == "phone" for h in s.history(10)), "and the log says it came from a phone")
+    shutil.rmtree(d)
+
+
+def test_phones_enter_their_own_scores():
+    print("\n[a score from one phone, confirmed from the other]")
+    app, d = fresh()
+    s = app.store
+    cup, keys = self_run_night(app)
+    m, ka, kb = on_table(app, keys)
+    r = _srv.phone(app, ka, "score", {"games": [[11, 7], [11, 5]]}, True)
+    check(r["claim"]["status"] == "sent" and m.status == "live",
+          "one side's word writes nothing")
+    ask = _srv.phone(app, kb, "", {}, False)["confirm"]
+    check(len(ask) == 1 and ask[0]["games"] == [[7, 11], [5, 11]],
+          "the other phone is asked, the way round they played it")
+    check(app.state("admin")["tables"][0]["report"]["state"] == "open",
+          "and the console shows the report waiting")
+    _srv.phone(app, kb, "confirm", {"id": ask[0]["id"], "yes": True}, True)
+    check(m.status == "done" and m.winner == "a", "confirming writes it")
+    check(any(h["payload"].get("by") == "players" for h in s.history(10)),
+          "and the log says the players entered it")
+    check(s.tables[1].match_id and s.tables[1].match_id != m.id,
+          "the table goes straight to the next match")
+
+    m, ka, kb = on_table(app, keys)
+    _srv.phone(app, ka, "score", {"games": [[11, 7], [11, 5]]}, True)
+    r = _srv.phone(app, kb, "score", {"games": [[11, 7], [11, 5]]}, True)
+    check(r["claim"]["status"] == "disputed" and m.status == "live",
+          "two different scores write nothing")
+    check(app.state("admin")["tables"][0]["report"]["state"] == "disputed",
+          "and the console says the players disagree")
+    _srv.phone(app, ka, "score", {"games": [[9, 11], [9, 11]]}, True)
+    r = _srv.phone(app, kb, "score", {"games": [[11, 9], [11, 9]]}, True)
+    check(r["claim"]["status"] == "agreed" and m.status == "done",
+          "entering it again, the same both ways, is agreement")
+
+    m, ka, kb = on_table(app, keys)
+    r = _srv.phone(app, ka, "score", {"games": [[11, 7], [11, 5]]}, True)
+    _srv.phone(app, ka, "withdraw_claim", {"id": r["claim"]["id"]}, True)
+    check(not _srv.phone(app, kb, "", {}, False)["confirm"], "a report taken back asks nobody")
+    try:
+        _srv.phone(app, ka, "score", {"games": [[11, 7]]}, True)
+        ok = False
+    except ValueError:
+        ok = True
+    check(ok, "a score that does not finish the match is refused")
+    shutil.rmtree(d)
+
+
+def test_an_unanswered_score_counts_after_the_wait():
+    print("\n[a report nobody answers counts once the wait is up — if the evening says so]")
+    app, d = fresh()
+    s = app.store
+    cup, keys = self_run_night(app)
+    m, ka, kb = on_table(app, keys)
+    r = _srv.phone(app, ka, "score", {"games": [[11, 7], [11, 5]]}, True)
+    app.sweep(now=s.clock() + 3600)
+    check(m.status == "live", "with no wait set, a report waits however long it takes")
+    app.act("admin", "event_meta", {"score_auto_min": 3})
+    app.sweep(now=s.clock() + 60)
+    check(m.status == "live", "inside the wait it still waits")
+    app.sweep(now=s.clock() + 181)
+    check(m.status == "done" and m.winner == "a", "after it, it counts")
+    check(s.claims[r["claim"]["id"]]["state"] == "timed", "and says it counted on time, not agreement")
+    check(any(h["payload"].get("how") == "timed" for h in s.history(10)), "so does the log")
+    shutil.rmtree(d)
+
+
+def test_the_other_side_never_came():
+    print("\n[the other side never came to the table]")
+    app, d = fresh()
+    s = app.store
+    cup, keys = self_run_night(app, n=5)
+    m, ka, kb = on_table(app, keys)
+    try:
+        _srv.phone(app, ka, "no_show", {}, True)
+        ok = False
+    except ValueError:
+        ok = True
+    check(ok, "not the moment they are called — walking over takes a minute")
+    s.clock = lambda: time.time() + 300
+    _srv.phone(app, ka, "no_show", {}, True)
+    gone = s.entrants[m.entrant_b]
+    check(m.status != "live" and app.entrant_status(gone) == "resting",
+          "after a few minutes: the match is off and they are on a break")
+    check(s.tables[1].match_id, "and the table is playing the next match")
+    check(m.entrant_a not in (s.matches[s.tables[1].match_id].entrant_a,
+                              s.matches[s.tables[1].match_id].entrant_b)
+          or app.entrant_status(s.entrants[m.entrant_a]) == "playing",
+          "the one who waited is back in the line")
+    shutil.rmtree(d)
+
+
+def test_the_board_draws_scramble_doubles_by_four():
+    print("\n[scramble doubles on the board: four to a match]")
+    app, d = fresh()
+    s = app.store
+    cup, keys = self_run_night(app, mode="scramble", n=13)
+    b = app.state("admin")["board"][0]
+    rows = b["up"]
+    check(rows[0]["kind"] == "pairing" and len(rows[0]["entrants"]) == 4 and " / " in rows[0]["a"],
+          "the next match shows its two teams of two")
+    waiting = [r for r in rows if r["kind"] == "waiting"]
+    check([r["ahead"] for r in waiting] == [1, 1, 1, 1, 2],
+          "and the rest wait four to a match, not two")
+    check(b["overdue_after"] >= 600, "the board says when a table has been going too long")
     shutil.rmtree(d)
 
 
@@ -2820,6 +3017,11 @@ if __name__ == "__main__":
     test_resting_and_put_back()
     test_a_reset_draw_leaves_no_old_bracket()
     test_the_board_shows_the_next_pairing()
+    test_phones_check_in_and_come_and_go()
+    test_phones_enter_their_own_scores()
+    test_an_unanswered_score_counts_after_the_wait()
+    test_the_other_side_never_came()
+    test_the_board_draws_scramble_doubles_by_four()
     test_withdrawal_walks_over_and_frees_the_table()
     test_withdrawal_resolves_a_bracket()
     test_resting_holds_a_scheduled_fixture()

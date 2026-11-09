@@ -64,8 +64,13 @@ function render(S) {
   }
   $('cups').innerHTML = bs.map(b => {
     const cup = S.cups.find(c => c.id === b.cup_id);
+    // a match far past how long matches take tonight has most likely been
+    // played with nobody entering it: on a night players enter their own,
+    // the wall is where they will see the nudge
+    const late = m => S.event.player_scores && m.started_ts && b.overdue_after
+      && Date.now() / 1000 - m.started_ts > b.overdue_after;
     const now = b.playing.map(m => `<div class="now">
-      <div class="t">Jetzt · Tisch ${m.table}</div>
+      <div class="t">${late(m) ? `Tisch ${m.table} · Ergebnis eintragen!` : `Jetzt · Tisch ${m.table}`}</div>
       <div class="p"><span>${esc(nm(m.a))}</span><span>${esc(nm(m.b))}</span></div></div>`).join('')
       || `<div class="now idle"><div class="t">&nbsp;</div><div class="p">No match on yet</div></div>`;
     const rows = b.up.map(r => `
@@ -93,7 +98,7 @@ function render(S) {
 const SIM = new URLSearchParams(location.search).get('sim') === '1';
 const simq = sep => (SIM ? sep + 'sim=1' : '');
 
-let last = -1, etag = null;
+let last = -1, etag = null, shown = null;
 async function poll() {
   try {
     const h = {};
@@ -102,7 +107,7 @@ async function poll() {
     if (r.status === 304) return;
     etag = r.headers.get('ETag');
     const s = await r.json();
-    if (s.version !== last) { last = s.version; render(s); }
+    if (s.version !== last) { last = s.version; shown = s; render(s); }
   } catch (e) { /* the next tick will catch up */ }
 }
 
@@ -120,5 +125,6 @@ if (SIM) { document.body.classList.add('sim'); document.title = 'SIM · ' + docu
 poll();
 stream();
 setInterval(poll, 15000);
-setInterval(() => { if (last >= 0) poll(); }, 60000);
+// the clock moves on its own: a table running long is noticed without a result
+setInterval(() => { if (last >= 0) poll(); if (shown) render(shown); }, 60000);
 window.addEventListener('resize', () => { last = -1; poll(); });

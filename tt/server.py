@@ -18,7 +18,7 @@ from urllib.parse import urlparse, parse_qs
 
 from .store import Store
 from .models import Scoring, decide_winner
-from . import dispatch, board, simulate
+from . import dispatch, board, simulate, play
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 STATIC = os.path.join(HERE, "static")
@@ -49,9 +49,14 @@ class App:
         self._cache = {}          # (version, role) -> encoded state JSON
         self._desk_cache = {}     # the same for the registration desk
         self._reg_hits = {}       # ip -> recent registration timestamps
+        self._checkin_hits = {}   # the same for checking in from a phone
         # the Telegram layer (tt/telegram.py): only ever set on the live App
         # by serve(), so the sandbox cannot message anybody
         self.telegram = None
+        # person id -> when their phone page last asked for anything. Only
+        # used to tell a reporter whether the other side can be asked; it
+        # is not state, so it lives and dies with the process
+        self._phones = {}
         if not self.store.tables:
             for n in (1, 2, 3):
                 self.store.append("table_set", {"number": n, "name": f"Table {n}"})
@@ -62,7 +67,8 @@ class App:
         # these live on the public internet now, not just the hall LAN.
         # A key a newer version added (door) is minted on first start and
         # the ones already handed out are left alone.
-        want = {"admin": 12, "referee": 9, "door": 9}
+        # `player` is not a URL: it signs the keys phones get for a name
+        want = {"admin": 12, "referee": 9, "door": 9, "player": 16}
         if not all(keys.get(k) for k in want):
             for k, n in want.items():
                 keys[k] = keys.get(k) or secrets.token_urlsafe(n)
@@ -74,17 +80,25 @@ class App:
     # that club members have to get through.
     REG_BURST, REG_WINDOW = 6, 600
 
-    def registration_allowed(self, ip) -> bool:
+    # Checking in happens in the hall, where everybody is behind the one
+    # address of the hall's wifi: the ceiling is a roomful arriving at once.
+    CHECKIN_BURST = 60
+
+    def registration_allowed(self, ip, burst=None, bucket="reg") -> bool:
+        """Whether this address may make another entry just now. `bucket`
+        keeps self check-in's count apart from the landing page's."""
         now = time.time()
-        if len(self._reg_hits) > 512:            # never grow without bound
-            self._reg_hits = {k: v for k, v in self._reg_hits.items()
-                              if v and now - v[-1] < self.REG_WINDOW}
-        hits = [t for t in self._reg_hits.get(ip, []) if now - t < self.REG_WINDOW]
-        if len(hits) >= self.REG_BURST:
-            self._reg_hits[ip] = hits
+        hits_by = self._reg_hits if bucket == "reg" else self._checkin_hits
+        if len(hits_by) > 512:                   # never grow without bound
+            for k in [k for k, v in hits_by.items()
+                      if not v or now - v[-1] >= self.REG_WINDOW]:
+                del hits_by[k]
+        hits = [t for t in hits_by.get(ip, []) if now - t < self.REG_WINDOW]
+        if len(hits) >= (burst or self.REG_BURST):
+            hits_by[ip] = hits
             return False
         hits.append(now)
-        self._reg_hits[ip] = hits
+        hits_by[ip] = hits
         return True
 
     def role_for(self, token):
@@ -95,6 +109,36 @@ class App:
         if token and secrets.compare_digest(token, self.keys["door"]):
             return "door"
         return "public"
+
+    # ------------------------------------------------------------- phones
+
+    def player_key(self, person_id):
+        return play.key_for(self.keys["player"], person_id)
+
+    def person_for_key(self, key):
+        pid = play.person_from_key(self.keys["player"], key)
+        return pid if pid and pid in self.store.people else None
+
+    PHONE_FRESH = 45 * 60
+
+    def phone_seen(self, person_id, now=None):
+        t = self._phones.get(person_id)
+        return bool(t) and (now or time.time()) - t < self.PHONE_FRESH
+
+    def sweep(self, now=None):
+        """What the clock settles on its own: reports nobody answered. Run
+        every few seconds by serve(); a no-op unless there is one open."""
+        s = self.store
+        with s.lock:
+            if not any(c["state"] == "open" for c in s.claims.values()):
+                return False
+            s.actor = "system"
+            try:
+                wrote = play.sweep(self, now or s.clock())
+                dispatch.tick(s)
+            finally:
+                s.actor = "system"
+        return wrote
 
     # ------------------------------------------------------------ read side
 
@@ -243,6 +287,25 @@ class App:
             # when it went onto its table: the phone's "since 21:52"
             "started_ts": m.started_ts,
         }
+
+    def table_report(self, m):
+        """What the players at this table have said about its score, for the
+        console: a report waiting for the other side (and when it counts on
+        its own), or two that disagreed."""
+        s = self.store
+        if not m or m.status != "live":
+            return None
+        auto = int(s.event.get("score_auto_min") or 0)
+        mine = [c for c in s.claims.values()
+                if c["match_id"] == m.id and c["qseq"] == m.queued_seq]
+        live = [c for c in mine if c["state"] == "open"]
+        if live:
+            c = live[-1]
+            return {"state": "open", "by": self.side_name(m, c["side"]), "games": c["games"],
+                    "counts_at": c["ts"] + auto * 60 if auto else None}
+        if mine and mine[-1]["state"] == "disputed":
+            return {"state": "disputed"}
+        return None
 
     def state_json(self, role):
         """Encoded state, cached per version. Forty phones asking the same
@@ -411,6 +474,7 @@ class App:
                     "number": n, "name": t.name, "paused": t.paused,
                     "cup_id": s.cup_of_table(t),
                     "match": self.match_dto(m) if m else None,
+                    "report": self.table_report(m),
                 })
 
             # Who plays next, and roughly when — see tt/board.py. This
@@ -459,7 +523,9 @@ class App:
                     s.registrations[i] for i in s.registration_order
                     if i in s.registrations)] if role in ("admin", "door") else [],
                 "history": s.history(40) if role == "admin" else [],
-                "keys": self.keys if role == "admin" else {},
+                # the player secret signs phone keys; it is no URL to hand out
+                "keys": {k: v for k, v in self.keys.items() if k != "player"}
+                        if role == "admin" else {},
                 "telegram": (self.telegram.admin_state()
                              if role == "admin" and self.telegram
                              else {"on": bool(self._tg_name()),
@@ -471,7 +537,7 @@ class App:
 
     # ----------------------------------------------------------- write side
 
-    def act(self, role, op, p):
+    def act(self, role, op, p, actor=None):
         s = self.store
         need = OP_LEVEL.get(op)
         if need is None:
@@ -486,7 +552,7 @@ class App:
             fn = getattr(self, "op_" + op)
             # Everything the op writes is theirs; what the dispatcher does
             # afterwards on its own account is the system's.
-            s.actor = "telegram" if role == "system" else role
+            s.actor = actor or ("telegram" if role == "system" else role)
             try:
                 out = fn(p)
                 s.actor = "system"
@@ -798,7 +864,9 @@ class App:
             (m.meta.get("queued") or []) + [x for x in (m.entrant_a, m.entrant_b) if x]))
         res = {"match_id": m.id, "games": games, "winner": winner}
         if p.get("by") == "players":
-            res["by"] = "players"          # both sides agreed over Telegram
+            res["by"] = "players"          # the players entered it themselves
+            if p.get("how"):
+                res["how"] = p["how"]      # agreed, or counted after the wait
         s.append("match_result", res)
         # everyone is back in the queue by default — that is just what being
         # free means now. Unticking "back in queue" is sitting them out.
@@ -934,7 +1002,64 @@ class App:
 
     # the event itself
     def op_event_meta(self, p):
+        if "score_auto_min" in p:
+            p = dict(p, score_auto_min=max(0, min(60, int(p["score_auto_min"] or 0))))
+        if "self_checkin" in p:
+            p = dict(p, self_checkin=bool(p["self_checkin"]))
         self.store.append("event_meta", p)
+
+    # a player, for themselves (tt/play.py). Only the bot and /api/player
+    # reach these, each having worked out whose they are
+    def op_score_claim(self, p):
+        return play.claim(self, p)
+
+    def op_score_answer(self, p):
+        return play.answer(self, p)
+
+    def op_score_withdraw(self, p):
+        return play.withdraw(self, p)
+
+    def op_no_show(self, p):
+        return play.no_show(self, p)
+
+    def self_checkin_cups(self):
+        """Where a phone may check itself in: open play, when the event
+        lets players run their own evening and the doors are open."""
+        s = self.store
+        if not s.event.get("self_checkin") or not s.shows_console():
+            return []
+        out = []
+        for cid in s.cup_order:
+            cup = s.cups.get(cid)
+            f = s.formats.get(cup.format_id or "") if cup else None
+            if f and f.kind == "open_play" and f.status != "done":
+                out.append(cup)
+        return out
+
+    def op_checkin(self, p):
+        """Somebody checking themselves in from their phone: their own
+        registration, or a walk-in. The door's own op_admit does the work,
+        so it is the same entry the desk would have made; this only decides
+        whether a phone may ask for it."""
+        s = self.store
+        cups = {c.id: c for c in self.self_checkin_cups()}
+        reg = s.registrations.get(p.get("registration_id") or "")
+        cup = cups.get(reg.cup_id if reg else (p.get("cup_id") or ""))
+        if not cup:
+            raise ValueError("checking yourself in is not open for that")
+        if reg:
+            if reg.status != "pending":
+                raise ValueError("that entry is not waiting to be checked in")
+            out = self.op_admit({"registration_id": reg.id})
+        else:
+            if cup.entry == "pair" and not (p.get("partner_name") or "").strip():
+                raise ValueError("a pair needs both names")
+            out = self.op_admit({"cup_id": cup.id, "name": p.get("name"),
+                                 "kind": "pair" if cup.entry == "pair" else "single",
+                                 "partner_name": p.get("partner_name") or ""})
+        e = s.entrants[out["entrant_id"]]
+        out["person_id"] = s.players[e.player_ids[0]].person_id
+        return out
 
     def op_new_event(self, p):
         """Start a new event. Players, teams, matches and formats go; tables,
@@ -1633,8 +1758,9 @@ class ArchiveApp(App):
         self._cache = {}
         self._desk_cache = {}
         self._reg_hits = {}
+        self._checkin_hits = {}
 
-    def act(self, role, op, p):
+    def act(self, role, op, p, actor=None):
         raise PermissionError("this is a past event — read only")
 
 
@@ -1654,6 +1780,7 @@ OP_LEVEL = {
     "admit": 2, "add_registration": 2, "remove_entrant": 2, "remove_entrants": 2, "update_person": 2, "remove_person": 2, "add_from_directory": 2,
     "tg_connect": 2, "tg_disconnect": 2, "tg_send": 2, "tg_door_link": 2, "tg_read": 2,
     "tg_register": 3, "tg_attach": 3, "tg_link": 3, "tg_detach": 3, "tg_rsvp": 3,
+    "score_claim": 3, "score_answer": 3, "score_withdraw": 3, "no_show": 3, "checkin": 3,
 }
 
 # The door key is not a rung on the ladder above: it runs who is in the
@@ -1800,6 +1927,9 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/me":
             return self._me()
 
+        if path == "/api/player":
+            return self._player(q)
+
         # Role-scoped entry points always get the console: an admin holding
         # the key wants the console whatever phase the event is in. The key
         # is in the path on this first load — the client only starts sending
@@ -1824,6 +1954,8 @@ class Handler(BaseHTTPRequestHandler):
         q = parse_qs(u.query)
         if u.path == "/api/me":
             return self._me(post=True)
+        if u.path == "/api/player":
+            return self._player(q, post=True)
         if u.path != "/api/action":
             return self._send(404, {"error": "not found"})
         n = int(self.headers.get("Content-Length", 0))
@@ -1876,6 +2008,31 @@ class Handler(BaseHTTPRequestHandler):
         except Exception as e:             # a player's phone gets a sentence, not a reset
             print("[me]", repr(e), flush=True)
             return self._send(500, {"error": "Da ist etwas schiefgegangen."})
+
+    def _player(self, q, post=False):
+        """The phone page's own door, for whoever this phone says it is.
+        Always the live event, like /api/me."""
+        app = type(self).app
+        body = {}
+        if post:
+            n = int(self.headers.get("Content-Length", 0))
+            try:
+                body = json.loads(self.rfile.read(n) or b"{}")
+            except Exception:
+                return self._send(400, {"error": "bad json"})
+        key = self.headers.get("X-Player") or q.get("key", [""])[0] or body.get("key", "")
+        try:
+            if body.get("op") == "checkin" and \
+                    not app.registration_allowed(self.client_address[0],
+                                                 app.CHECKIN_BURST, "checkin"):
+                return self._send(429, {"error": "too many check-ins from here just now — "
+                                                 "give it a few minutes"})
+            out = phone(app, key, body.get("op") or "", body.get("data") or {}, post)
+        except PermissionError as e:
+            return self._send(403, {"error": str(e)})
+        except (ValueError, KeyError) as e:
+            return self._send(400, {"error": str(e).strip("'\"")})
+        return self._send(200, out)
 
     def _stream(self):
         """Server-sent events. Pushes a version number the moment anything
@@ -2021,6 +2178,112 @@ class Handler(BaseHTTPRequestHandler):
 mimetypes.add_type("font/woff2", ".woff2")       # self-hosted fonts (tt/static/fonts)
 
 
+def phone_view(app, pid):
+    """What a phone needs on top of the public state: who it is, which of
+    the entries are theirs, the scores waiting on them, and what the
+    evening lets players do for themselves."""
+    s = app.store
+    ev = s.event
+    out = {"scores": bool(ev.get("player_scores")),
+           "auto_min": int(ev.get("score_auto_min") or 0),
+           "checkin": [{"id": c.id, "name": c.name, "entry": c.entry}
+                       for c in app.self_checkin_cups()],
+           "me": None, "confirm": [], "reported": [], "no_show_after": play.NO_SHOW_AFTER}
+    if pid:
+        who = s.people[pid]
+        out["me"] = {"person_id": pid, "name": who.name,
+                     "entrants": [e.id for e in play.entrants_of(s, pid)]}
+        out["confirm"], out["reported"] = play.pending(app, pid)
+    if out["checkin"]:
+        # entries made ahead for these cups, so somebody can find their own
+        cups = {c["id"] for c in out["checkin"]}
+        out["registered"] = [
+            {"id": r.id, "name": r.name, "partner": r.partner_name, "cup_id": r.cup_id}
+            for r in s.pending_regs() if r.cup_id in cups]
+    return out
+
+
+def phone(app, key, op, d, post):
+    """One request from a phone page. Without a key it can only look and
+    say who it is; with one it acts as that person (tt/play.py)."""
+    s = app.store
+    pid = app.person_for_key(key) if key else None
+    if key and not pid:
+        raise PermissionError("this phone's name is not known here any more — pick it again")
+    if pid:
+        app._phones[pid] = time.time()
+    if not post:
+        with s.lock:
+            return phone_view(app, pid)
+    toast = ""
+    out = {}
+    if op == "claim_name":
+        # trust, as at the desk: a phone says whose it is
+        with s.lock:
+            p = s.players.get(d.get("player_id") or "")
+            if not p or not p.person_id or p.person_id not in s.people:
+                raise ValueError("that name is not on tonight's list")
+            pid = p.person_id
+        app._phones[pid] = time.time()
+        out["key"] = app.player_key(pid)
+    elif op == "checkin":
+        r = app.act("system", "checkin", d, actor="phone")
+        pid = r["person_id"]
+        app._phones[pid] = time.time()
+        out["key"] = app.player_key(pid)
+        out["entrant_id"] = r["entrant_id"]
+        with s.lock:
+            out["player_id"] = s.entrants[r["entrant_id"]].player_ids[0]
+        toast = "in"
+    elif not pid:
+        raise PermissionError("pick your name first")
+    elif op in ("rest", "leave"):
+        with s.lock:
+            mine = {e.id for e in play.entrants_of(s, pid)}
+        if d.get("eid") not in mine:
+            raise PermissionError("only they can change that")
+        if op == "rest":
+            app.act("system", "set_resting", {"entrant_id": d["eid"], "resting": bool(d.get("on"))}, actor="phone")
+        else:
+            app.act("system", "withdraw", {"entrant_id": d["eid"], "withdrawn": bool(d.get("on"))}, actor="phone")
+        toast = op + ("_on" if d.get("on") else "_off")
+    elif op == "score":
+        r = app.act("system", "score_claim", {"person_id": pid, "via": "phone",
+                                               "games": d.get("games") or []}, actor="phone")
+        if r["status"] == "not_playing":
+            raise ValueError("no match of yours is on a table")
+        if r["status"] == "invalid":
+            raise ValueError(f"that does not finish the match — it takes {r['need']} games")
+        out["claim"] = r
+        toast = r["status"]
+    elif op == "confirm":
+        r = app.act("system", "score_answer", {"person_id": pid, "claim_id": d.get("id"),
+                                                "yes": bool(d.get("yes"))}, actor="phone")
+        toast = r["status"]
+    elif op == "withdraw_claim":
+        r = app.act("system", "score_withdraw", {"person_id": pid, "claim_id": d.get("id")}, actor="phone")
+        toast = "withdrawn" if r["withdrawn"] else "gone"
+    elif op == "no_show":
+        r = app.act("system", "no_show", {"person_id": pid}, actor="phone")
+        out["rested"] = r["rested"]
+        toast = "no_show"
+    else:
+        raise ValueError("unknown action")
+    with s.lock:
+        out["view"] = phone_view(app, pid)
+    out["toast"] = toast
+    return out
+
+
+def _sweeper(app):
+    while True:
+        time.sleep(5)
+        try:
+            app.sweep()
+        except Exception as e:           # never let the clock take the server down
+            print("[sweep]", repr(e), flush=True)
+
+
 def lan_ip():
     try:
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -2038,6 +2301,7 @@ def serve(data_dir="data", host="0.0.0.0", port=8000):
     app.telegram = Bot(app, data_dir)
     app.telegram.start()             # does nothing until a token is set
     Handler.app = app
+    threading.Thread(target=_sweeper, args=(app,), daemon=True).start()
     srv = ThreadingHTTPServer((host, port), Handler)
     ip = lan_ip()
     print(f"\n  Table tennis console\n")

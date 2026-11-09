@@ -202,13 +202,27 @@ phones join in:
   what players write back in Setup → Chat.
 - **Players entering scores**, if you switch it on: one side types it, the
   other confirms, and only then is it written. Disagreements show up in Chat
-  as a table that needs a referee.
+  as a table that needs a referee. The same reports work from the web phone
+  page — see below.
 
 Identity is the part that matters. A Telegram account is attached to a
 player only by something the door saw happen — confirming an entry made from
 that account, or the player scanning the code on their row — never by name.
 The server long-polls Telegram, so there is no webhook and nothing to open
 on the server. All of it is in [docs/telegram.md](docs/telegram.md).
+
+## A night nobody referees
+
+Open play can run itself. Under Setup → Event → *Players on their own*,
+people check themselves in from the phone page, take breaks and go home
+from it, and enter their own scores. The other side confirms on their phone
+or in Telegram, or, if you set a wait, the score counts once nobody has
+contradicted it in that time. Somebody who never came to the table can be
+flagged by whoever did, and the table moves on. The console and the wall
+point out a report waiting for an answer, two that disagree, and a table
+running so long its result was probably forgotten. It is trust, not proof,
+the same as giving the desk a name. All of it is in
+[docs/self-run.md](docs/self-run.md).
 
 ## Hosting
 

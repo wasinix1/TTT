@@ -531,6 +531,7 @@ function sheetTile(t) {
       <span class="nm${winner === 'a' ? ' win' : ''}">${esc(nm(m.a))}</span>${cells('a')}
       <span class="nm${winner === 'b' ? ' win' : ''}">${esc(nm(m.b))}</span>${cells('b')}</div>
     ${st.bad ? `<div class="warn2">A game goes to ${s.points_to} and has to be won by ${s.win_by || 2}.</div>` : ''}
+    ${playersNote(t)}
     <div class="acts">
       <button class="save${st.decided ? ' ready' : ''}" data-act="report" data-m="${m.id}" ${st.decided ? '' : 'disabled'}>${
         st.decided ? `Save ${esc(nice(winner === 'a' ? m.a : m.b))} win <span class="ar">→</span>` : 'Save result'}</button>
@@ -642,6 +643,7 @@ function tile(t) {
         ${sc ? `<span class="lab">Best of ${s.best_of} to ${s.points_to}</span>` : ''}</div>
     </div>
     ${st && st.bad ? `<div class="warn2">A game goes to ${s.points_to} and has to be won by ${s.win_by || 2}.</div>` : ''}
+    ${sc ? playersNote(t) : ''}
     ${sc ? `<div class="acts">
       <button class="save${st.decided ? ' ready' : ''}" data-act="report" data-m="${m.id}" ${st.decided ? '' : 'disabled'}>${
         st.decided ? `Save ${esc(nice(winner === 'a' ? m.a : m.b))} win <span class="ar">→</span>` : 'Save result'}</button>
@@ -652,6 +654,28 @@ function tile(t) {
       ${pause}
     </div>` : ''}
   </div>`;
+}
+
+/* What the players at a table have said, and whether it has gone quiet:
+   on a night they enter their own scores, the console is where a report
+   nobody confirmed, a disagreement, or a result nobody entered at all shows
+   up — and is settled in one tap. */
+function playersNote(t) {
+  const m = t.match, r = t.report;
+  if (!m) return '';
+  const out = [];
+  if (r && r.state === 'open') {
+    out.push(`<div class="warn2 note-players"><b>${esc(nm(r.by))}</b> reported ${esc(r.games.map(g => g.join(':')).join(' '))}${
+      r.counts_at ? ` — counts at ${hhmm(r.counts_at)}` : ' — waiting for the other side'}${canScore()
+      ? ` <button class="link" data-act="accept-report" data-m="${m.id}" data-games='${esc(JSON.stringify(r.games))}'>Accept</button>` : ''}</div>`);
+  } else if (r && r.state === 'disputed') {
+    out.push(`<div class="warn2">The players' scores don't match — they've been asked to enter it again.</div>`);
+  }
+  const b = (S.board || []).find(x => (x.cup_id || '') === (m.cup_id || ''));
+  const age = m.started_ts ? Date.now() / 1000 - m.started_ts : 0;
+  if (b && b.overdue_after && age > b.overdue_after && !(r && r.state === 'open'))
+    out.push(`<div class="warn2">Running long — ${Math.round(age / 60)} min. Finished with nobody entering it?</div>`);
+  return out.join('');
 }
 
 function bestOfLine(m) {
@@ -1661,7 +1685,7 @@ function tabEvent() {
     '',
     `<div class="inline"><button data-act="wiz-open">Set up a new event</button></div>`);
 
-  return `<div class="form">${event}${cups}${notInCup}${tablesSection()}${next}</div>`;
+  return `<div class="form">${event}${cups}${notInCup}${tablesSection()}${selfRunSection()}${next}</div>`;
 }
 
 /* A cup and everything that is true of it. The draw lives here rather than
@@ -1815,6 +1839,29 @@ function newDrawBlock(c) {
    derived is what stops a stored mode from disagreeing with the tables it
    is supposed to describe. */
 const tablesAreSplit = () => S.tables.some(t => t.cup_id);
+
+/* A night nobody referees: players check in, take breaks and enter their
+   own scores from their phones (tt/play.py, docs/self-run.md). */
+function selfRunSection() {
+  const ev = S.event, auto = +ev.score_auto_min || 0;
+  return sblock('Players on their own',
+    'For open play with nobody at the desk or the tables: people check themselves in, take breaks and enter results from their phones.',
+    why('Anyone can check in to an open-play cup from the phone page while the doors are open, ' +
+        'or pick their name if they are already on the list. Picking a name is trusted, the ' +
+        'same as telling the desk. A report from one side waits for the other side to confirm, ' +
+        'on their phone or in Telegram. With a wait set, a report nobody contradicts counts ' +
+        'once that time is up, so a table never stays blocked by someone without a phone.',
+        'Two reports that disagree write nothing: both sides are asked to enter it again, and ' +
+        'the table shows it here until they agree. Any score can still be entered or corrected ' +
+        'here, as on any other night.'),
+    '', `<label class="pick"><input type="checkbox" data-selfrun="self_checkin"
+      ${ev.self_checkin ? 'checked' : ''}> Players check themselves in to open play from their phone</label>
+    <label class="pick"><input type="checkbox" data-selfrun="player_scores"
+      ${ev.player_scores ? 'checked' : ''}> Players enter their own scores — the other side confirms</label>
+    <label class="pick" ${ev.player_scores ? '' : 'style="opacity:.5"'}>A report nobody answers counts after
+      <select data-selfrun="score_auto_min" ${ev.player_scores ? '' : 'disabled'}>${[0, 2, 3, 5, 10].map(n =>
+        `<option value="${n}" ${n === auto ? 'selected' : ''}>${n ? n + ' min' : 'never — it waits'}</option>`).join('')}</select></label>`);
+}
 
 function tablesSection() {
   const split = tablesAreSplit();
@@ -3045,6 +3092,11 @@ document.addEventListener('change', e => {
     api('event_meta', { player_scores: e.target.checked });
     return;
   }
+  if (e.target.dataset.selfrun) {
+    const k = e.target.dataset.selfrun;
+    api('event_meta', { [k]: k === 'score_auto_min' ? +e.target.value : e.target.checked });
+    return;
+  }
   // selects commit the moment they change — there is nothing to finish typing
   if (e.target.dataset.save) { autoSave(e.target); return; }
   const f = e.target.dataset.f;
@@ -3265,6 +3317,11 @@ document.addEventListener('click', async e => {
     return;
   }
 
+  if (a === 'accept-report') {
+    const ok = await api('report', { match_id: b.dataset.m, games: JSON.parse(b.dataset.games) });
+    if (ok) toast('Result entered');
+    return;
+  }
   if (a === 'clear') { drafts[b.dataset.m] = [['', '']]; render(); return; }
   if (a === 'edit' || a === 'score') return openEditor(b.dataset.m);
   if (a === 'close-editor') return closeEditor();

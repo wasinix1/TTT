@@ -19,7 +19,7 @@ was run against a server holding simulated evenings, with no console errors.
 | URL | `/` in the `doors` and `live` phases | `/tg` (Mini App), every phase |
 | who | a name picked once on this phone (`localStorage`) | whoever Telegram signed (`/api/me`) |
 | data | `/api/state` (role public) | `/api/state` (role public) **and** `/api/me` |
-| can act | no, read-only | yes: break, go home, report score, confirm, message, news, unlink, sign up |
+| can act | with the key a picked name gets (`/api/player`): break, go home, report score, confirm, other side never came, check in ([self-run.md](self-run.md)) | yes: break, go home, report score, confirm, message, news, unlink, sign up |
 | language default | English (as the public console was) | German (as the Mini App was) |
 
 Both shells draw the same thing:

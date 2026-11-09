@@ -99,6 +99,7 @@ def view(bot, uid):
                    "news": bool(chat.get("news", 1)),
                    "linked": bool(me.person) or any(r.tg_id == uid for r in me.regs)},
             "scores": bool(ev.get("player_scores")),
+            "auto_min": int(ev.get("score_auto_min") or 0),
             "entries": [],
             "open": [],
             "tonight": [],
@@ -278,18 +279,24 @@ def act(bot, user, op, d):
             raise ValueError("Gerade läuft kein Spiel von dir.")
         if st == "invalid":
             raise ValueError(f"Das ergibt noch keinen Sieg — {r['need']} Gewinnsätze braucht es.")
-        if st == "no_opponent":
-            raise ValueError(f"{r['opponent']} ist nicht über Telegram verbunden — "
-                             "bitte beim Schiri eintragen.")
-        toast = {"sent": f"Gesendet — {r.get('opponent', '')} bestätigt",
+        toast = {"sent": f"Gesendet — {r.get('opponent', '')} bestätigt"
+                         if r.get("reachable") else
+                         f"Gesendet — zählt in {r.get('auto_min')} Min" if r.get("auto_min")
+                         else "Gesendet — wartet auf Bestätigung",
                  "agreed": "Eingetragen ✓",
-                 "disputed": "Passt nicht zusammen — ab zum Schiri"}[st]
+                 "disputed": "Passt nicht zusammen — tragt es nochmal ein"}[st]
+    elif op == "no_show":
+        pid = c._person(uid)
+        if not pid:
+            raise ValueError("Gerade läuft kein Spiel von dir.")
+        r = bot.system("no_show", {"person_id": pid})
+        toast = "Tisch frei — " + (", ".join(r["rested"]) or "die anderen") + " pausiert"
     elif op == "withdraw":
         toast = ("Zurückgezogen" if c.withdraw(uid, int(d.get("id") or 0))
                  else "Schon erledigt")
     elif op == "confirm":
         r = c.answer(uid, int(d.get("id") or 0), bool(d.get("yes")))
-        toast = {"agreed": "Eingetragen ✓", "disputed": "Okay — ab zum Schiri",
+        toast = {"agreed": "Eingetragen ✓", "disputed": "Okay — tragt es nochmal ein",
                  "stale": "Schon eingetragen", "gone": "Schon erledigt"}[r["status"]]
     elif op == "message":
         text = str(d.get("text") or "").strip()[:2000]
