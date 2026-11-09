@@ -100,9 +100,21 @@ def reachable(app, m, side):
     ok = app.telegram.ok_chats() if app.telegram and app.telegram.on else set()
     for pid in people:
         who = s.people.get(pid)
-        if who and ((who.tg_id and who.tg_id in ok) or app.phone_seen(pid)):
+        if who and ((who.tg_id and who.tg_id in ok) or app.phone_seen(pid)
+                    or (app.push and app.push.has(pid))):
             return True
     return False
+
+
+def rules_for(store, person_id):
+    """What this person's cups let them do, for the phone's own words: one
+    cup taking scores is enough to explain scores."""
+    cups = {e.cup_id for e in entrants_of(store, person_id) if e.active}
+    return {"scores": any(store.cup_rule(c, "player_scores") for c in cups),
+            "auto_min": max([int(store.cup_rule(c, "score_auto_min") or 0) for c in cups] or [0]),
+            "queue": any((store.formats.get(store.cups[c].format_id or "") or None) is not None
+                         and store.formats[store.cups[c].format_id].uses_queue()
+                         for c in cups if c in store.cups)}
 
 
 def pending(app, person_id):
@@ -113,7 +125,7 @@ def pending(app, person_id):
     m, side = live_match(s, person_id)
     if not m:
         return [], []
-    auto = int(s.event.get("score_auto_min") or 0)
+    auto = int(s.match_rule(m, "score_auto_min") or 0)
     ask, own = [], []
     for c in s.open_claims(m):
         view = mine(c["games"], side)
@@ -157,16 +169,17 @@ def claim(app, p):
     """A score from one side of a table, the reporter's points first.
 
       not_playing   they are on no table, so it was not a score
+      off           their cup does not take scores from players
       invalid       it does not decide the match
       sent          waiting for the other side (or for time to run out)
       agreed        the other side had said the same; it is written
       disputed      the other side had said something else"""
     s = app.store
-    if not s.event.get("player_scores"):
-        raise ValueError("players do not enter scores tonight")
     m, side = live_match(s, p["person_id"])
     if not m:
         return {"status": "not_playing"}
+    if not s.match_rule(m, "player_scores"):
+        return {"status": "off"}
     games_mine = [[int(a), int(b)] for a, b in p["games"]]
     if not games_mine or any(not (0 <= x <= 99) for g in games_mine for x in g):
         return {"status": "invalid", "need": m.scoring.games_to_win(),
@@ -193,7 +206,7 @@ def claim(app, p):
                                   "via": p.get("via", ""), "games": games})
     return {"status": "sent", "id": cid, "opponent": opp,
             "reachable": reachable(app, m, other),
-            "auto_min": int(s.event.get("score_auto_min") or 0)}
+            "auto_min": int(s.match_rule(m, "score_auto_min") or 0)}
 
 
 def answer(app, p):
@@ -259,7 +272,6 @@ def sweep(app, now):
     `score_auto_min` has passed; a report on a match that is no longer on
     its table is closed. Run by App.sweep, every few seconds."""
     s = app.store
-    auto = int(s.event.get("score_auto_min") or 0)
     wrote = False
     for c in list(s.claims.values()):
         if c["state"] != "open":
@@ -268,6 +280,7 @@ def sweep(app, now):
         if not m or m.status != "live" or m.queued_seq != c["qseq"]:
             _close(app, c, "stale")
             continue
+        auto = int(s.match_rule(m, "score_auto_min") or 0)
         if auto and now - c["ts"] >= auto * 60:
             _close(app, c, "timed")
             _write(app, m, c["games"], "timed")

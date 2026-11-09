@@ -65,7 +65,6 @@ def plan(app, ok_chats, now):
     reach = reach_map(s, ok_chats)
     out = []
     multi = len(s.cups) > 1
-    scores = bool(s.event.get("player_scores"))
 
     # -- your turn: a match on a table
     for n, t in sorted(s.tables.items()):
@@ -80,7 +79,7 @@ def plan(app, ok_chats, now):
                 continue
             out.append(_notice(
                 f"go:{m.id}:{m.queued_seq}:{chat}", chat,
-                copy.text_go(app, m, pid, t, multi, scores),
+                copy.text_go(app, m, pid, t, multi, s.match_rule(m, "player_scores")),
                 prio=0, ttl=STALE,
                 ref={"kind": "go", "m": m.id, "q": m.queued_seq, "p": pid}))
 

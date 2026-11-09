@@ -1401,6 +1401,8 @@ function openWizard() {
       entry: c.entry || 'single',
       registration: c.registration || 'closed',
       kind: f ? f.kind : 'swiss',
+      // what its players do for themselves comes along with the cup
+      self_checkin: c.self_checkin, player_scores: c.player_scores, score_auto_min: c.score_auto_min,
     };
   });
   if (!cups.length) {
@@ -1841,26 +1843,36 @@ function newDrawBlock(c) {
 const tablesAreSplit = () => S.tables.some(t => t.cup_id);
 
 /* A night nobody referees: players check in, take breaks and enter their
-   own scores from their phones (tt/play.py, docs/self-run.md). */
+   own scores from their phones (tt/play.py, docs/self-run.md). One row per
+   cup, so the doubles can run themselves while the singles have a desk. A
+   cup that never said shows what it falls back on, dimmed. */
 function selfRunSection() {
-  const ev = S.event, auto = +ev.score_auto_min || 0;
+  const ev = S.event;
+  const rule = (c, k) => c && c[k] != null ? c[k]
+    : k === 'player_scores' ? !!ev.player_scores : k === 'score_auto_min' ? (+ev.score_auto_min || 0) : false;
+  const row = c => {
+    const id = c ? c.id : '', sc = rule(c, 'player_scores'), auto = +rule(c, 'score_auto_min') || 0;
+    const box = (k, on) => `<label class="pick"${c && c[k] == null ? ' title="Not set for this cup — the default"' : ''}>
+      <input type="checkbox" data-cuprule="${k}" data-cup="${esc(id)}" ${on ? 'checked' : ''}></label>`;
+    return `<div class="drow" style="--cols:1fr 96px 96px 140px">
+      <span><b>${esc(c ? c.name : 'Tonight')}</b></span>
+      ${c ? box('self_checkin', rule(c, 'self_checkin')) : '<span class="sub">—</span>'}
+      ${box('player_scores', sc)}
+      <select data-cuprule="score_auto_min" data-cup="${esc(id)}" ${sc ? '' : 'disabled'}>${[0, 2, 3, 5, 10].map(n =>
+        `<option value="${n}" ${n === auto ? 'selected' : ''}>${n ? 'after ' + n + ' min' : 'waits'}</option>`).join('')}</select></div>`;
+  };
   return sblock('Players on their own',
-    'For open play with nobody at the desk or the tables: people check themselves in, take breaks and enter results from their phones.',
-    why('Anyone can check in to an open-play cup from the phone page while the doors are open, ' +
-        'or pick their name if they are already on the list. Picking a name is trusted, the ' +
-        'same as telling the desk. A report from one side waits for the other side to confirm, ' +
-        'on their phone or in Telegram. With a wait set, a report nobody contradicts counts ' +
-        'once that time is up, so a table never stays blocked by someone without a phone.',
-        'Two reports that disagree write nothing: both sides are asked to enter it again, and ' +
-        'the table shows it here until they agree. Any score can still be entered or corrected ' +
-        'here, as on any other night.'),
-    '', `<label class="pick"><input type="checkbox" data-selfrun="self_checkin"
-      ${ev.self_checkin ? 'checked' : ''}> Players check themselves in to open play from their phone</label>
-    <label class="pick"><input type="checkbox" data-selfrun="player_scores"
-      ${ev.player_scores ? 'checked' : ''}> Players enter their own scores — the other side confirms</label>
-    <label class="pick" ${ev.player_scores ? '' : 'style="opacity:.5"'}>A report nobody answers counts after
-      <select data-selfrun="score_auto_min" ${ev.player_scores ? '' : 'disabled'}>${[0, 2, 3, 5, 10].map(n =>
-        `<option value="${n}" ${n === auto ? 'selected' : ''}>${n ? n + ' min' : 'never — it waits'}</option>`).join('')}</select></label>`);
+    'Per cup: whether people check themselves in from their phone, enter their own results, and how long a result nobody answers waits.',
+    why('Checking in works from the phone page while the doors are open; somebody already on the ' +
+        'list just picks their name. That is trust, the same as telling the desk. A result from ' +
+        'one side waits for the other side to confirm it, on their phone or in Telegram. With a ' +
+        'time set, a result nobody contradicts counts once it is up, so a table is never blocked ' +
+        'by somebody without a phone.',
+        'Two results that disagree write nothing: both sides are asked to enter it again, and the ' +
+        'table shows it on Live until they agree. You can always enter or correct a score yourself.'),
+    '', `<div class="rows"><div class="hrow" style="--cols:1fr 96px 96px 140px"><span>Cup</span>
+      <span>Check in</span><span>Own results</span><span>Unanswered</span></div>
+      ${S.cups.length ? S.cups.map(row).join('') : row(null)}</div>`);
 }
 
 function tablesSection() {
@@ -2587,8 +2599,7 @@ function tgSection() {
       <div class="drow" style="--cols:170px 1fr"><span>Link for posters and chats</span>
         <span class="key">${esc(t.link)}</span></div>
     </div>
-    <label class="pick"><input type="checkbox" id="tg-scores" data-tgscores="1"
-      ${S.event.player_scores ? 'checked' : ''}> Players enter their own scores — the other side confirms</label>
+    <p class="sub">Whether players enter their own results — here or on their phone — is set per cup under Event → Players on their own.</p>
     ${why('Anyone who opens the link starts following: they hear about new events and can ' +
           'enter with one tap. Somebody is only linked to a player — and gets their table calls — ' +
           'when the door has seen them: by confirming an entry they made in Telegram, or by them ' +
@@ -3088,13 +3099,10 @@ document.addEventListener('change', e => {
     api('event_meta', { auto_lend: e.target.checked });
     return;
   }
-  if (e.target.dataset.tgscores) {
-    api('event_meta', { player_scores: e.target.checked });
-    return;
-  }
-  if (e.target.dataset.selfrun) {
-    const k = e.target.dataset.selfrun;
-    api('event_meta', { [k]: k === 'score_auto_min' ? +e.target.value : e.target.checked });
+  if (e.target.dataset.cuprule) {
+    const k = e.target.dataset.cuprule, cup = e.target.dataset.cup;
+    const v = k === 'score_auto_min' ? +e.target.value : e.target.checked;
+    api(cup ? 'update_cup' : 'event_meta', cup ? { id: cup, [k]: v } : { [k]: v });
     return;
   }
   // selects commit the moment they change — there is nothing to finish typing
@@ -3308,6 +3316,7 @@ document.addEventListener('click', async e => {
       name: wiz.name, venue: wiz.venue, blurb: wiz.blurb, starts_at: wiz.starts_at,
       cups: wiz.cups.map((c, i) => ({
         name: c.name, blurb: c.blurb, entry: c.entry, registration: c.registration,
+        self_checkin: c.self_checkin, player_scores: c.player_scores, score_auto_min: c.score_auto_min,
         kind: c.kind || '',
         config: c.kind ? formatConfig('w' + i + '_', c.kind) : {},
       })),

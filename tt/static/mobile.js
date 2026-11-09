@@ -125,7 +125,26 @@ const STR = {
     padNoteAuto: (o, m) => `${o} confirms, or it counts after ${m} min.`,
     ciH: 'Not on the list?', ciP: 'Check yourself in and you’re in the line.', ciName: 'Your name', ciPartner: 'Your partner', ciGo: 'Check me in',
     ciReg: 'Signed up already? Search your name.', ciRegRow: c => 'signed up · ' + c, ciTap: 'check in',
-    t: { rest_on: 'On a break — you won’t be called', rest_off: 'Welcome back — you’re in the line', leave_on: 'Signed out — safe home', leave_off: 'Glad you’re still here',
+    // calls on this phone (Web Push)
+    callH: 'Get called on this phone', callP: 'A buzz when you’re next and when your table is free — even with the screen locked.',
+    callGo: 'Turn on calls', callOn: 'Calls come to this phone', callOff: 'Turn off', orTg: 'or on Telegram',
+    iosAdd: 'On an iPhone: tap Share → Add to Home Screen, open TTT from there, and turn on calls.',
+    callBlocked: 'Notifications are blocked for this page — allow them in your browser’s settings.',
+    // what to do now, in a line
+    hWait: 'You’re in the line — this page and the wall show when you’re up. Stepping away? Tap Break, so nobody waits for you.',
+    hNext: 'Head over now, so the table isn’t kept waiting.',
+    hPlay: a => 'After the match, one of you enters the result here and the other confirms it' + (a ? `, or it counts after ${a} min.` : '.'),
+    hPlayDesk: 'After the match, the organisers enter the result.',
+    hRest: 'You won’t be called. Tap I’m back and you join the end of the line.',
+    // the evening in five lines
+    howLink: 'How tonight works', guideH: 'How tonight works', gotIt: 'Got it',
+    g1: 'You’re in the line as soon as you’re checked in. Nobody keeps a list.',
+    g2: p => 'This page and the screen on the wall show when you’re up: “Get ready”, then your table.' + (p ? ' Turn on calls and your phone buzzes, even locked.' : ''),
+    g3: a => 'After the match, one of you enters the result here; the other side confirms it.' + (a ? ` If nobody answers, it counts after ${a} minutes.` : ''),
+    g3desk: 'After the match, the organisers enter the result.',
+    g4: 'Stepping away? Tap Break so nobody waits for you, and I’m back when you return. Leaving? Tap I’m going home.',
+    g5: 'Called, and the other side isn’t there after three minutes? Tap “Opponent not here?” — you go back in the line.',
+    t: { push_on: 'Calls on ✓', push_off: 'Calls off', rest_on: 'On a break — you won’t be called', rest_off: 'Welcome back — you’re in the line', leave_on: 'Signed out — safe home', leave_off: 'Glad you’re still here',
          sent: 'Sent — the other side confirms', agreed: 'Entered ✓', disputed: 'That doesn’t match — enter it again, both of you',
          stale: 'Already entered', gone: 'Already settled', withdrawn: 'Taken back', no_show: 'Table freed', in: 'You’re in ✓' },
   },
@@ -194,7 +213,23 @@ const STR = {
     padNoteAuto: (o, m) => `${o} bestätigt, sonst zählt es nach ${m} Min.`,
     ciH: 'Nicht auf der Liste?', ciP: 'Trag dich selbst ein und du bist in der Reihe.', ciName: 'Dein Name', ciPartner: 'Partner:in', ciGo: 'Ich bin da',
     ciReg: 'Schon angemeldet? Such deinen Namen.', ciRegRow: c => 'angemeldet · ' + c, ciTap: 'einchecken',
-    t: { rest_on: 'Pause — wir rufen dich nicht auf', rest_off: 'Willkommen zurück', leave_on: 'Gute Heimfahrt!', leave_off: 'Schön, dass du noch da bist',
+    callH: 'Aufrufe aufs Handy', callP: 'Es summt, wenn du gleich dran bist und wenn dein Tisch frei ist — auch bei gesperrtem Bildschirm.',
+    callGo: 'Aufrufe einschalten', callOn: 'Aufrufe kommen auf dieses Handy', callOff: 'Ausschalten', orTg: 'oder über Telegram',
+    iosAdd: 'Auf dem iPhone: Teilen → Zum Home-Bildschirm, TTT von dort öffnen und Aufrufe einschalten.',
+    callBlocked: 'Mitteilungen sind für diese Seite blockiert — erlaube sie in den Browser-Einstellungen.',
+    hWait: 'Du bist in der Reihe — diese Seite und die Wand zeigen, wann du dran bist. Kurz weg? Tipp Pause, damit niemand auf dich wartet.',
+    hNext: 'Geh jetzt rüber, damit der Tisch nicht auf dich wartet.',
+    hPlay: a => 'Nach dem Spiel trägt eine Seite das Ergebnis hier ein, die andere bestätigt' + (a ? ` — sonst zählt es nach ${a} Min.` : '.'),
+    hPlayDesk: 'Nach dem Spiel trägt die Orga das Ergebnis ein.',
+    hRest: 'Du wirst nicht aufgerufen. Tipp „Ich bin wieder da“ und du stellst dich hinten an.',
+    howLink: 'So läuft der Abend', guideH: 'So läuft der Abend', gotIt: 'Alles klar',
+    g1: 'Sobald du eingecheckt bist, bist du in der Reihe. Niemand führt eine Liste.',
+    g2: p => 'Diese Seite und der Bildschirm an der Wand zeigen, wann du dran bist: „Gleich“, dann dein Tisch.' + (p ? ' Mit Aufrufen summt dein Handy, auch gesperrt.' : ''),
+    g3: a => 'Nach dem Spiel trägt eine Seite das Ergebnis hier ein, die andere bestätigt.' + (a ? ` Antwortet niemand, zählt es nach ${a} Minuten.` : ''),
+    g3desk: 'Nach dem Spiel trägt die Orga das Ergebnis ein.',
+    g4: 'Kurz weg? Tipp Pause, damit niemand auf dich wartet, und „Ich bin wieder da“, wenn du zurück bist. Gehst du? Tipp „Ich gehe heim“.',
+    g5: 'Aufgerufen, und die andere Seite ist nach drei Minuten nicht da? Tipp „Gegenseite nicht da?“ — du bist wieder in der Reihe.',
+    t: { push_on: 'Aufrufe an ✓', push_off: 'Aufrufe aus', rest_on: 'Pause — wir rufen dich nicht auf', rest_off: 'Willkommen zurück', leave_on: 'Gute Heimfahrt!', leave_off: 'Schön, dass du noch da bist',
          sent: 'Gesendet — die andere Seite bestätigt', agreed: 'Eingetragen ✓', disputed: 'Passt nicht zusammen — tragt es beide nochmal ein',
          stale: 'Schon eingetragen', gone: 'Schon erledigt', withdrawn: 'Zurückgezogen', no_show: 'Tisch frei', in: 'Du bist dabei ✓' },
   },
@@ -312,7 +347,7 @@ async function load() {
     } else if (s) {
       skew = s.now - Date.now() / 1000;
     }
-    if (p && p.ok) P = p.body;
+    if (p && p.ok) { P = p.body; pushFollow(); }
     else if (p && p.status === 403 && me) { me.key = null; store.set(ME_KEY, me); }
     render();
   } catch (e) { /* hall wifi; the next push or tick catches up */ }
@@ -725,11 +760,108 @@ function tgOffer() {
       <a class="btn ghost" href="${href}" target="_blank" rel="noopener">${esc(L.tgGo)} →</a></div>`;
 }
 
+/* Calls on this phone: Web Push (tt/push.py, static/sw.js). Offered once the
+   page knows who you are; Telegram stays the other way to the same calls. */
+const pushable = () => 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
+const isIOS = () => /iP(hone|ad|od)/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+const standalone = () => matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
+let pushSub = null;
+function callCard() {
+  const tgLink = tgOffer();
+  if (!PV()) return tgLink;                // nobody to call yet
+  if (!P || !P.push_key || sim() || !S || !(S.phase === 'doors' || S.phase === 'live')) return tgLink;
+  if (pushSub) return `<div class="acts"><p class="note">✓ ${esc(L.callOn)}</p>
+      <button class="link" data-act="push-off">${esc(L.callOff)}</button></div>`;
+  if (!pushable()) return isIOS() && !standalone()
+    ? `<div class="acts tg-offer"><p class="note"><b>${esc(L.callH)}</b> — ${esc(L.iosAdd)}</p></div>` + tgLink : tgLink;
+  if (Notification.permission === 'denied') return `<div class="acts"><p class="note">${esc(L.callBlocked)}</p></div>` + tgLink;
+  const bot = tgLink ? (tgLink.match(/href="([^"]+)"/) || [])[1] : '';
+  return `<div class="acts tg-offer"><p class="note"><b>${esc(L.callH)}</b> — ${esc(L.callP)}</p>
+      <button class="btn red wide" data-act="push-on">${esc(L.callGo)}</button>
+      ${bot ? `<a class="link" href="${bot}" target="_blank" rel="noopener">${esc(L.orTg)} →</a>` : ''}</div>`;
+}
+const keyBytes = k => Uint8Array.from(atob(k.replace(/-/g, '+').replace(/_/g, '/') + '='.repeat((4 - k.length % 4) % 4)), c => c.charCodeAt(0));
+async function pushInit() {
+  if (SHELL !== 'web' || !pushable() || sim()) return;
+  try {
+    const reg = await navigator.serviceWorker.register('/sw.js');
+    pushSub = await reg.pushManager.getSubscription();
+    render();
+  } catch (e) { /* no service worker here (plain http, private mode): no calls, nothing else changes */ }
+}
+async function pushOn() {
+  try {
+    if (await Notification.requestPermission() !== 'granted') { toast(L.callBlocked, true); return render(); }
+    const reg = await navigator.serviceWorker.ready;
+    let sub = await reg.pushManager.getSubscription();
+    // one made for another server's key (this one was reinstalled) cannot be used
+    if (sub && sub.options && sub.options.applicationServerKey
+        && keyB64(sub.options.applicationServerKey) !== P.push_key) { await sub.unsubscribe(); sub = null; }
+    if (!sub) sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: keyBytes(P.push_key) });
+    if (await act('push_subscribe', { sub: sub.toJSON(), lang: LANG })) { pushSub = sub; ui.pushFor = me && me.key; }
+    render();
+  } catch (e) { toast(String(e.message || e), true); }
+}
+const keyB64 = buf => btoa(String.fromCharCode(...new Uint8Array(buf))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+async function pushOff(quiet) {
+  const sub = pushSub;
+  pushSub = null;
+  ui.pushFor = null;
+  if (!sub) return;
+  if (me && me.key) await IO.playerAct(me.key, 'push_unsubscribe', { endpoint: sub.endpoint }).catch(() => { });
+  try { await sub.unsubscribe(); } catch (e) { }
+  if (!quiet) { toast(toastText('push_off')); render(); }
+}
+/* Calls already on and a name picked (again, or a different one): the
+   server hears whose phone this is now. */
+function pushFollow() {
+  if (!pushSub || !me || !me.key || ui.pushFor === me.key || !IO.playerAct) return;
+  ui.pushFor = me.key;
+  IO.playerAct(me.key, 'push_subscribe', { sub: pushSub.toJSON(), lang: LANG }).catch(() => { });
+}
+
+/* The evening in five lines: once per evening, and whenever asked. */
+const GUIDE_KEY = () => 'ttt_guide_' + ((S && S.event && S.event.id) || '');
+function guide() {
+  const v = PV();
+  const r = (v && v.rules) || {};
+  if (!v || !(r.queue || r.scores)) return '';
+  if (!ui.guide && store.get(GUIDE_KEY())) return '';
+  const push = SHELL === 'web' && P && P.push_key;
+  const steps = [r.queue ? L.g1 : '', L.g2(push), r.scores ? L.g3(r.auto_min) : L.g3desk,
+                 r.queue ? L.g4 : '', r.queue && r.scores ? L.g5 : ''].filter(Boolean);
+  return `<div class="card2 guide" id="guide"><h4>${esc(L.guideH)}</h4><ol>${steps.map(x => `<li>${esc(x)}</li>`).join('')}</ol>
+    <div class="acts flush"><button class="btn ghost small" data-act="guide-ok">${esc(L.gotIt)}</button></div></div>`;
+}
+function howLink() {
+  const v = PV();
+  const r = (v && v.rules) || {};
+  return v && (r.queue || r.scores) ? `<p class="howlink"><button class="link" data-act="guide-open">${esc(L.howLink)}</button></p>` : '';
+}
+
+/* What to do now, in one line under the hero — so nobody has to ask. */
+function howNow(x, v) {
+  const r = v.rules || {};
+  if (x.state === 'playing') {
+    if ((v.reported || []).length || !(v.scores || r.scores)) return '';
+    return v.scores ? L.hPlay(v.auto_min) : L.hPlayDesk;
+  }
+  if (!r.queue) return '';
+  if (x.state === 'resting') return L.hRest;
+  if (x.state === 'waiting' || x.state === 'drawn') return x.on_deck ? L.hNext : L.hWait;
+  return '';
+}
+
 function actions(H) {
   const v = PV();
-  const offer = SHELL === 'web' ? tgOffer() : '';
+  const offer = SHELL === 'web' ? callCard() : '';
   if (!v || !H || !H.x) return offer;
   const x = H.x;
+  const how = howNow(x, v);
+  return (how ? `<p class="how">${esc(how)}</p>` : '') + actionButtons(v, x, offer);
+}
+
+function actionButtons(v, x, offer) {
   if (x.state === 'playing') {
     // the other side never came: offered once they have had time to
     const after = (v.no_show_after || 180), now = Date.now() / 1000 + skew;
@@ -1359,6 +1491,7 @@ function forget() {
   o.style.setProperty('--b', '60px');
   room.classList.add('out');
   $('hero').classList.add('out');
+  pushOff(true);
   setTimeout(() => {
     me = null; store.del(ME_KEY); ui.seen = null; ui.moment = null; ui.cup = null;
     $('hero').classList.remove('out');
@@ -1387,9 +1520,9 @@ function render(entering) {
   const pill = $('pill');
   pill.hidden = SHELL !== 'web' || known();
   if (!pill.hidden) pill.innerHTML = `<b>${esc(L.pillQ)}</b><span>${esc(P && (P.checkin || []).length ? L.pillCi : L.pillA)}</span>`;
-  $('mine').innerHTML = signup() + evening();
+  $('mine').innerHTML = guide() + signup() + evening();
   renderRoom();
-  $('tail').innerHTML = orga() + settings();
+  $('tail').innerHTML = howLink() + orga() + settings();
   if (ui.pad && !playingNow()) closePad();          // the referee got there first
   const dot = $('dot');
   if (dot) { dot.classList.add('on'); setTimeout(() => dot.classList.remove('on'), 500); }
@@ -1494,6 +1627,10 @@ document.addEventListener('click', async e => {
     if (!name) { toast(L.needName, true); const n = $('ci-name'); if (n) n.focus(); return; }
     return void checkin({ cup_id: d.cup, name, partner_name: (ui.ciPartner || '').trim() });
   }
+  if (a === 'guide-ok') { ui.guide = false; store.set(GUIDE_KEY(), 1); return render(); }
+  if (a === 'guide-open') { ui.guide = true; render(); const g = $('guide'); if (g) g.scrollIntoView({ behavior: reduced() ? 'auto' : 'smooth', block: 'center' }); return; }
+  if (a === 'push-on') return void pushOn();
+  if (a === 'push-off') return void pushOff();
   if (a === 'no-show') { if (!(await ask(L.noShowQ(d.opp)))) return; return void act('no_show', {}); }
   if (SHELL !== 'tg') {
     if (!PV()) return;
@@ -1542,6 +1679,7 @@ function start() {
     else if (SHELL === 'web' && me && !me.key && myPlayer()) claimKey(me.player);
   });
   IO.listen(load);
+  pushInit();
   setInterval(load, 30000);
   setInterval(() => {                       // the countdown, without fighting anyone typing
     const f = document.activeElement;

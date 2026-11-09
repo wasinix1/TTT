@@ -98,8 +98,9 @@ def view(bot, uid):
                    "known": bool(me.person),
                    "news": bool(chat.get("news", 1)),
                    "linked": bool(me.person) or any(r.tg_id == uid for r in me.regs)},
-            "scores": bool(ev.get("player_scores")),
-            "auto_min": int(ev.get("score_auto_min") or 0),
+            # what their match on a table lets them do (Cup rules)
+            "scores": False,
+            "auto_min": 0,
             "entries": [],
             "open": [],
             "tonight": [],
@@ -150,6 +151,14 @@ def view(bot, uid):
         out["matches"].sort(key=lambda m: -m["seq"])
         if phase == "done":
             out["places"] = [p for p in (_place(app, e) for e in me.ents) if p]
+
+        if me.person:
+            from .play import live_match, rules_for
+            out["rules"] = rules_for(s, me.person.id)
+            m, _ = live_match(s, me.person.id)
+            if m:
+                out["scores"] = bool(s.match_rule(m, "player_scores"))
+                out["auto_min"] = int(s.match_rule(m, "score_auto_min") or 0)
 
         mine_ids = {p.id for p in s.players.values()
                     if me.person and p.person_id == me.person.id}
@@ -277,6 +286,8 @@ def act(bot, user, op, d):
         st = r["status"]
         if st == "not_playing":
             raise ValueError("Gerade läuft kein Spiel von dir.")
+        if st == "off":
+            raise ValueError("Hier trägt die Orga die Ergebnisse ein.")
         if st == "invalid":
             raise ValueError(f"Das ergibt noch keinen Sieg — {r['need']} Gewinnsätze braucht es.")
         toast = {"sent": f"Gesendet — {r.get('opponent', '')} bestätigt"

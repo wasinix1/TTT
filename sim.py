@@ -2061,7 +2061,7 @@ def self_run_night(app, mode="singles", n=4, tables=1):
     for t in list(s.tables)[tables:]:
         app.act("admin", "remove_table", {"number": t})
     app.act("admin", "set_phase", {"phase": "doors"})
-    app.act("admin", "event_meta", {"self_checkin": True, "player_scores": True})
+    app.act("admin", "update_cup", {"id": cup, "self_checkin": True, "player_scores": True})
     app.act("admin", "start_format", {"id": s.cups[cup].format_id})
     keys = {}
     for i in range(n):
@@ -2089,10 +2089,10 @@ def test_phones_check_in_and_come_and_go():
         ok = False
     except ValueError:
         ok = True
-    check(ok, "nobody checks themselves in unless the evening says so")
-    app.act("admin", "event_meta", {"self_checkin": True})
+    check(ok, "nobody checks themselves in unless their cup says so")
+    app.act("admin", "update_cup", {"id": cup, "self_checkin": True})
     check([c["id"] for c in _srv.phone(app, "", "", {}, False)["checkin"]] == [cup],
-          "then a phone is offered the open-play cup")
+          "then a phone is offered the cup that says so")
     out = _srv.phone(app, "", "checkin", {"cup_id": cup, "name": "Ana"}, True)
     e = s.entrants[out["entrant_id"]]
     check(e.cup_id == cup and out["key"], "a walk-in is in the cup, and the phone holds a key")
@@ -2194,13 +2194,48 @@ def test_an_unanswered_score_counts_after_the_wait():
     r = _srv.phone(app, ka, "score", {"games": [[11, 7], [11, 5]]}, True)
     app.sweep(now=s.clock() + 3600)
     check(m.status == "live", "with no wait set, a report waits however long it takes")
-    app.act("admin", "event_meta", {"score_auto_min": 3})
+    app.act("admin", "update_cup", {"id": cup, "score_auto_min": 3})
     app.sweep(now=s.clock() + 60)
     check(m.status == "live", "inside the wait it still waits")
     app.sweep(now=s.clock() + 181)
     check(m.status == "done" and m.winner == "a", "after it, it counts")
     check(s.claims[r["claim"]["id"]]["state"] == "timed", "and says it counted on time, not agreement")
     check(any(h["payload"].get("how") == "timed" for h in s.history(10)), "so does the log")
+    shutil.rmtree(d)
+
+
+def test_each_cup_says_what_its_players_do():
+    print("\n[each cup says for itself what its players do]")
+    app, d = fresh()
+    s = app.store
+    a, b = pool_event(app, cups=2, kind="open_play", config={"mode": "singles"})
+    app.act("admin", "split_tables", {"assignments": {"1": a, "2": b}})
+    app.act("admin", "set_phase", {"phase": "doors"})
+    app.act("admin", "update_cup", {"id": a, "self_checkin": True, "player_scores": True,
+                                    "score_auto_min": 2})
+    check([c["id"] for c in _srv.phone(app, "", "", {}, False)["checkin"]] == [a],
+          "only the cup that lets players in shows up on a phone")
+    for f in (s.cups[a].format_id, s.cups[b].format_id):
+        app.act("admin", "start_format", {"id": f})
+    keys = {}
+    for cup in (a, b):
+        for i in range(2):
+            e = app.act("admin", "admit", {"name": f"{cup}{i}", "cup_id": cup, "kind": "single"})
+            pid = s.players[s.entrants[e["entrant_id"]].player_ids[0]].person_id
+            keys[f"{cup}{i}"] = app.player_key(pid)
+    r = _srv.phone(app, keys[f"{a}0"], "score", {"games": [[11, 1], [11, 1]]}, True)
+    check(r["claim"]["status"] == "sent" and r["claim"]["auto_min"] == 2,
+          "players in the one cup report, with that cup's wait")
+    try:
+        _srv.phone(app, keys[f"{b}0"], "score", {"games": [[11, 1], [11, 1]]}, True)
+        ok = False
+    except ValueError:
+        ok = True
+    check(ok, "in the other, results stay with the organisers")
+    app.act("admin", "update_cup", {"id": b, "player_scores": None})
+    app.act("admin", "event_meta", {"player_scores": True})
+    r = _srv.phone(app, keys[f"{b}0"], "score", {"games": [[11, 1], [11, 1]]}, True)
+    check(r["claim"]["status"] == "sent", "a cup that never said follows the event-wide switch")
     shutil.rmtree(d)
 
 
@@ -2243,6 +2278,126 @@ def test_the_board_draws_scramble_doubles_by_four():
           "and the rest wait four to a match, not two")
     check(b["overdue_after"] >= 600, "the board says when a table has been going too long")
     shutil.rmtree(d)
+
+
+# ---------------------------------------------------------------- web push
+from tt import webpush as _wp
+from tt.push import Push as _Push
+
+
+def test_web_push_crypto():
+    print("\n[web push: the crypto, against the RFC's own numbers]")
+    U = _wp.unb64u
+    as_d = int.from_bytes(U("yfWPiYE-n46HLnH0KqZOF1fJJU3MYrct3AELtAQ-oRw"), "big")
+    ua_d = int.from_bytes(U("q1dXpw3UpT5VOmu_cf_v6ih07Aems3njxI-JWgLcM94"), "big")
+    ua_pub = U("BCVxsr7N_eNgVRqvHtD0zTZsEc6-VV-JvLexhqUzORcxaOzi6-AYWXvTBHm4bjyPjs7Vd8pZGH6SRpkNtoIAiw4")
+    auth = U("BTBZMqHH6r4Tts7J_aSIgg")
+    check(_wp.public_of(ua_d) == ua_pub, "P-256: a private key makes the RFC's public key")
+    body = _wp.encrypt(b"When I grow up, I want to be a watermelon", ua_pub, auth,
+                       salt=U("DGv6ra1nlYgDCS1FRnbzlw"), as_key=(as_d, _wp.public_of(as_d)))
+    check(_wp.b64u(body) == (
+        "DGv6ra1nlYgDCS1FRnbzlwAAEABBBP4z9KsN6nGRTbVYI_c7VJSPQTBtkgcy27mlmlMoZIIgDll6e3vCYLocIn"
+        "mYWAmS6TlzAC8wEqKK6PBru3jl7A_yl95bQpu6cVPTpK4Mqgkf1CXztLVBSt2Ks3oZwbuwXPXLWyouBWLVWGNW"
+        "QexSgSxsj_Qulcy4a-fN"), "RFC 8291 appendix A: the encrypted message, byte for byte")
+    rk = _wp._expand(bytes(range(16)))
+    check(_wp._encrypt_block(rk, bytes.fromhex("00112233445566778899aabbccddeeff")).hex()
+          == "69c4e0d86a7b0430d8cdb78070b4c55a", "AES-128: the FIPS-197 example")
+    d, pub = _wp.new_key()
+    hdr = _wp.vapid_header(d, "https://fcm.googleapis.com/fcm/send/x", "mailto:a@b.c")
+    jwt = hdr.split("t=")[1].split(",")[0]
+    h, c, sig = jwt.split(".")
+    check(_wp.verify(pub, f"{h}.{c}".encode(), U(sig)), "VAPID: the JWT verifies with the key it names")
+    check(json.loads(U(c))["aud"] == "https://fcm.googleapis.com", "and is addressed to the push service")
+
+
+def _phone_sub():
+    d, pub = _wp.new_key()
+    auth = os.urandom(16)
+    return d, auth, {"endpoint": "https://fcm.googleapis.com/fcm/send/" + _wp.b64u(os.urandom(9)),
+                     "keys": {"p256dh": _wp.b64u(pub), "auth": _wp.b64u(auth)}}
+
+
+def test_web_push_calls():
+    print("\n[web push: the calls a phone gets, each once]")
+    app, d = fresh()
+    s = app.store
+    got = []
+    status = {"code": 201}
+
+    def fake(sub, payload, vapid, subject, **kw):
+        got.append((sub["endpoint"], payload, kw.get("topic")))
+        return status["code"]
+    app.push = _Push(app, d, sender=fake)
+    cup, keys = self_run_night(app, n=6)
+    m, ka, kb = on_table(app, keys)
+    who = {k: app.person_for_key(v) for k, v in keys.items()}
+    subs = {}
+    for name, key in keys.items():
+        priv, auth, sub = _phone_sub()
+        subs[name] = sub
+        _srv.phone(app, key, "push_subscribe", {"sub": sub, "lang": "de"}, True)
+    try:
+        _srv.phone(app, ka, "push_subscribe", {"sub": dict(subs["P0"], endpoint="https://10.0.0.1/x")}, True)
+        ok = False
+    except ValueError:
+        ok = True
+    check(ok, "only the push services browsers use are accepted as endpoints")
+    app.push.pump()
+    a_end = next(v["endpoint"] for k, v in subs.items() if keys[k] == ka)
+    calls = [p for e, p, t in got if e == a_end]
+    check(any(p["title"] == "T1 — du bist dran" for p in calls),
+          "the player on the table is called to it, in their language")
+    check(any(p["title"].startswith("Gleich") for e, p, t in got),
+          "and whoever is next is told to get ready")
+    n = len(got)
+    app.push.pump()
+    check(len(got) == n, "nothing is sent twice")
+    _srv.phone(app, ka, "score", {"games": [[11, 4], [11, 4]]}, True)
+    app.push.pump()
+    b_end = next(v["endpoint"] for k, v in subs.items() if keys[k] == kb)
+    check(any(e == b_end and "meldet" in p["title"] and "4:11" in p["body"] for e, p, t in got[n:]),
+          "a reported score asks the other side, the way round they played it")
+    check(all(t in ("call", "claim") for e, p, t in got), "and a newer call replaces an older one in transit")
+    status["code"] = 410
+    _srv.phone(app, kb, "confirm", {"id": _srv.phone(app, kb, "", {}, False)["confirm"][0]["id"],
+                                    "yes": True}, True)
+    app.push.pump()
+    check(len(app.push.subs()) < 6, "a phone that unsubscribed (410) is forgotten")
+    shutil.rmtree(d)
+
+
+def test_web_push_over_the_wire():
+    print("\n[web push: one real request, signed and encrypted]")
+    from http.server import BaseHTTPRequestHandler
+    seen = {}
+
+    class FakePushService(BaseHTTPRequestHandler):
+        def log_message(self, *a):
+            pass
+
+        def do_POST(self):
+            seen["headers"] = dict(self.headers)
+            seen["body"] = self.rfile.read(int(self.headers["Content-Length"]))
+            self.send_response(201)
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+    srv = ThreadingHTTPServer(("127.0.0.1", 0), FakePushService)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    priv, auth, sub = _phone_sub()
+    sub["endpoint"] = f"http://127.0.0.1:{srv.server_address[1]}/push/abc"
+    vapid, vpub = _wp.new_key()
+    code = _wp.send(sub, {"title": "Tisch 2 — du bist dran"}, vapid, "https://club.example",
+                    topic="call")
+    srv.shutdown()
+    h = seen["headers"]
+    check(code == 201 and h["Content-Encoding"] == "aes128gcm" and h["Topic"] == "call",
+          "it goes as aes128gcm, with its topic")
+    jwt = h["Authorization"].split("t=")[1].split(",")[0]
+    a, c, sig = jwt.split(".")
+    check(_wp.verify(vpub, f"{a}.{c}".encode(), _wp.unb64u(sig))
+          and h["Authorization"].endswith("k=" + _wp.b64u(vpub)), "signed with the server's key")
+    check(json.loads(_wp.decrypt(seen["body"], priv, auth))["title"] == "Tisch 2 — du bist dran",
+          "and only the phone can read it")
 
 
 def test_the_board_shows_the_next_pairing():
@@ -3020,8 +3175,12 @@ if __name__ == "__main__":
     test_phones_check_in_and_come_and_go()
     test_phones_enter_their_own_scores()
     test_an_unanswered_score_counts_after_the_wait()
+    test_each_cup_says_what_its_players_do()
     test_the_other_side_never_came()
     test_the_board_draws_scramble_doubles_by_four()
+    test_web_push_crypto()
+    test_web_push_calls()
+    test_web_push_over_the_wire()
     test_withdrawal_walks_over_and_frees_the_table()
     test_withdrawal_resolves_a_bracket()
     test_resting_holds_a_scheduled_fixture()

@@ -214,13 +214,15 @@ on the server. All of it is in [docs/telegram.md](docs/telegram.md).
 ## A night nobody referees
 
 Open play can run itself. Under Setup → Event → *Players on their own*,
-people check themselves in from the phone page, take breaks and go home
+one row per cup, people check themselves in from the phone page, take breaks and go home
 from it, and enter their own scores. The other side confirms on their phone
 or in Telegram, or, if you set a wait, the score counts once nobody has
 contradicted it in that time. Somebody who never came to the table can be
 flagged by whoever did, and the table moves on. The console and the wall
 point out a report waiting for an answer, two that disagree, and a table
-running so long its result was probably forgotten. It is trust, not proof,
+running so long its result was probably forgotten. Phones can turn on calls (Web
+Push, written out in the standard library, nothing to install), and the
+page and the wall tell players what to do at each step. It is trust, not proof,
 the same as giving the desk a name. All of it is in
 [docs/self-run.md](docs/self-run.md).
 

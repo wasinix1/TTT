@@ -384,7 +384,8 @@ class Conversation:
             # answer to a question from an hour ago
             self.wire.set_chat(uid, pending="")
         games = parse_score(text)
-        if games and self.store.event.get("player_scores"):
+        # whether their cup takes scores from players is play.claim's to say
+        if games:
             if self.on_score(uid, games):
                 return
         self.to_orga(uid, text)
@@ -1010,7 +1011,7 @@ class Conversation:
         (they are not playing), so it goes to the orga instead."""
         r = self.claim(uid, games_mine)
         st = r["status"]
-        if st == "not_playing":
+        if st in ("not_playing", "off"):
             return False
         if st == "invalid":
             self.say(uid, f"Das ergibt noch keinen Sieg — bei Best of {r['best_of']} braucht es "

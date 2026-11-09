@@ -57,6 +57,8 @@ class App:
         # used to tell a reporter whether the other side can be asked; it
         # is not state, so it lives and dies with the process
         self._phones = {}
+        # Web Push (tt/push.py): like Telegram, only ever on the live App
+        self.push = None
         if not self.store.tables:
             for n in (1, 2, 3):
                 self.store.append("table_set", {"number": n, "name": f"Table {n}"})
@@ -295,7 +297,7 @@ class App:
         s = self.store
         if not m or m.status != "live":
             return None
-        auto = int(s.event.get("score_auto_min") or 0)
+        auto = int(s.match_rule(m, "score_auto_min") or 0)
         mine = [c for c in s.claims.values()
                 if c["match_id"] == m.id and c["qseq"] == m.queued_seq]
         live = [c for c in mine if c["state"] == "open"]
@@ -794,7 +796,7 @@ class App:
         return {"cup_id": cid}
 
     def op_update_cup(self, p):
-        self.store.append("cup_update", p)
+        self.store.append("cup_update", self._rules(p))
 
     def op_remove_cup(self, p):
         self.store.append("cup_remove", p)
@@ -1001,12 +1003,21 @@ class App:
         return {"match_id": mid}
 
     # the event itself
+    @staticmethod
+    def _rules(p):
+        """What players may do for themselves, as the cup or the event
+        stores it: a wait is whole minutes, at most an hour; None on a cup
+        means back to the default."""
+        p = dict(p)
+        if p.get("score_auto_min") is not None:
+            p["score_auto_min"] = max(0, min(60, int(p["score_auto_min"] or 0)))
+        for k in ("self_checkin", "player_scores"):
+            if p.get(k) is not None:
+                p[k] = bool(p[k])
+        return p
+
     def op_event_meta(self, p):
-        if "score_auto_min" in p:
-            p = dict(p, score_auto_min=max(0, min(60, int(p["score_auto_min"] or 0))))
-        if "self_checkin" in p:
-            p = dict(p, self_checkin=bool(p["self_checkin"]))
-        self.store.append("event_meta", p)
+        self.store.append("event_meta", self._rules(p))
 
     # a player, for themselves (tt/play.py). Only the bot and /api/player
     # reach these, each having worked out whose they are
@@ -1023,16 +1034,16 @@ class App:
         return play.no_show(self, p)
 
     def self_checkin_cups(self):
-        """Where a phone may check itself in: open play, when the event
-        lets players run their own evening and the doors are open."""
+        """Where a phone may check itself in: the cups that say so, while
+        the doors are open and their draw is not over."""
         s = self.store
-        if not s.event.get("self_checkin") or not s.shows_console():
+        if not s.shows_console():
             return []
         out = []
         for cid in s.cup_order:
             cup = s.cups.get(cid)
             f = s.formats.get(cup.format_id or "") if cup else None
-            if f and f.kind == "open_play" and f.status != "done":
+            if f and f.status != "done" and s.cup_rule(cid, "self_checkin"):
                 out.append(cup)
         return out
 
@@ -1103,6 +1114,8 @@ class App:
                 "blurb": c.get("blurb", ""),
                 "entry": c.get("entry") or "single",
                 "registration": c.get("registration") or "closed",
+                **{k: v for k, v in self._rules(c).items()
+                   if k in s.CUP_RULES and v is not None},
             })
             cup_ids.append(cid)
 
@@ -1909,6 +1922,15 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/board":
             return self._static("board.html")
 
+        # the phone page's service worker has to come from the root to be
+        # allowed to look after the root; and the manifest that lets an
+        # iPhone add the page to its home screen, which is where iOS allows
+        # pushes from
+        if path == "/sw.js":
+            return self._static("sw.js")
+        if path == "/manifest.webmanifest":
+            return self._static("manifest.webmanifest")
+
         if path == "/print":
             return self._print_page(q)
 
@@ -2027,7 +2049,10 @@ class Handler(BaseHTTPRequestHandler):
                                                  app.CHECKIN_BURST, "checkin"):
                 return self._send(429, {"error": "too many check-ins from here just now — "
                                                  "give it a few minutes"})
-            out = phone(app, key, body.get("op") or "", body.get("data") or {}, post)
+            host = self.headers.get("Host") or ""
+            proto = self.headers.get("X-Forwarded-Proto") or ""
+            origin = f"{proto}://{host}" if proto and host else ""
+            out = phone(app, key, body.get("op") or "", body.get("data") or {}, post, origin)
         except PermissionError as e:
             return self._send(403, {"error": str(e)})
         except (ValueError, KeyError) as e:
@@ -2176,6 +2201,7 @@ class Handler(BaseHTTPRequestHandler):
 
 
 mimetypes.add_type("font/woff2", ".woff2")       # self-hosted fonts (tt/static/fonts)
+mimetypes.add_type("application/manifest+json", ".webmanifest")
 
 
 def phone_view(app, pid):
@@ -2183,17 +2209,20 @@ def phone_view(app, pid):
     the entries are theirs, the scores waiting on them, and what the
     evening lets players do for themselves."""
     s = app.store
-    ev = s.event
-    out = {"scores": bool(ev.get("player_scores")),
-           "auto_min": int(ev.get("score_auto_min") or 0),
+    m, _ = play.live_match(s, pid) if pid else (None, None)
+    out = {"scores": bool(m and s.match_rule(m, "player_scores")),
+           "auto_min": int(s.match_rule(m, "score_auto_min") or 0) if m else 0,
            "checkin": [{"id": c.id, "name": c.name, "entry": c.entry}
                        for c in app.self_checkin_cups()],
-           "me": None, "confirm": [], "reported": [], "no_show_after": play.NO_SHOW_AFTER}
+           "me": None, "confirm": [], "reported": [], "no_show_after": play.NO_SHOW_AFTER,
+           # the key a browser subscribes with, when this server sends pushes
+           "push_key": app.push.public if app.push else ""}
     if pid:
         who = s.people[pid]
         out["me"] = {"person_id": pid, "name": who.name,
                      "entrants": [e.id for e in play.entrants_of(s, pid)]}
         out["confirm"], out["reported"] = play.pending(app, pid)
+        out["rules"] = play.rules_for(s, pid)
     if out["checkin"]:
         # entries made ahead for these cups, so somebody can find their own
         cups = {c["id"] for c in out["checkin"]}
@@ -2203,7 +2232,7 @@ def phone_view(app, pid):
     return out
 
 
-def phone(app, key, op, d, post):
+def phone(app, key, op, d, post, origin=""):
     """One request from a phone page. Without a key it can only look and
     say who it is; with one it acts as that person (tt/play.py)."""
     s = app.store
@@ -2252,6 +2281,8 @@ def phone(app, key, op, d, post):
                                                "games": d.get("games") or []}, actor="phone")
         if r["status"] == "not_playing":
             raise ValueError("no match of yours is on a table")
+        if r["status"] == "off":
+            raise ValueError("results here are entered by the organisers")
         if r["status"] == "invalid":
             raise ValueError(f"that does not finish the match — it takes {r['need']} games")
         out["claim"] = r
@@ -2267,6 +2298,15 @@ def phone(app, key, op, d, post):
         r = app.act("system", "no_show", {"person_id": pid}, actor="phone")
         out["rested"] = r["rested"]
         toast = "no_show"
+    elif op == "push_subscribe":
+        if not app.push:
+            raise ValueError("this server does not send pushes")
+        app.push.subscribe(pid, d.get("sub") or {}, d.get("lang") or "en", origin)
+        toast = "push_on"
+    elif op == "push_unsubscribe":
+        if app.push:
+            app.push.unsubscribe(str(d.get("endpoint") or ""), pid)
+        toast = "push_off"
     else:
         raise ValueError("unknown action")
     with s.lock:
@@ -2300,6 +2340,9 @@ def serve(data_dir="data", host="0.0.0.0", port=8000):
     app = App(data_dir)
     app.telegram = Bot(app, data_dir)
     app.telegram.start()             # does nothing until a token is set
+    from .push import Push
+    app.push = Push(app, data_dir)
+    app.push.start()
     Handler.app = app
     threading.Thread(target=_sweeper, args=(app,), daemon=True).start()
     srv = ThreadingHTTPServer((host, port), Handler)

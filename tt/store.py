@@ -33,19 +33,17 @@ BLANK_EVENT = {
     "starts_at": "",        # naive local "YYYY-MM-DDTHH:MM", "" = unscheduled
     "ends_at": "",          # optional "HH:MM", shown as a range on the landing
     "phase_pin": "",        # admin override; "" = derive from the clock
-    "player_scores": False, # players enter their own results, from Telegram or their phone
-    # an unconfirmed score from one side counts after this many minutes,
-    # unless the other side has said otherwise. 0: it waits for the other
-    # side (or the orga) however long that takes
+    # players enter their own results. Each cup says so for itself now
+    # (Cup.player_scores); this is what a cup that never said falls back on
+    "player_scores": False,
+    # and how long a report nobody answers waits before it counts; 0 is
+    # for ever. Also only a fallback for a cup that never said
     "score_auto_min": 0,
-    # players check themselves in to open play from their phone, and can
-    # walk in without the desk (docs/self-run.md)
-    "self_checkin": False,
 }
 
 # Event fields that are really the club's habits rather than one evening's,
 # so a new event keeps them — decided once, like the tables.
-CARRIED = ("player_scores", "score_auto_min", "self_checkin")
+CARRIED = ("player_scores", "score_auto_min")
 
 
 class Store:
@@ -433,10 +431,12 @@ class Store:
             m.started_ts = None
 
     CUP_FIELDS = ("name", "blurb", "entry", "registration", "format_id")
+    # what players may do for themselves: None means "as the default"
+    CUP_RULES = ("self_checkin", "player_scores", "score_auto_min")
 
     def _ev_cup_add(self, p, seq):
         c = Cup(id=p["id"], name=p.get("name") or "Cup")
-        for k in self.CUP_FIELDS:
+        for k in self.CUP_FIELDS + self.CUP_RULES:
             if k in p and k != "name":
                 setattr(c, k, p[k])
         self.cups[p["id"]] = c
@@ -450,6 +450,9 @@ class Store:
         for k in self.CUP_FIELDS:
             if k in p:
                 setattr(c, k, p[k] or ("" if k != "format_id" else None))
+        for k in self.CUP_RULES:
+            if k in p:
+                setattr(c, k, p[k])
 
     def _ev_cup_remove(self, p, seq):
         self.cups.pop(p["id"], None)
@@ -1012,6 +1015,24 @@ class Store:
     def cup_of_table(self, t: Table):
         """A table's cup, or None if shared — self-heals if the cup was removed."""
         return t.cup_id if t.cup_id in self.cups else None
+
+    def cup_rule(self, cup_id, key):
+        """What players may do for themselves in this cup (Cup.CUP_RULES).
+        A cup that never said: no self check-in, and scores and the wait as
+        the event-wide settings say — which is also all a draw outside any
+        cup has."""
+        c = self.cups.get(cup_id or "")
+        v = getattr(c, key, None) if c else None
+        if v is not None:
+            return v
+        if key == "player_scores":
+            return bool(self.event.get("player_scores"))
+        if key == "score_auto_min":
+            return int(self.event.get("score_auto_min") or 0)
+        return False
+
+    def match_rule(self, m, key):
+        return self.cup_rule(self.cup_of_format(self.formats.get(m.format_id)) if m else None, key)
 
     def cup_of_format(self, f):
         c = f.config.get("cup_id") if f else None

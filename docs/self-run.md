@@ -11,19 +11,27 @@ always did, and a phone can only check itself in to an open-play cup.
 
 ## Switching it on
 
-Setup → Event → **Players on their own**:
+Setup → Event → **Players on their own** has one row per cup, so the
+doubles can run themselves while the singles have a desk:
 
-- **Players check themselves in to open play from their phone.** While the
-  doors are open, the phone page offers *Check in* next to *Tap your name*.
-- **Players enter their own scores.** The same switch the Telegram section
-  has always had. It now covers web phones as well as Telegram.
-- **A report nobody answers counts after** *never / 2 / 3 / 5 / 10 min*.
-  This is the trust setting. *Never* means one side's word waits for the
-  other side, however long that takes. With a time set, a report nobody
-  contradicts is written once the time is up, so a table never stays blocked
-  by somebody without a phone.
+| Cup | Check in | Own results | Unanswered |
+|---|---|---|---|
+| Open play | ✓ | ✓ | after 3 min |
+| Singles cup | | | waits |
 
-All three carry over to the next event, like the other club habits.
+- **Check in.** While the doors are open, the phone page offers *Check in*
+  next to *Tap your name* for this cup.
+- **Own results.** Players enter their own scores, from the web page or
+  Telegram.
+- **Unanswered.** *Waits* means one side's word waits for the other side,
+  however long that takes. With a time set, a result nobody contradicts is
+  written once the time is up, so a table never stays blocked by somebody
+  without a phone.
+
+The settings live on the cup (`Cup.self_checkin`, `player_scores`,
+`score_auto_min`), so they carry over with the cup to the next event, and
+the new-event wizard keeps them. A cup that never set one falls back on the
+old event-wide setting. That is also what a draw outside any cup uses.
 
 ## Who a phone is
 
@@ -86,11 +94,47 @@ The board now shows scramble's next match as its two teams of two. The
 numbers on phones count four people to a match, not two, so *2 before
 yours* is true for scramble as well as for singles and pairs.
 
+## Calls on a locked phone: Web Push
+
+Once the phone page knows who you are, it offers **Turn on calls**. The
+phone then gets the same calls the bot sends: *Get ready* when you're in
+the next wave, *Table 2 — you're on* when the table is yours, and *Ana
+reported a result — is that right?* when the other side reported a score.
+A newer call replaces the older one on the lock screen.
+
+- `tt/webpush.py` is Web Push in the standard library: P-256 ECDSA and
+  ECDH, HKDF-SHA256 and AES-128-GCM, written out. It reproduces the RFC 8291
+  test vector byte for byte (in `sim.py`), and its VAPID signatures verify
+  with Node's own crypto.
+- `tt/push.py` plans calls from the state the way `tt/notify.py` does for
+  Telegram: each call has a key, and a key is sent once. A restart, a replay
+  or a rewind sends nothing twice. Subscriptions and sent keys are in
+  `push.db`, and the server's VAPID key is generated there on first start.
+- Only the push services browsers actually use (Google, Mozilla, Apple,
+  Microsoft) are accepted as endpoints. A subscription is something a phone
+  hands in, and the server shouldn't post wherever it's told to.
+- `static/sw.js` is the service worker. It only shows pushes and caches
+  nothing.
+- **iPhone:** iOS only allows pushes for a page added to the home screen, so
+  there the page says *Share → Add to Home Screen*. It ships a manifest and
+  an icon for that.
+- **HTTPS only.** Push works on the deployed server, and on `localhost`, but
+  not over plain `http://` on the hall LAN.
+
+## Players know what to do without asking
+
+- **One line under the big number** says what to do right now: in the
+  line, *step away? tap Break*; called, *head over now*; on a table, *after
+  the match one of you enters the result*; on a break, *tap I'm back*.
+- **How tonight works:** five lines, shown once per evening when someone
+  first opens the page, and any time from the link at the bottom.
+- **The wall** shows a dark strip along the bottom whenever a cup on it lets
+  players check in or enter results. It has three steps — open the page,
+  tap Break when you step away, enter your result after the match — and a
+  QR code for the page if `segno` is installed.
+
 ## What it does not do
 
-- **Calls when the phone is locked.** Without Telegram, the page only buzzes
-  while it is open. The wall is still the main way people find out they're
-  on. Real web push would need elliptic-curve signing, which Python's
-  standard library doesn't have, and this server installs nothing.
-- **Checking in to anything but open play.** A bracket that people could
-  join from the car park is not a bracket.
+- **Checking in to a draw that has started.** A cup can allow checking in,
+  but somebody arriving after a bracket is drawn lands on its roster, not in
+  the bracket, just as they would at the desk.

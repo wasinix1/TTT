@@ -107,6 +107,13 @@ button.mark:focus-visible{outline:2px solid var(--red);outline-offset:4px}
 .cup h2::before{content:"";position:absolute;left:0;right:0;top:calc(-1 * max(4px,.55vh));height:max(4px,.55vh);background:var(--ink);filter:url(#rule);pointer-events:none}
 @media (orientation:portrait){.cup h2::before{top:calc(-1 * max(4px,.55vmin));height:max(4px,.55vmin)}}
 @media (prefers-reduced-motion:reduce){*{transition:none!important}}
+/* on a night players run themselves: how to, in three lines, at the bottom */
+.how{display:flex;flex:none;align-items:center;gap:2.4vw;margin-top:1.6vh;padding:1.4vh 1.4vw;border-radius:1.8vh;background:var(--ink);color:var(--bone)}
+.how[hidden]{display:none}
+.how img{height:9vh;width:9vh;border-radius:.8vh;background:#fff;flex:none}
+.how ol{display:flex;gap:2.2vw;margin:0;padding:0;list-style:none;flex:1;min-width:0}
+.how li{flex:1;min-width:0;font:600 1.9vh/1.25 var(--grot)}
+.how li b{display:block;font-weight:700;font-size:1.45vh;letter-spacing:.12em;text-transform:uppercase;opacity:.7;margin-bottom:.4vh}
 </style>
 <script>
 /* dark is opt-in: ?dark, ?light, or a tap on the mark (remembered) */
@@ -149,6 +156,7 @@ button.mark:focus-visible{outline:2px solid var(--red);outline-offset:4px}
     <p class="sub" id="sub"></p>
   </div>
   <div class="cups" id="cups"></div>
+  <div class="how" id="how" hidden></div>
   <div class="foot">
     <span id="note"></span>
     <span>*Wartezeit - grob geschätzt &amp; unverbindlich :-)</span>

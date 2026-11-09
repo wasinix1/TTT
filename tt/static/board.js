@@ -67,7 +67,8 @@ function render(S) {
     // a match far past how long matches take tonight has most likely been
     // played with nobody entering it: on a night players enter their own,
     // the wall is where they will see the nudge
-    const late = m => S.event.player_scores && m.started_ts && b.overdue_after
+    const scores = cup && cup.player_scores != null ? cup.player_scores : S.event.player_scores;
+    const late = m => scores && m.started_ts && b.overdue_after
       && Date.now() / 1000 - m.started_ts > b.overdue_after;
     const now = b.playing.map(m => `<div class="now">
       <div class="t">${late(m) ? `Tisch ${m.table} · Ergebnis eintragen!` : `Jetzt · Tisch ${m.table}`}</div>
@@ -91,6 +92,29 @@ function render(S) {
   const waiting = bs.reduce((n, b) => n + b.waiting, 0);
   const left = bs.reduce((n, b) => n + b.total, 0);
   $('note').textContent = left ? `${left} still to play` + (waiting ? `, ${waiting} waiting` : '') : '';
+  howTo(S, bs);
+}
+
+/* What a player has to do, said where everybody looks — only on a night the
+   cups on the wall let players check in or enter their own results. */
+function howTo(S, bs) {
+  const el = $('how');
+  const rule = (c, k) => c && c[k] != null ? c[k] : k === 'player_scores' ? !!S.event.player_scores : false;
+  const cups = bs.map(b => S.cups.find(c => c.id === b.cup_id)).filter(Boolean);
+  const checkin = cups.some(c => rule(c, 'self_checkin'));
+  const scores = cups.some(c => rule(c, 'player_scores'));
+  if (!checkin && !scores) { el.hidden = true; return; }
+  const host = location.host;
+  const steps = [
+    ['Handy', checkin ? `${host} öffnen — Namen tippen oder einchecken` : `${host} öffnen — Namen tippen`],
+    ['Kurz weg?', 'Pause tippen, damit niemand auf dich wartet'],
+    scores ? ['Nach dem Spiel', 'Ergebnis eintragen — die andere Seite bestätigt'] : null,
+  ].filter(Boolean);
+  const qr = `/api/qr.svg?u=${encodeURIComponent(location.origin + '/')}`;
+  const html = `<img src="${qr}" alt="" onerror="this.remove()">
+    <ol>${steps.map(([h, t]) => `<li><b>${esc(h)}</b>${esc(t)}</li>`).join('')}</ol>`;
+  if (el.dataset.html !== html) { el.innerHTML = html; el.dataset.html = html; }
+  el.hidden = false;
 }
 
 /* The wall display can be pointed at the sandbox too — see tt/simulate.py.
