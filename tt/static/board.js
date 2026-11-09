@@ -9,10 +9,11 @@ const nm = s => String(s ?? '').split(' / ').join(' & ');
 
 /* Columns for the tables in play, so the blocks are always equal and never a
    full-width straggler: 3 tables are 3 across (or stacked when cups share the
-   width), 4 are 2x2, and so on. */
+   width), 4 are 2x2, and so on. A cup sharing the width stacks two tables
+   too: side by side, the big table number leaves the names no room. */
 function colsFor(n, multi) {
+  if (multi) return n >= 4 && n % 2 === 0 ? 2 : 1;
   if (n <= 2) return Math.max(1, n);
-  if (multi) return n % 2 === 0 ? 2 : 1;
   return n <= 3 ? n : n % 3 === 0 ? 3 : n % 2 === 0 ? 2 : 3;
 }
 
@@ -26,22 +27,31 @@ function when(r) {
 }
 
 /* v2: rows are bigger, so how many fit is measured after layout rather than
-   estimated — a cut-off row is worse than a shorter list. Rows that do not
-   fit are removed and replaced by one "and N more" line. */
+   estimated — a cut-off row is worse than a shorter list. Rows fill the
+   first column top to bottom, then the next; rows that fit nowhere are
+   removed and replaced by one "and N more" line. */
 function fit() {
   document.querySelectorAll('#cups .list').forEach(list => {
     const total = +list.dataset.total || 0;
     const rows = [...list.querySelectorAll('.q[data-r]')];
-    const old = list.querySelector('.q.more');
-    if (old) old.remove();
+    const cols = [...list.querySelectorAll('.col')];
+    if (!rows.length || !cols.length) return;
+    rows.forEach(r => r.remove());
     const bottom = list.getBoundingClientRect().bottom;
-    let shown = rows.findIndex(r => r.getBoundingClientRect().bottom > bottom + 1);
-    if (shown < 0) shown = rows.length;
-    rows.slice(shown).forEach(r => r.remove());
+    const over = el => el.getBoundingClientRect().bottom > bottom + 1;
+    let shown = 0, c = 0;
+    while (shown < rows.length && c < cols.length) {
+      cols[c].appendChild(rows[shown]);
+      if (!over(rows[shown])) { shown++; continue; }
+      rows[shown].remove();
+      // a column that cannot take even one row is not going to take the next
+      if (!cols[c].children.length) break;
+      c++;
+    }
     if (shown >= total) return;
     const more = document.createElement('div');
     more.className = 'q more';
-    list.appendChild(more);
+    (cols[c] || cols[cols.length - 1]).appendChild(more);
     const label = () => { more.innerHTML = `<span class="n"></span><span class="w">and ${total - shown} more</span>`; };
     label();
     while (shown > 0 && more.getBoundingClientRect().bottom > bottom + 1) {
@@ -64,6 +74,11 @@ function render(S) {
     $('note').textContent = '';
     return;
   }
+  const wide = window.innerWidth > window.innerHeight;
+  const shared = bs.length > 1 && wide;
+  // a cup with the whole width of a landscape screen reads its queue in two columns
+  const qcols = bs.length === 1 && wide ? 2 : 1;
+  $('cups').classList.toggle('shared', shared);
   $('cups').innerHTML = bs.map(b => {
     const cup = S.cups.find(c => c.id === b.cup_id);
     // a match far past how long matches take tonight has most likely been
@@ -72,21 +87,23 @@ function render(S) {
     const scores = cup && cup.player_scores != null ? cup.player_scores : S.event.player_scores;
     const late = m => scores && m.started_ts && b.overdue_after
       && Date.now() / 1000 - m.started_ts > b.overdue_after;
-    const now = b.playing.map(m => `<div class="now">
-      <div class="t">${late(m) ? `Tisch ${m.table} · Ergebnis eintragen!` : `Jetzt · Tisch ${m.table}`}</div>
-      <div class="p"><span>${esc(nm(m.a))}</span><span>${esc(nm(m.b))}</span></div></div>`).join('')
+    const cols = colsFor(b.playing.length, shared);
+    const now = b.playing.map(m => `<div class="now"><div class="s">
+      <div class="t">${late(m) ? 'Ergebnis eintragen!' : 'Jetzt'}</div>
+      <div class="p"><span>${esc(nm(m.a))}</span><span>${esc(nm(m.b))}</span></div></div>
+      <div class="no" aria-label="Tisch ${m.table}">${m.table}</div></div>`).join('')
       || `<div class="now idle"><div class="t">&nbsp;</div><div class="p">No match on yet</div></div>`;
     const rows = b.up.map(r => `
       <div class="q ${r.on_deck ? 'ondeck' : ''}" data-r>
         <span class="n">${r.position}</span>
-        <span class="w">${esc(nm(r.a))}${r.b ? `<span class="v">${esc(nm(r.b))}</span>` : ''}</span>
+        <span class="w"><span class="t">${esc(nm(r.a))}</span>${r.b ? `<span class="t"><span class="vs">vs</span>${esc(nm(r.b))}</span>` : ''}</span>
         ${when(r) ? `<span class="e when">${esc(when(r))}</span>` : ''}
       </div>`).join('');
     return `<div class="cup">
       <h2>${esc(cup ? cup.name : (S.event.name || 'Tonight'))}
         <span>${esc(b.tables_label)}</span></h2>
-      <div class="live" style="--cols:${colsFor(b.playing.length, bs.length > 1 && window.innerWidth > window.innerHeight)}">${now}</div>
-      <div class="list" data-total="${b.total}">${rows || '<div class="q"><span class="w" style="color:var(--muted)">Nobody waiting</span></div>'}</div>
+      <div class="live" data-cols="${cols}" style="--cols:${cols}">${now}</div>
+      <div class="list" data-total="${b.total}" style="--qcols:${qcols}"><div class="col">${rows || '<div class="q"><span class="w" style="color:var(--ink-2)">Nobody waiting</span></div>'}</div>${'<div class="col"></div>'.repeat(qcols - 1)}</div>
     </div>`;
   }).join('');
   fit();

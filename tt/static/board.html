@@ -50,7 +50,8 @@ body.sim .head-left::after{content:"SIM";font:800 2.78vh/1 var(--syne);color:var
 .live{display:grid;grid-template-columns:repeat(var(--cols,1),minmax(0,1fr));gap:1.1vh .8vw;padding:2.96vh 0 1.85vh;flex:none}
 .live:empty{display:none}
 /* the match happening right now: a painted table, the number on its net */
-.now{position:relative;isolation:isolate;border-radius:2.2vh;padding:1.85vh 1.25vw 2.1vh;min-width:0;color:var(--on-red)}
+.now{position:relative;isolation:isolate;border-radius:2.2vh;padding:1.85vh 0 2.1vh 1.25vw;min-width:0;color:var(--on-red);display:flex;align-items:stretch}
+.now .s{flex:1;min-width:0}
 .now::before{content:"";position:absolute;inset:0;border-radius:inherit;background:var(--red);filter:url(#paint);z-index:-1}
 .now::after{content:"";position:absolute;inset:.55vh;border:1.5px solid rgba(251,248,243,.55);border-radius:1.7vh;pointer-events:none}
 .now .t{font:700 1.85vh/1 var(--grot);letter-spacing:.12em;text-transform:uppercase;color:rgba(251,248,243,.9)}
@@ -58,16 +59,31 @@ body.sim .head-left::after{content:"SIM";font:800 2.78vh/1 var(--syne);color:var
 /* one side per line, the net between them, as on the table itself */
 .now .p span{display:block;text-wrap:balance}
 .now .p span + span{margin-top:.75vh;padding-top:.75vh;border-top:1.5px solid rgba(251,248,243,.45)}
+/* the table number, as big as the phone page's: chalked on the right end of
+   the table, behind its own net line, wide enough for two digits so tiles
+   side by side stay the same size */
+.now .no{flex:none;display:flex;align-items:center;justify-content:center;min-width:1.3em;margin-left:1.04vw;padding:0 .12em;border-left:1.5px solid rgba(251,248,243,.45);
+  font:800 12vh/.78 var(--syne);letter-spacing:-.06em;color:var(--on-red);opacity:.92;font-variant-numeric:tabular-nums;filter:url(#chalk)}
 .now.idle{color:var(--ink-2)}
 .now.idle::before{background:transparent;filter:none;border:2px dashed var(--rule)}
 .now.idle::after{display:none}
+.now.idle{padding-right:1.25vw}
+/* cups sharing the width: a third of the screen each, and the tiles stack, so
+   names and number come down a size — otherwise every name breaks in two and
+   a cup on three tables has no room left for its queue */
+.cups.shared .now .p{font-size:2.6vh}
+.cups.shared .now .no{font-size:8vh}
 
-.list{flex:1;min-height:0;overflow:hidden}
-.q{display:flex;align-items:baseline;gap:1.04vw;padding:2.04vh 0;font-size:2.78vh;border-bottom:1px solid var(--rule)}
+/* the queue: one or two columns (board.js fills them in order), one line per
+   match when it fits. Both sides read the same; only the "vs" is quiet, and
+   it travels with the second side when a row has to wrap. */
+.list{flex:1;min-height:0;overflow:hidden;display:grid;grid-template-columns:repeat(var(--qcols,1),minmax(0,1fr));column-gap:3vw;align-items:start}
+.q{display:flex;align-items:baseline;gap:1.04vw;padding:1.2vh 0;font-size:2.78vh;border-bottom:1px solid var(--rule)}
 .q .n{font:700 2.4vh/1 var(--syne);color:var(--ink-3);width:1.5em;flex:none;font-variant-numeric:tabular-nums}
 .q .w{flex:1;min-width:0;font-weight:600;letter-spacing:-.015em;line-height:1.2;overflow-wrap:anywhere;text-wrap:pretty}
 .q .e{font-size:2.22vh;font-weight:600;color:var(--ink-2);flex:none}
-.q .w .v{display:block;font-weight:500;color:var(--ink-2);font-size:.86em;margin-top:.3vh}
+.q .w .t{display:inline-block;max-width:100%;margin-right:.35em;vertical-align:top}
+.q .w .vs{font-weight:500;font-size:.78em;color:var(--ink-3);margin-right:.4em}
 .q.more .w{color:var(--ink-2);font-weight:500}
 .q.ondeck .n{color:var(--ink)}
 .q.ondeck .w{font-weight:700}
@@ -87,12 +103,16 @@ body.sim .head-left::after{content:"SIM";font:800 2.78vh/1 var(--syne);color:var
   .cup h2{font-size:5.93vmin;padding:1.85vmin 0 0;border-top-width:max(4px,.55vmin)}
   .cup h2 span{font-size:2.04vmin}
   .live{padding:2.96vmin 0 1.85vmin;gap:1.1vmin .8vw}
-  .now{padding:1.85vmin 1.25vw 2.1vmin;border-radius:2.2vmin}
+  .now{padding:1.85vmin 0 2.1vmin 1.25vw;border-radius:2.2vmin}
+  .now .no{font-size:12vmin}
+  /* three across a portrait screen is a narrow tile: the names need the room */
+  .live[data-cols="3"] .now .no{font-size:6vmin;margin-left:.6vw}
+  .live[data-cols="3"] .now .p{font-size:2.5vmin}
   .now::after{inset:.55vmin;border-radius:1.7vmin}
   .now .t{font-size:1.85vmin}
   .now .p{font-size:3.15vmin;margin-top:.9vmin}
   .now .p span + span{margin-top:.75vmin;padding-top:.75vmin}
-  .q{padding:2.04vmin 0;font-size:2.78vmin}
+  .q{padding:1.2vmin 0;font-size:2.78vmin}
   .q .n{font-size:2.4vmin}
   .q .e{font-size:2.22vmin}
   .q.ondeck .e.when{font-size:2.04vmin;padding:.55vmin .9vw .6vmin}
@@ -132,6 +152,13 @@ button.mark:focus-visible{outline:2px solid var(--red);outline-offset:4px}
 </head>
 <body>
 <svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <filter id="chalk" x="-2%" y="-2%" width="104%" height="104%">
+    <feTurbulence type="fractalNoise" baseFrequency=".9" numOctaves="1" seed="2" result="g"/>
+    <feDisplacementMap in="SourceGraphic" in2="g" scale="1.1" result="d"/>
+    <feTurbulence type="fractalNoise" baseFrequency="1.6" numOctaves="1" seed="9" result="t"/>
+    <feColorMatrix in="t" type="matrix" values="0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0 0 0 -.45 1.3" result="tex"/>
+    <feComposite in="d" in2="tex" operator="in"/>
+  </filter>
   <filter id="paint" x="-4%" y="-4%" width="108%" height="108%">
     <feTurbulence type="fractalNoise" baseFrequency=".02 .09" numOctaves="3" seed="11" result="n"/>
     <feColorMatrix in="n" type="matrix" values="0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0 0 0 -1.2 1.08" result="shade"/>
