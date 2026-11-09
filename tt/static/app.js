@@ -1376,6 +1376,7 @@ function openWizard() {
       name: c.name, blurb: c.blurb || '',
       entry: c.entry || 'single',
       registration: c.registration || 'closed',
+      max_entrants: c.max_entrants || '',
       kind: f ? f.kind : 'swiss',
     };
   });
@@ -1467,6 +1468,9 @@ function wizCups() {
               <option value="open" ${c.registration === 'open' ? 'selected' : ''}>Open</option>
               <option value="closed" ${c.registration === 'closed' ? 'selected' : ''}>Closed</option>
             </select></div>
+          <div class="field" style="max-width:120px"><label for="wc-max-${i}">Max entrants</label>
+            <input id="wc-max-${i}" type="number" min="1" step="1" inputmode="numeric"
+                   value="${esc(c.max_entrants)}" data-wc="${i}|max_entrants" placeholder="No limit"></div>
           ${wiz.cups.length > 1
             ? `<button class="ghost tiny" data-act="wiz-rm-cup" data-i="${i}">Remove</button>` : ''}
         </div>
@@ -1505,7 +1509,9 @@ function wizCups() {
           'and whoever you confirm at the door lands in that cup’s draw. One cup is the ' +
           'normal case; two is how you run singles and doubles side by side.',
           'Nobody is entered yet — a draw starts empty and fills up as you confirm people ' +
-          'at the door.')}
+          'at the door.',
+          'Max entrants counts sign-ups and walk-ins together, and a pair is one entrant. ' +
+          'Leave it blank for no limit.')}
   </div>`;
 }
 
@@ -1565,6 +1571,7 @@ function wizReview() {
         <span class="chip">${c.entry === 'pair' ? 'pairs' : 'singles'}</span>
         <span class="chip${c.registration === 'open' ? ' hot' : ''}">${
           c.registration === 'open' ? 'taking entries' : 'sign-ups closed'}</span>
+        ${+c.max_entrants > 0 ? `<span class="chip">max ${esc(c.max_entrants)}</span>` : ''}
       </div></div>`).join('')}
     <div class="card-sub muted"><span class="sub">${wiz.tables.length} table${
       wiz.tables.length === 1 ? '' : 's'}${wiz.tables.some(t => t.cup >= 0)
@@ -1673,11 +1680,12 @@ function cupCard(c) {
   const orphan = fs.length && !intake;
   const mine = tablesOfCup(c.id);
   const taking = (c.registration || 'closed') === 'open';
+  const full = c.max_entrants > 0 && c.taken >= c.max_entrants;
   return `<div class="card cupcard"><div class="card-body">
     <div class="cuphead">
       <div class="field cname">
         ${auto('cn-' + c.id, 'update_cup:' + c.id, 'name', c.name, 'aria-label="Cup name"')}</div>
-      ${taking ? `<span class="chip hot">taking entries</span>` : ''}
+      ${full ? `<span class="chip">full</span>` : taking ? `<span class="chip hot">taking entries</span>` : ''}
       <button class="ghost tiny" data-act="rm-cup" data-c="${c.id}">Remove</button>
     </div>
     <div class="inline">
@@ -1687,10 +1695,14 @@ function cupCard(c) {
       <div class="field" style="max-width:190px"><label for="cr-${c.id}">Sign-ups</label>
         ${pick('cr-' + c.id, 'update_cup:' + c.id, 'registration', c.registration || 'closed',
           [['open', 'Open'], ['closed', 'Closed']])}</div>
+      <div class="field" style="max-width:130px"><label for="cm-${c.id}">Max entrants</label>
+        ${auto('cm-' + c.id, 'update_cup:' + c.id, 'max_entrants', c.max_entrants || '',
+               'type="number" min="1" step="1" inputmode="numeric" placeholder="No limit"')}</div>
       <div class="field" style="min-width:240px"><label for="cb-${c.id}">One line for the landing page</label>
         ${auto('cb-' + c.id, 'update_cup:' + c.id, 'blurb', c.blurb || '',
                'placeholder="Five rounds, then a cut to the last eight."')}</div>
     </div>
+    ${c.max_entrants ? `<p class="sub">${c.taken} of ${c.max_entrants} places taken.</p>` : ''}
     ${mine.length ? `<p class="sub">Reserved tables: ${
       mine.map(t => esc(t.name)).join(', ')}</p>` : ''}
     </div>
@@ -2979,6 +2991,15 @@ function autoSave(el) {
     }
     val = n;
   }
+  if (key === 'max_entrants') {
+    const n = val === '' ? 0 : Number(val);
+    if (el.validity.badInput || !Number.isInteger(n) || n < 0) {
+      el.value = el.dataset.was;
+      toast('Max entrants is a whole number, or blank for no limit');
+      return false;
+    }
+    val = n;
+  }
   if (key === 'name' && !String(val).trim()) {
     el.value = el.dataset.was;
     return false;
@@ -3256,6 +3277,7 @@ document.addEventListener('click', async e => {
       name: wiz.name, venue: wiz.venue, blurb: wiz.blurb, starts_at: wiz.starts_at,
       cups: wiz.cups.map((c, i) => ({
         name: c.name, blurb: c.blurb, entry: c.entry, registration: c.registration,
+        max_entrants: c.max_entrants,
         kind: c.kind || '',
         config: c.kind ? formatConfig('w' + i + '_', c.kind) : {},
       })),

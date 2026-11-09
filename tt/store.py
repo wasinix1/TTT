@@ -421,7 +421,7 @@ class Store:
             m.table = None
             m.started_ts = None
 
-    CUP_FIELDS = ("name", "blurb", "entry", "registration", "format_id")
+    CUP_FIELDS = ("name", "blurb", "entry", "registration", "format_id", "max_entrants")
 
     def _ev_cup_add(self, p, seq):
         c = Cup(id=p["id"], name=p.get("name") or "Cup")
@@ -438,7 +438,8 @@ class Store:
             return
         for k in self.CUP_FIELDS:
             if k in p:
-                setattr(c, k, p[k] or ("" if k != "format_id" else None))
+                setattr(c, k, p[k] or (0 if k == "max_entrants"
+                                       else "" if k != "format_id" else None))
 
     def _ev_cup_remove(self, p, seq):
         self.cups.pop(p["id"], None)
@@ -965,6 +966,28 @@ class Store:
         return [r for r in (self.registrations[i] for i in self.registration_order
                             if i in self.registrations)
                 if r.cup_id == cup_id and (status is None or r.status == status)]
+
+    def cup_taken(self, cup_id, plus_seeker=False):
+        """How many places in a cup are spoken for: everyone in its pool and
+        everyone still expected. Two people looking for a partner are one
+        team, so they share a place, and a lone one holds a whole place."""
+        regs = self.regs_for_cup(cup_id)
+        seekers = sum(r.kind == "seeking" for r in regs) + bool(plus_seeker)
+        return (sum(1 for e in self.entrants.values()
+                    if e.cup_id == cup_id and e.active)
+                + sum(r.kind != "seeking" for r in regs) + (seekers + 1) // 2)
+
+    def cup_has_room(self, cup, seeking=False):
+        """Whether one more entry fits. Somebody looking for a partner fits
+        beside a lone one even when the count is at the limit."""
+        if not cup.max_entrants:
+            return True
+        if seeking:
+            return self.cup_taken(cup.id, plus_seeker=True) <= cup.max_entrants
+        return self.cup_taken(cup.id) < cup.max_entrants
+
+    def cup_full(self, cup):
+        return not self.cup_has_room(cup)
 
     def pending_regs(self):
         return [self.registrations[i] for i in self.registration_order

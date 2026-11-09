@@ -209,7 +209,7 @@ function renderJoin() {
   if (!draft.cup_id || !open.some(c => c.id === draft.cup_id)) draft.cup_id = open[0].id;
   const cup = open.find(c => c.id === draft.cup_id);
   const pair = cup.entry === 'pair';
-  const cupLabel = c => c.name + (ENTRY[c.entry] ? ' · ' + ENTRY[c.entry] : '');
+  const cupLabel = c => c.name + (ENTRY[c.entry] ? ' · ' + ENTRY[c.entry] : '') + (c.full ? ' · voll belegt' : '');
 
   const here = saved();
   box.innerHTML = joinShell(`<div class="jform">
@@ -390,7 +390,8 @@ function cupCard(c, done) {
       ${podium ? `<div class="podium">${podium}</div>` : ''}
       ${done && !podium ? `<div class="line">Keine Ergebnisse erfasst.</div>` : ''}
     </div>
-    ${!done && c.registration === 'open' ? '<span class="tag open">Anmeldung offen</span>' : ''}
+    ${!done && c.registration === 'open'
+      ? (c.full ? '<span class="tag">Voll belegt</span>' : '<span class="tag open">Anmeldung offen</span>') : ''}
   </div>`;
 }
 
