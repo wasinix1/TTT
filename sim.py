@@ -7,8 +7,20 @@ from tt.server import App, Handler
 from tt import dispatch, formats, simulate
 from tt.simulate import play_one, drain
 
-random.seed(7)
-formats._draw.seed(1)           # the Swiss round-one draw, so runs repeat
+
+def reseed():
+    """Put both random sources back where a fresh run starts them. For a test
+    whose checks depend on how the draws fall, so it sees the same draws in
+    the full suite as it does on its own."""
+    random.seed(7)
+    formats._draw.seed(1)       # the Swiss round-one draw, so runs repeat
+
+
+reseed()
+
+# an October evening that is always still to come, so a scheduled event is
+# announced (not already live) whenever the suite runs
+FUTURE_START = f"{datetime.now().year + 1}-10-04T19:00"
 
 
 def fresh():
@@ -564,7 +576,8 @@ def test_the_desk_payload():
     app.act("door", "set_resting", {"entrant_id": eid, "resting": True})
 
     desk = app.desk_state("door")
-    check(desk["cups"][0]["id"] == cup and set(desk["cups"][0]) == {"id", "name", "entry", "registration"},
+    check(desk["cups"][0]["id"] == cup and set(desk["cups"][0]) == {"id", "name", "entry", "registration",
+                                                                   "max_entrants", "taken"},
           "the desk gets the cups and only what it needs of them")
     check(sum(r["status"] == "pending" for r in desk["registrations"]) == 1,
           "the one entry still expected")
@@ -1402,9 +1415,10 @@ def test_wizard():
     app.act("admin", "add_format", {"kind": "swiss", "config": {"cup_id": old_cup}})
     app.act("admin", "set_table", {"number": 1, "name": "By the door"})
 
+    starts = FUTURE_START
     out = app.act("admin", "create_event", {
         "name": "October open", "venue": "Turnhalle", "blurb": "Bats provided.",
-        "starts_at": "2026-10-04T19:00",
+        "starts_at": starts,
         "cups": [
             {"name": "Singles cup", "entry": "single", "registration": "open",
              "blurb": "Five rounds.", "kind": "swiss",
@@ -1419,7 +1433,7 @@ def test_wizard():
 
     check(s.event["name"] == "October open" and s.event["venue"] == "Turnhalle",
           "the event is what the wizard was given")
-    check(s.event["starts_at"] == "2026-10-04T19:00", "with its start time")
+    check(s.event["starts_at"] == starts, "with its start time")
     check(not s.players and not s.entrants, "last month's roster is gone")
     check("Singles" not in [c.name for c in s.cups.values()],
           "and so are the cups it replaced — ids recycle, names do not lie")
@@ -1471,7 +1485,7 @@ def test_site():
     s = app.store
     app.act("admin", "create_event", {
         "name": "October open", "venue": "Turnhalle", "blurb": "Bats provided.",
-        "starts_at": "2026-10-04T19:00",
+        "starts_at": FUTURE_START,
         "cups": [{"name": "Singles cup", "entry": "single", "registration": "open",
                   "kind": "swiss", "config": {"rounds": 3,
                                               "scoring": {"best_of": 5, "points_to": 11}}}],
@@ -1519,7 +1533,7 @@ def test_link_preview():
     app.act("admin", "create_event", {
         "name": "October open", "venue": "Turnhalle",
         "blurb": 'Bats & "everything" provided.',
-        "starts_at": "2026-10-04T19:00", "cups": [], "tables": []})
+        "starts_at": FUTURE_START, "cups": [], "tables": []})
     html = get("/")
     check("<title>October open</title>" in html, "the page is titled after the event")
     check('og:title" content="October open"' in html, "and carries a link-preview card")
@@ -1991,6 +2005,11 @@ def test_the_pool_rules():
 
 def test_resting_and_put_back():
     print("\n[resting, and putting a match back]")
+    # The Swiss below may only pair players who have not met, so whether a
+    # different fair pairing still exists after four rounds depends on the
+    # draws. Start from the same random state every time, not whatever the
+    # tests before this one left behind.
+    reseed()
     app, d = fresh()
     s = app.store
     (cup,) = pool_event(app, config={"continuous": True, "paced": False})
@@ -2353,6 +2372,9 @@ def test_a_correction_redraws_an_unplayed_bracket():
 
 def test_a_late_correction_is_reported_not_forced():
     print("\n[the same correction, once the knockout is under way]")
+    # Whether swapping second and third changes the seeding depends on how
+    # the groups were drawn and played, so do not inherit earlier tests' draws.
+    reseed()
     app, d = fresh()
     cup = app.act("admin", "add_cup", {"name": "Cup"})["cup_id"]
     for i, st in enumerate([9, 8, 7, 6, 5, 4, 3, 2]):
