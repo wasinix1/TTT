@@ -64,8 +64,16 @@ KIND_DE = {"open_play": "Offenes Spiel", "groups": "Gruppen und K.o.",
            "single_elim": "K.o.-Runde", "swiss": "Schweizer System"}
 
 
+ANNOUNCE_HEAD = "📣 <b>Neuer Termin!</b>\n\n"
+NOT_OPEN_YET = "Die Anmeldung ist noch nicht offen — wir sagen dir hier Bescheid."
+ALL_INFO = "🌐 Alle Infos"
+
+
 def when_line(store):
-    ev = store.event
+    return when_text(store.event)
+
+
+def when_text(ev):
     raw = (ev.get("starts_at") or "").strip()
     bits = []
     try:
@@ -92,6 +100,43 @@ def _day_word(start, now):
     if diff == 1:
         return "Morgen"
     return f"{WEEKDAYS[a.weekday()]} {a.day:02d}.{a.month:02d}."
+
+
+def cup_line(name, pair, kind, blurb):
+    about = [x for x in ("Doppel" if pair else "Einzel", KIND_DE.get(kind, "")) if x]
+    return (f"<b>{esc(name)}</b> · {esc(' · '.join(about))}"
+            + (f"\n<i>{esc(blurb)}</i>" if blurb else ""))
+
+
+def entry_labels(name, pair, many):
+    """A cup's entry buttons, as (label, what the tap means)."""
+    pre = f"{name}: " if many else ""
+    if pair:
+        return [(f"👥 {pre}Mit Partner:in", "p"), ("🔎 Partner:in gesucht", "k")]
+    return [(f"✋ {pre}Ich bin dabei", "s")]
+
+
+def announce_preview(p, details, has_url):
+    """The round message as a new follower would get it, drawn from what the
+    editor holds — the event it announces may not exist yet."""
+    lines = [f"<b>{esc(p.get('name') or 'Tischtennis')}</b>"]
+    w = when_text(p)
+    if w:
+        lines.append(w)
+    if details:
+        lines += ["", details]
+    lines.append("")
+    cups = [c for c in p.get("cups") or [] if c.get("registration") == "open"]
+    rows = []
+    for c in cups:
+        pair = c.get("entry") == "pair"
+        lines.append(cup_line(c.get("name") or "", pair, c.get("kind") or "", c.get("blurb")))
+        rows.append([label for label, _ in entry_labels(c.get("name") or "", pair, len(cups) > 1)])
+    if not cups:
+        lines.append(NOT_OPEN_YET)
+    if has_url:
+        rows.append([ALL_INFO])
+    return {"text": ANNOUNCE_HEAD + "\n".join(lines), "buttons": rows}
 
 
 def best_of(m):
@@ -477,19 +522,12 @@ class Conversation:
             elif cup.registration == "open" and not s.shows_console():
                 shown = True
                 f = s.formats.get(cup.format_id or "")
-                about = [x for x in ("Doppel" if pair else "Einzel",
-                                     KIND_DE.get(f.kind, "") if f else "") if x]
-                lines.append(f"<b>{esc(cup.name)}</b> · {esc(' · '.join(about))}"
-                             + (f"\n<i>{esc(cup.blurb)}</i>" if cup.blurb else ""))
+                lines.append(cup_line(cup.name, pair, f.kind if f else "", cup.blurb))
                 many = len([c for c in s.cups.values() if c.registration == "open"]) > 1
-                pre = f"{cup.name}: " if many else ""
-                if pair:
-                    kb.append([button(f"👥 {pre}Mit Partner:in", f"r:{cid}:p"),
-                               button("🔎 Partner:in gesucht", f"r:{cid}:k")])
-                else:
-                    kb.append([button(f"✋ {pre}Ich bin dabei", f"r:{cid}:s")])
+                kb.append([button(label, f"r:{cid}:{what}")
+                           for label, what in entry_labels(cup.name, pair, many)])
         if not shown:
-            lines.append("Die Anmeldung ist noch nicht offen — wir sagen dir hier Bescheid.")
+            lines.append(NOT_OPEN_YET)
         return lines
 
     def _row_for(self, eid):

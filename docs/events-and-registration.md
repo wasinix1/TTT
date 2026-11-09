@@ -164,6 +164,26 @@ of the payload.
 switch, a card per open cup showing its name, format and entry type, and a
 register button. One open cup skips the picker.
 
+**The event's text.** One field (`blurb`), written like a group-chat post.
+`tt/programme.py` reads it for its structure, and that one reading feeds the
+site, the Telegram message and the console's preview:
+
+| A line that… | Is | Shown as |
+|---|---|---|
+| is bold (`*…*`), comes first, with a blank line and plain text after it | the title | big heading; Telegram drops it for the event name |
+| is plain, before the first section | the lead | body text; never folded in Telegram |
+| is bold, anywhere else | a section | one tile; a trailing `(20 Plätze)` becomes its chip |
+| is short (40 at most) and ends in a colon | a small heading | red caps; bold in Telegram |
+| starts with a time (`17:00`, `17:00-19:30`, `17.00–19.30`) | a timetable row | two columns; a section of nothing else is the dark full-width tile |
+| is anything else | text | as typed, line breaks kept |
+
+`*` is the only markup and everything else is escaped. Old one-liners are just
+a lead. It shows on the site in `announced` and `registration`: between the
+hero and the form at `/`, after the form at `/join`, never on `/me/<token>`.
+Link cards and the poster get `teaser()`, the first paragraph, shortened. The
+editor warns when the text gives dates but none of them is the event's own,
+because the wizard carries last event's text over as a template.
+
 **The form.** Cup, then name and strength 1–10. For a pairs cup: both names
 and strengths, an optional team name, or *Looking for a partner* which
 submits as a single. Then the notes box, then submit. A confirmation screen
@@ -215,6 +235,9 @@ Later, deliberately not now: waitlists and caps, entry codes, pairing up the
 ## Decisions taken under rule 7
 
 - English throughout for now, including the public site.
+- The event's text is at most 3000 characters, so it fits a Telegram message
+  with the card around it. It is parsed once, on the server: a second parser
+  in the browser would eventually disagree with what gets sent.
 - The landing page publishes no entry list and no counts.
 - Registration is auto-accepted; there is no approval step, because
   confirmation at the door already is one.

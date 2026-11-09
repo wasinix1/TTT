@@ -14,6 +14,7 @@ const PLACE = { 1: '1.', 2: '2.', 3: '3.' };
 
 let P = null;
 let skew = 0;          // server clock minus ours, so the countdown is honest
+let shownText = '';
 
 /* The form lives at /join on the same page. Its draft is kept here rather
    than read off the DOM, so a background refresh of the event details never
@@ -91,9 +92,11 @@ function render() {
   // while entries are open the page is just the lockup, the date, the way in
   document.body.classList.toggle('pre', showJoin());
 
-  const b = $('blurb');
-  b.hidden = !P.blurb;
-  b.textContent = P.blurb || '';
+  // the server has laid it out and escaped it (tt/programme.py); only touched
+  // when it changes, so the half-minute refresh cannot take away a selection
+  const text = ME ? '' : (P.programme || '');
+  if (text !== shownText) { $('programme').innerHTML = text; shownText = text; }
+  $('programme').hidden = !text;
 
   const facts = [];
   if (P.starts_at) facts.push(['When', fmtDate(P.starts_at)]);
@@ -483,6 +486,9 @@ document.addEventListener('click', e => {
     renderJoin();
   }
 });
+
+// a link straight to the form should land on the form; the text comes after it
+if (joining()) $('join').after($('programme'));
 
 load();
 if (ME) meLoad();

@@ -31,8 +31,8 @@ import urllib.request
 from collections import deque
 from concurrent.futures import ThreadPoolExecutor
 
-from . import notify
-from .bot import Conversation, esc
+from . import notify, programme
+from .bot import ALL_INFO, ANNOUNCE_HEAD, Conversation, esc
 
 API = "https://api.telegram.org"
 RATE = 25                  # messages a second, well under Telegram's 30
@@ -917,15 +917,29 @@ class Bot:
             raise ValueError("nobody to send that to yet")
         batch = secrets.token_hex(4)
         head = "💬 <b>Orga:</b> " if kind == "chat" else "📣 "
+        details = (programme.telegram(programme.parse(self.app.store.event.get("blurb")))
+                   if announce else "")
+        note = "\n\n".join(x for x in (esc(text), details) if x)
+        url = self.public_url()
+        ready = []
         for c in chats:
             if announce:
-                card, kb = self.convo.card(c, esc(text) if text else "")
-                params = {"chat_id": c, "text": "📣 <b>Neuer Termin!</b>\n\n" + card,
+                card, kb = self.convo.card(c, note)
+                if url:
+                    kb.insert(-1, [{"text": ALL_INFO, "url": url}])
+                message = ANNOUNCE_HEAD + card
+                if programme.visible_length(message) > 4096:
+                    raise ValueError("that is too long for one message")
+                params = {"chat_id": c, "text": message,
                           "parse_mode": "HTML", "link_preview_options": {"is_disabled": True},
                           "reply_markup": {"inline_keyboard": kb}}
             else:
                 params = {"chat_id": c, "text": head + esc(text), "parse_mode": "HTML",
                           "link_preview_options": {"is_disabled": True}}
+            ready.append((c, params))
+        # all of it or none of it: one card too long must not leave half the
+        # followers told
+        for c, params in ready:
             self.wire.enqueue(f"bc:{batch}:{c}", c, "sendMessage", params,
                               prio=1 if kind in ("chat", "tonight", "cup") else 2)
         if kind == "chat":
