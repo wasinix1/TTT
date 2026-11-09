@@ -101,10 +101,11 @@ instead, which is what a tournament desk would call out anyway.
 ## How the pairing works
 
 **With strength parked (now): tonight's results.** Open play pairs people
-who are doing about as well as each other this evening, like a Swiss, and
-its standings become a ranking in that order. It's a format setting,
-*Pair by tonight's results*, on by default; off pairs purely on wait time
-and rematches.
+who are doing about as well as each other this evening, like a Swiss. It's
+a format setting, *Balanced matchmaking*, on by default; off pairs purely
+on wait time and rematches. Players only ever hear "balanced matches". The
+form below stays inside the pairing, and the standings remain a plain
+table of wins for whoever wants to be top of it.
 
 How well somebody is doing is their *form*, from 0 to 1. It is mostly
 matches won, pulled toward the middle while there are few of them, so

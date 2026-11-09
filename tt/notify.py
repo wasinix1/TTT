@@ -126,7 +126,7 @@ def plan(app, ok_chats, now):
         if c["state"] != "open":
             continue
         m = s.matches.get(c["match_id"])
-        if c not in s.open_claims(m):
+        if c not in s.open_claims(m) and c not in s.open_fixes(m):
             continue
         other = "b" if c["side"] == "a" else "a"
         for pid in (m.side_b if other == "b" else m.side_a):

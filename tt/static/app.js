@@ -678,6 +678,19 @@ function playersNote(t) {
   return out.join('');
 }
 
+/* Players asking for a result already written to be corrected (tt/play.py
+   fix): waiting for the other side, or the two disagree. Accept writes the
+   correction; Dismiss leaves the result as it is. */
+function correctionsNote() {
+  const cs = S.corrections || [];
+  if (!cs.length) return '';
+  const g = gs => gs.map(x => x.join(':')).join(' ');
+  return cs.map(c => `<div class="warn2"><b>${esc(nm(c.by))}</b> asks to correct ${esc(nm(c.a))} – ${esc(nm(c.b))}:
+      ${esc(g(c.was))} → <b>${esc(g(c.games))}</b>${c.state === 'disputed' ? ' — the other side disagrees' : ' — waiting for the other side'}
+      ${canScore() ? `<button class="link" data-act="accept-report" data-m="${esc(c.match_id)}" data-games='${esc(JSON.stringify(c.games))}'>Accept</button>
+      <button class="link" data-act="dismiss-fix" data-c="${c.claim_id}">Dismiss</button>` : ''}</div>`).join('');
+}
+
 function bestOfLine(m) {
   const s = m.scoring;
   return `<div class="table-state">Best of ${s.best_of} to ${s.points_to}</div>`;
@@ -923,14 +936,11 @@ function standTop(f) {
     }).join('')}</div>`);
   }
   const groups = (f.standings || []).filter(g => g.rows.length);
-  const ranked = groups.length && groups[0].ranked;
-  const label = f.kind === 'open_play' ? (ranked ? 'Ranking' : 'Wins tonight') : groups.length > 1 ? 'Through so far' : 'Standings';
+  const label = f.kind === 'open_play' ? 'Standings' : groups.length > 1 ? 'Through so far' : 'Standings';
   const c2 = f.kind === 'swiss' ? 'Bh' : 'L';
   if (!groups.length || !groups.some(g => g.rows.some(r => r.played))) return head(label) + slots('<p class="blank">Nothing played yet.</p>');
   let rows;
-  if (f.kind === 'open_play' && ranked) {
-    rows = groups[0].rows.slice(0, 4).map(r => row(r.rank, r, '', r.lost));
-  } else if (f.kind === 'open_play') {
+  if (f.kind === 'open_play') {
     rows = groups[0].rows.slice().sort((a, b) => b.won - a.won || a.lost - b.lost).slice(0, 4).map((r, i) => row(i + 1, r, '', r.lost));
   } else if (f.kind === 'swiss') {
     rows = groups[0].rows.slice(0, 4).map(r => row(r.rank, r, '', r.buchholz ?? 0));
@@ -1087,10 +1097,9 @@ function renderStandings() {
     // so the ink rule under every chapter sits at the same height and the
     // first rows of Up next, Standings and Results line up across the page
     blocks.push(`<div class="panel">
-      <div class="panel-head sth"><h2>${open ? (groups[0].ranked ? 'Ranking' : 'Wins tonight') : 'Standings'}</h2><span class="ch">W</span><span class="ch">${swiss ? 'Bh' : 'L'}</span><span class="ch">±</span></div>
+      <div class="panel-head sth"><h2>Standings</h2><span class="ch">W</span><span class="ch">${swiss ? 'Bh' : 'L'}</span><span class="ch">±</span></div>
       <div class="panel-body">${groups.map(g => {
-        // ranked by tonight's form, the server's order is the ranking
-        const rows = open && !g.ranked ? g.rows.slice().sort((a, b) => b.won - a.won || a.lost - b.lost) : g.rows;
+        const rows = open ? g.rows.slice().sort((a, b) => b.won - a.won || a.lost - b.lost) : g.rows;
         const key = f.id + '|' + g.group, all = standAll[key];
         const more = rows.length > TABLE_ROWS
           ? `<button class="link more" data-act="st-all" data-k="${esc(key)}">${all ? 'Show fewer' : `+ ${rows.length - TABLE_ROWS} more`}</button>` : '';
@@ -1224,6 +1233,7 @@ function renderRecent() {
         title="For a game nobody arranged — a walk-up match, or one played before anyone was keeping track">+ Add a result</button>` : ''}</div>
     ${open && all.length > RECENT_SHOWN ? `<label class="find-res"><span aria-hidden="true">⌕</span><input id="recent-q" type="search"
         placeholder="Find a player" aria-label="Find a player in the results" value="${esc(recentQuery)}" autocomplete="off"></label>` : ''}
+    ${correctionsNote()}
     <div class="panel-body flush">${all.length ? '' : '<p class="blank">Nothing played yet.</p>'}${
       all.length && !hits.length ? '<p class="blank">No result with that name.</p>' : ''}${r.map(m => {
       // as the phone page has it: "Winner beat Loser", the games won, and
@@ -1966,16 +1976,17 @@ const fieldsFor = pfx => {
           <option value="0.6" ${v('c_rw', '0.6') === '0.6' ? 'selected' : ''}>Balanced</option>
           <option value="1.2" ${v('c_rw') === '1.2' ? 'selected' : ''}>Strong</option>
         </select></div>
-      <div class="field" style="max-width:190px"><label for="${id('c-res')}">Pair by tonight’s results</label>
+      <div class="field" style="max-width:190px"><label for="${id('c-res')}">Balanced matchmaking</label>
         <select id="${id('c-res')}" data-f="${k('c_res')}">
-          <option value="1" ${v('c_res', '1') !== '0' ? 'selected' : ''}>On — like a Swiss</option>
-          <option value="0" ${v('c_res') === '0' ? 'selected' : ''}>Off — just who waited longest</option>
+          <option value="1" ${v('c_res', '1') !== '0' ? 'selected' : ''}>On</option>
+          <option value="0" ${v('c_res') === '0' ? 'selected' : ''}>Off — who waited longest</option>
         </select></div>
     </div>
-    ${why('With results on, people who are doing about as well as each other tonight are paired, ' +
-          'and the standings become a ranking in that order. The first round or two are as good ' +
-          'as random; after that winners meet winners. Nobody waits for ever for a close match — ' +
-          'the longer somebody waits, the wider the gap they will accept.')}
+    ${why('Balanced matchmaking pairs people who are doing about as well as each other tonight, ' +
+          'read off the evening’s own results — nobody has to enter a level. The first round or ' +
+          'two are as good as random; after that people mostly play their own level. Nobody waits ' +
+          'for ever for a close match: the longer somebody waits, the wider the gap they accept. ' +
+          'The standings stay a plain table of wins.')}
     ${SHOW_STRENGTH ? why('The gap widens by one every few times a waiting entrant is passed over, so ' +
           'nobody sits all night waiting for a perfect match.',
           'Avoiding rematches is priced in strength points: on a lopsided field, ' +
@@ -3363,6 +3374,7 @@ document.addEventListener('click', async e => {
     return;
   }
 
+  if (a === 'dismiss-fix') { await api('claim_dismiss', { claim_id: +b.dataset.c }); return; }
   if (a === 'accept-report') {
     const ok = await api('report', { match_id: b.dataset.m, games: JSON.parse(b.dataset.games) });
     if (ok) toast('Result entered');

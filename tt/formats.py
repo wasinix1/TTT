@@ -697,17 +697,10 @@ class OpenPlay(Format):
         ids = sorted(rec.keys(), key=lambda e: store.entrant_name(e))
         if not ids:
             return []
-        rows = _table(store, rec, ids)
-        if self.by_results():
-            # the order pairing goes by, for whoever wants to know where
-            # they stand: form first, then the usual tie-breaks
-            for r in rows:
-                r["form"] = round(self.form(rec[r["entrant_id"]]), 3)
-            rows.sort(key=lambda x: (-x["form"], -x["won"], -x["game_diff"],
-                                     -x["point_diff"], x["name"]))
-            for i, r in enumerate(rows, 1):
-                r["rank"] = i
-        return [{"group": "Open play", "rows": rows, "ranked": self.by_results()}]
+        # a plain table — wins, then games, then points — for whoever wants
+        # to be on top of it. The form pairing uses stays the pairing's own:
+        # it is a tool for balanced matches, not a score to show anybody
+        return [{"group": "Open play", "rows": _table(store, rec, ids)}]
 
     def is_complete(self, store):
         return False

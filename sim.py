@@ -2256,6 +2256,60 @@ def test_each_cup_says_what_its_players_do():
     shutil.rmtree(d)
 
 
+def test_a_wrong_result_can_be_corrected():
+    print("\n[a result entered wrong is corrected by the players, the other side agreeing]")
+    app, d = fresh()
+    s = app.store
+    cup, keys = self_run_night(app, n=4)
+    app.act("admin", "update_cup", {"id": cup, "score_auto_min": 2})
+    m, ka, kb = on_table(app, keys)
+    _srv.phone(app, ka, "score", {"games": [[11, 7], [11, 5]]}, True)
+    _srv.phone(app, kb, "score", {"games": [[7, 11], [5, 11]]}, True)
+    check(m.status == "done" and m.winner == "a", "sanity: the score as both entered it")
+    f = _srv.phone(app, ka, "", {}, False)["fixable"]
+    check(f and f["match_id"] == m.id and f["games"] == [[11, 7], [11, 5]],
+          "straight after, the phone offers that result to correct, the way round they played it")
+    r = _srv.phone(app, ka, "fix", {"match_id": m.id, "games": [[7, 11], [5, 11]]}, True)
+    check(r["fix"]["status"] == "sent" and m.winner == "a", "a correction writes nothing on one side's word")
+    ask = _srv.phone(app, kb, "", {}, False)["confirm"]
+    check(len(ask) == 1 and ask[0]["fix"] and ask[0]["was"] == [[7, 11], [5, 11]]
+          and ask[0]["games"] == [[11, 7], [11, 5]],
+          "the other side is asked, shown what was entered and what it would become")
+    app.sweep(now=s.clock() + 20 * 60)
+    check(m.winner == "a", "and it never counts on the wait alone, whatever the cup's wait")
+    _srv.phone(app, kb, "confirm", {"id": ask[0]["id"], "yes": True}, True)
+    check(m.status == "done" and m.winner == "b" and m.games == [[7, 11], [5, 11]],
+          "confirmed, the result is put right")
+    check(any(h["payload"].get("how") == "corrected" for h in s.history(10)),
+          "and the log says it was corrected by the players")
+
+    m2, ka2, kb2 = on_table(app, keys)
+    _srv.phone(app, ka2, "score", {"games": [[11, 1], [11, 1]]}, True)
+    _srv.phone(app, kb2, "score", {"games": [[1, 11], [1, 11]]}, True)
+    _srv.phone(app, ka2, "fix", {"match_id": m2.id, "games": [[11, 9], [11, 9]]}, True)
+    r = _srv.phone(app, kb2, "fix", {"match_id": m2.id, "games": [[11, 9], [11, 9]]}, True)
+    check(r["fix"]["status"] == "disputed" and m2.games == [[11, 1], [11, 1]],
+          "two different corrections change nothing")
+    cs = app.state("admin")["corrections"]
+    check(len(cs) == 1 and cs[0]["state"] == "disputed", "and the console sees the disagreement")
+    app.act("admin", "claim_dismiss", {"claim_id": cs[0]["claim_id"]})
+    check(not app.state("admin")["corrections"], "the organisers can let it stand")
+    _srv.phone(app, ka2, "fix", {"match_id": m2.id, "games": [[11, 9], [11, 9]]}, True)
+    app.act("referee", "report", {"match_id": m2.id, "games": [[11, 9], [11, 8]]})
+    check(not app.state("admin")["corrections"], "or write the result themselves, which settles it")
+
+    stranger = next(k for k in keys.values() if k not in (ka2, kb2))
+    try:
+        _srv.phone(app, stranger, "fix", {"match_id": m2.id, "games": [[1, 11], [1, 11]]}, True)
+        ok = False
+    except ValueError:
+        ok = True
+    check(ok, "nobody corrects a match they did not play")
+    s.clock = lambda: time.time() + 3600
+    check(not _srv.phone(app, ka2, "", {}, False)["fixable"], "and after half an hour it is the organisers' again")
+    shutil.rmtree(d)
+
+
 def test_the_other_side_never_came():
     print("\n[the other side never came to the table]")
     app, d = fresh()
@@ -2418,7 +2472,7 @@ def test_web_push_over_the_wire():
 
 
 def test_open_play_pairs_by_tonights_results():
-    print("\n[open play pairs on tonight's results, and ranks by them]")
+    print("\n[balanced matchmaking: open play pairs on tonight's results]")
 
     def night(by_results, seed=3):
         app, d = fresh()
@@ -2447,17 +2501,19 @@ def test_open_play_pairs_by_tonights_results():
         return gap, played, rows, skill
 
     on_gap, played, rows, skill = night(True)
-    off_gap, _, off_rows, _ = night(False)
+    off_gap, _, _, _ = night(False)
     print(f"   skill gap in the second half: {on_gap:.2f} by results, {off_gap:.2f} without")
     check(on_gap < off_gap - 0.6, "pairing by results brings people of a level together")
     check(min(played.values()) >= max(played.values()) - 6 and min(played.values()) > 0,
           "and nobody is left waiting for a close match all night")
-    check(rows["ranked"] and [r["rank"] for r in rows["rows"]] == list(range(1, 13)),
-          "the standings are a ranking")
+    wins = [r["won"] for r in rows["rows"]]
+    check(wins == sorted(wins, reverse=True) and [r["rank"] for r in rows["rows"]] == list(range(1, 13)),
+          "the standings are a plain table of wins")
+    check(not any("form" in r for r in rows["rows"]) and "ranked" not in rows,
+          "and how the pairing rates people stays the pairing's own")
     top = sum(skill[r["entrant_id"]] for r in rows["rows"][:4]) / 4
     bottom = sum(skill[r["entrant_id"]] for r in rows["rows"][-4:]) / 4
-    check(top > bottom + 3, "and it sorts the field: the top four are well above the bottom four")
-    check(not off_rows.get("ranked"), "with it off, standings stay plain wins")
+    check(top > bottom + 3, "the table sorts the field: the top four are well above the bottom four")
 
 
 def test_the_board_shows_the_next_pairing():
@@ -3239,6 +3295,7 @@ if __name__ == "__main__":
     test_phones_enter_their_own_scores()
     test_an_unanswered_score_counts_after_the_wait()
     test_each_cup_says_what_its_players_do()
+    test_a_wrong_result_can_be_corrected()
     test_the_other_side_never_came()
     test_the_board_draws_scramble_doubles_by_four()
     test_open_play_pairs_by_tonights_results()

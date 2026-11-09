@@ -22,12 +22,17 @@ import hmac
 
 from .models import decide_winner
 
+# How long after a result it can still be corrected from a phone: long
+# enough to notice on the walk back from the table, short enough that last
+# hour's match is not reopened because somebody had second thoughts.
+FIX_WINDOW = 30 * 60
+
 # How long a match has to have been on the table before one side can say
 # the other never came. Walking over from the bar takes a minute.
 NO_SHOW_AFTER = 3 * 60
 
 # The ops a phone may run, once its key says whose phone it is.
-PHONE_OPS = ("score_claim", "score_answer", "score_withdraw", "no_show")
+PHONE_OPS = ("score_claim", "score_answer", "score_withdraw", "no_show", "score_fix")
 
 
 # ------------------------------------------------------------------ keys
@@ -110,31 +115,84 @@ def rules_for(store, person_id):
     """What this person's cups let them do, for the phone's own words: one
     cup taking scores is enough to explain scores."""
     cups = {e.cup_id for e in entrants_of(store, person_id) if e.active}
-    return {"scores": any(store.cup_rule(c, "player_scores") for c in cups),
+    fmts = [store.formats.get(store.cups[c].format_id or "") for c in cups if c in store.cups]
+    return {"balanced": any(f is not None and f.kind == "open_play" and f.by_results()
+                            for f in fmts),"scores": any(store.cup_rule(c, "player_scores") for c in cups),
             "auto_min": max([int(store.cup_rule(c, "score_auto_min") or 0) for c in cups] or [0]),
             "queue": any((store.formats.get(store.cups[c].format_id or "") or None) is not None
                          and store.formats[store.cups[c].format_id].uses_queue()
                          for c in cups if c in store.cups)}
 
 
+def side_in(store, m, person_id):
+    """Which side of this match a person played on, or None."""
+    pids = player_ids(store, person_id)
+    return "a" if pids & set(m.side_a) else "b" if pids & set(m.side_b) else None
+
+
+def fixable(store, person_id, now=None):
+    """The one result this person may still correct from their phone: their
+    latest, finished inside FIX_WINDOW, in a cup where players enter their
+    own scores, and an actual game (not a walkover or a bye)."""
+    now = now or store.clock()
+    best = None
+    pids = player_ids(store, person_id)
+    for m in store.matches.values():
+        if m.status != "done" or not (pids & set(m.players())) or not m.done_ts:
+            continue
+        if not best or m.done_ts > best.done_ts:
+            best = m
+    if not best or now - best.done_ts > FIX_WINDOW:
+        return None, None
+    if best.meta.get("walkover") or best.meta.get("bye") or not best.games:
+        return None, None
+    if not store.match_rule(best, "player_scores"):
+        return None, None
+    return best, side_in(store, best, person_id)
+
+
 def pending(app, person_id):
-    """Reports about this person's current match: the ones they are asked
-    to confirm, and their side's own still waiting for an answer. Each
-    shown the way round they played it."""
+    """Reports about this person's matches: the ones they are asked to
+    confirm, and their side's own still waiting for an answer — for the
+    match on their table, and corrections to the one they just finished.
+    Each shown the way round they played it."""
     s = app.store
-    m, side = live_match(s, person_id)
-    if not m:
-        return [], []
-    auto = int(s.match_rule(m, "score_auto_min") or 0)
     ask, own = [], []
-    for c in s.open_claims(m):
+
+    def add(m, side, c, auto):
         view = mine(c["games"], side)
         won = sum(1 for x, y in view if x > y)
         item = {"id": c["id"], "by": app.side_name(m, c["side"]), "games": view,
                 "sets": [won, len(view) - won],
                 "counts_at": c["ts"] + auto * 60 if auto else None}
+        if c.get("fix"):
+            item.update(fix=True, was=mine(m.games, side),
+                        opponent=app.side_name(m, "b" if side == "a" else "a"))
         (own if c["side"] == side else ask).append(item)
+
+    m, side = live_match(s, person_id)
+    if m:
+        auto = int(s.match_rule(m, "score_auto_min") or 0)
+        for c in s.open_claims(m):
+            add(m, side, c, auto)
+    f, fside = fixable(s, person_id)
+    if f:
+        for c in s.open_fixes(f):
+            add(f, fside, c, 0)
     return ask, own
+
+
+def fix_view(app, person_id):
+    """What the phone needs to offer "wrong result?": the match, who it
+    was against, and the score the way round this person played it."""
+    s = app.store
+    m, side = fixable(s, person_id)
+    if not m:
+        return None
+    return {"match_id": m.id, "opponent": app.side_name(m, "b" if side == "a" else "a"),
+            "games": mine(m.games, side), "bo": m.scoring.best_of,
+            "pts": m.scoring.points_to, "need": m.scoring.games_to_win(),
+            "until": m.done_ts + FIX_WINDOW}
 
 
 # ---------------------------------------------------------------- the ops
@@ -215,6 +273,17 @@ def answer(app, p):
     c = s.claims.get(int(p.get("claim_id") or 0))
     if not c or c["state"] != "open":
         return {"status": "gone"}
+    if c.get("fix"):
+        m = s.matches.get(c["match_id"])
+        side = side_in(s, m, p["person_id"]) if m else None
+        if not m or m.status != "done" or not side or side == c["side"]:
+            return {"status": "stale"}
+        if p.get("yes"):
+            _close(app, c, "agreed")
+            _write(app, m, c["games"], "corrected")
+            return {"status": "agreed"}
+        _close(app, c, "disputed")
+        return {"status": "disputed", "by": app.side_name(m, c["side"])}
     m, side = live_match(s, p["person_id"])
     if not m or m.id != c["match_id"] or m.queued_seq != c["qseq"] or side == c["side"]:
         if not s.open_claims(s.matches.get(c["match_id"])):
@@ -228,6 +297,70 @@ def answer(app, p):
     _disputed(app, m, [(app.side_name(m, c["side"]), games_line(mine(c["games"], c["side"]))),
                        (app.side_name(m, side), "that is wrong")])
     return {"status": "disputed", "by": app.side_name(m, c["side"])}
+
+
+def fix(app, p):
+    """A correction to a result already written: the same as a report, on
+    a finished match — the other side confirms it, and only then is the
+    result rewritten (re-resolving whatever it decided). Unlike a score for
+    a match still on its table it never counts on time alone: a result
+    that was agreed is not changed on one side's word.
+
+      invalid  it does not decide the match
+      same     it is what is already written
+      sent     the other side is asked
+      agreed   the other side had asked for the same correction
+      disputed the other side had asked for a different one"""
+    s = app.store
+    m, side = fixable(s, p["person_id"])
+    if not m or m.id != p.get("match_id"):
+        raise ValueError("that result can't be corrected from here any more — ask the organisers")
+    games = mine([[int(a), int(b)] for a, b in p["games"]], side)
+    if not decide_winner(games, m.scoring) or any(not (0 <= x <= 99) for g in games for x in g):
+        return {"status": "invalid", "need": m.scoring.games_to_win()}
+    if games == m.games:
+        return {"status": "same"}
+    other = "b" if side == "a" else "a"
+    opp = app.side_name(m, other)
+    for c in s.open_fixes(m):
+        if c["side"] != side:
+            if c["games"] == games:
+                _close(app, c, "agreed")
+                _write(app, m, games, "corrected")
+                return {"status": "agreed", "opponent": opp}
+            _close(app, c, "disputed")
+            return {"status": "disputed", "opponent": opp}
+        _close(app, c, "replaced")
+    cid = s.append("claim_open", {"match_id": m.id, "qseq": m.queued_seq, "side": side,
+                                  "person_id": p["person_id"], "via": p.get("via", ""),
+                                  "games": games, "fix": True})
+    return {"status": "sent", "id": cid, "opponent": opp, "reachable": reachable(app, m, other)}
+
+
+def dismiss(app, p):
+    """The organisers closing a correction they will not make."""
+    c = app.store.claims.get(int(p.get("claim_id") or 0))
+    if c and c["state"] in ("open", "disputed"):
+        app.store.append("claim_close", {"id": c["id"], "state": "dismissed", "force": True})
+    return {}
+
+
+def corrections(app, now=None):
+    """Corrections the console should see: asked and unanswered, or
+    disagreed about, on results from the last while."""
+    s = app.store
+    now = now or s.clock()
+    out = []
+    for c in s.claims.values():
+        if not c.get("fix") or c["state"] not in ("open", "disputed"):
+            continue
+        m = s.matches.get(c["match_id"])
+        if not m or m.status != "done" or now - c["ts"] > 3 * FIX_WINDOW:
+            continue
+        out.append({"claim_id": c["id"], "match_id": m.id, "state": c["state"],
+                    "by": app.side_name(m, c["side"]), "a": app.side_name(m, "a"),
+                    "b": app.side_name(m, "b"), "games": c["games"], "was": m.games})
+    return out
 
 
 def withdraw(app, p):
@@ -277,6 +410,12 @@ def sweep(app, now):
         if c["state"] != "open":
             continue
         m = s.matches.get(c["match_id"])
+        if c.get("fix"):
+            # a correction waits for the other side or the organisers, but
+            # not past the evening: once well outside the window it is dropped
+            if not m or m.status != "done" or now - c["ts"] > 3 * FIX_WINDOW:
+                _close(app, c, "stale")
+            continue
         if not m or m.status != "live" or m.queued_seq != c["qseq"]:
             _close(app, c, "stale")
             continue

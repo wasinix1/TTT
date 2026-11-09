@@ -92,7 +92,7 @@ const STR = {
     getReady: 'Get ready', nextChip: 'next', putBack: 'put back', waitsMatch: 'waiting for a match',
     more: n => `${n} more`, andMore: n => `and ${n} more after that`, nothingQueued: 'Nothing queued.',
     yourCup: 'you play here',
-    goThrough: n => `Top ${n} go through`, winsTonight: 'Wins tonight', ranking: 'Ranking', youAre: r => `You’re ${ord(r)}`, leads: n => n + ' leads',
+    goThrough: n => `Top ${n} go through`, winsTonight: 'Standings', youAre: r => `You’re ${ord(r)}`, leads: n => n + ' leads',
     colW: 'W', colL: 'L', colBh: 'Bh', colDiff: '±',
     knockout: 'Knockout', champion: 'Winner', tbd: 'to be decided', liveAt: n => 'table ' + n,
     beat: n => 'beat ' + n, walkover: 'walkover', bye: 'bye',
@@ -136,7 +136,7 @@ const STR = {
     hPlay: a => 'After the match, one of you enters the result here and the other confirms it' + (a ? `, or it counts after ${a} min.` : '.'),
     hPlayDesk: 'After the match, the organisers enter the result.',
     hRest: 'You won’t be called. Tap I’m back and you join the end of the line.',
-    // the evening in five lines
+    // the evening in a few lines
     howLink: 'How tonight works', guideH: 'How tonight works', gotIt: 'Got it',
     g1: 'You’re in the line as soon as you’re checked in. Nobody keeps a list.',
     g2: p => 'This page and the screen on the wall show when you’re up: “Get ready”, then your table.' + (p ? ' Turn on calls and your phone buzzes, even locked.' : ''),
@@ -144,7 +144,15 @@ const STR = {
     g3desk: 'After the match, the organisers enter the result.',
     g4: 'Stepping away? Tap Break so nobody waits for you, and I’m back when you return. Leaving? Tap I’m going home.',
     g5: 'Called, and the other side isn’t there after three minutes? Tap “Opponent not here?” — you go back in the line.',
-    t: { push_on: 'Calls on ✓', push_off: 'Calls off', rest_on: 'On a break — you won’t be called', rest_off: 'Welcome back — you’re in the line', leave_on: 'Signed out — safe home', leave_off: 'Glad you’re still here',
+    g6: 'Entered a result wrong? You can correct it for half an hour after the match; the other side confirms.',
+    gBal: 'Matches are balanced: as the evening goes on, you mostly play people at your level tonight.',
+    // correcting your last result
+    fixLink: o => `Wrong result against ${o}?`, fixH: 'Correct the result', fixNote: o => `${o} confirms the correction — then it’s changed.`,
+    fixSent: s => `Correction sent: ${s} — waiting for the other side`,
+    fixBy: b => `${b} says your last result was wrong`, fixWas: g => `Entered: ${g}`, fixQ: (w, a, b) => `It should be ${a}:${b} — ${w ? 'you win' : 'you lose'}. Right?`,
+    t: { push_on: 'Calls on ✓', push_off: 'Calls off',
+         fix_same: 'That’s what was entered', fix_sent: 'Sent — the other side confirms', fix_agreed: 'Corrected ✓',
+         fix_disputed: 'That doesn’t match theirs — tell the organisers', rest_on: 'On a break — you won’t be called', rest_off: 'Welcome back — you’re in the line', leave_on: 'Signed out — safe home', leave_off: 'Glad you’re still here',
          sent: 'Sent — the other side confirms', agreed: 'Entered ✓', disputed: 'That doesn’t match — enter it again, both of you',
          stale: 'Already entered', gone: 'Already settled', withdrawn: 'Taken back', no_show: 'Table freed', in: 'You’re in ✓' },
   },
@@ -184,7 +192,7 @@ const STR = {
     getReady: 'Mach dich bereit', nextChip: 'als nächstes', putBack: 'zurückgestellt', waitsMatch: 'wartet auf ein Spiel',
     more: n => `${n} weitere`, andMore: n => `und ${n} weitere danach`, nothingQueued: 'Noch niemand in der Reihe.',
     yourCup: 'du spielst hier',
-    goThrough: n => `Die ersten ${n} kommen weiter`, winsTonight: 'Siege heute', ranking: 'Rangliste', youAre: r => `Du bist ${r}.`, leads: n => n + ' führt',
+    goThrough: n => `Die ersten ${n} kommen weiter`, winsTonight: 'Tabelle', youAre: r => `Du bist ${r}.`, leads: n => n + ' führt',
     colW: 'S', colL: 'N', colBh: 'Bh', colDiff: '±',
     knockout: 'K.o.-Runde', champion: 'Sieger:in', tbd: 'steht noch nicht fest', liveAt: n => 'Tisch ' + n,
     beat: n => 'gegen ' + n, walkover: 'kampflos', bye: 'Freilos',
@@ -229,7 +237,14 @@ const STR = {
     g3desk: 'Nach dem Spiel trägt die Orga das Ergebnis ein.',
     g4: 'Kurz weg? Tipp Pause, damit niemand auf dich wartet, und „Ich bin wieder da“, wenn du zurück bist. Gehst du? Tipp „Ich gehe heim“.',
     g5: 'Aufgerufen, und die andere Seite ist nach drei Minuten nicht da? Tipp „Gegenseite nicht da?“ — du bist wieder in der Reihe.',
-    t: { push_on: 'Aufrufe an ✓', push_off: 'Aufrufe aus', rest_on: 'Pause — wir rufen dich nicht auf', rest_off: 'Willkommen zurück', leave_on: 'Gute Heimfahrt!', leave_off: 'Schön, dass du noch da bist',
+    g6: 'Ergebnis falsch eingetragen? Eine halbe Stunde nach dem Spiel kannst du es korrigieren; die andere Seite bestätigt.',
+    gBal: 'Ausgeglichene Spiele: im Lauf des Abends spielst du meist gegen Leute auf deinem Niveau.',
+    fixLink: o => `Falsches Ergebnis gegen ${o}?`, fixH: 'Ergebnis korrigieren', fixNote: o => `${o} bestätigt die Korrektur — dann wird es geändert.`,
+    fixSent: s => `Korrektur gesendet: ${s} — wartet auf die andere Seite`,
+    fixBy: b => `${b} meldet einen Fehler im letzten Ergebnis`, fixWas: g => `Eingetragen: ${g}`, fixQ: (w, a, b) => `Richtig wäre ${a}:${b} — ${w ? 'du gewinnst' : 'du verlierst'}. Stimmt das?`,
+    t: { push_on: 'Aufrufe an ✓', push_off: 'Aufrufe aus',
+         fix_same: 'So ist es schon eingetragen', fix_sent: 'Gesendet — die andere Seite bestätigt', fix_agreed: 'Korrigiert ✓',
+         fix_disputed: 'Passt nicht zur anderen Seite — sag der Orga Bescheid', rest_on: 'Pause — wir rufen dich nicht auf', rest_off: 'Willkommen zurück', leave_on: 'Gute Heimfahrt!', leave_off: 'Schön, dass du noch da bist',
          sent: 'Gesendet — die andere Seite bestätigt', agreed: 'Eingetragen ✓', disputed: 'Passt nicht zusammen — tragt es beide nochmal ein',
          stale: 'Schon eingetragen', gone: 'Schon erledigt', withdrawn: 'Zurückgezogen', no_show: 'Tisch frei', in: 'Du bist dabei ✓' },
   },
@@ -820,7 +835,7 @@ function pushFollow() {
   IO.playerAct(me.key, 'push_subscribe', { sub: pushSub.toJSON(), lang: LANG }).catch(() => { });
 }
 
-/* The evening in five lines: once per evening, and whenever asked. */
+/* The evening in a few lines: once per evening, and whenever asked. */
 const GUIDE_KEY = () => 'ttt_guide_' + ((S && S.event && S.event.id) || '');
 function guide() {
   const v = PV();
@@ -828,7 +843,8 @@ function guide() {
   if (!v || !(r.queue || r.scores)) return '';
   if (!ui.guide && store.get(GUIDE_KEY())) return '';
   const push = SHELL === 'web' && P && P.push_key;
-  const steps = [r.queue ? L.g1 : '', L.g2(push), r.scores ? L.g3(r.auto_min) : L.g3desk,
+  const steps = [r.queue ? L.g1 : '', r.balanced ? L.gBal : '', L.g2(push),
+                 r.scores ? L.g3(r.auto_min) : L.g3desk, r.scores ? L.g6 : '',
                  r.queue ? L.g4 : '', r.queue && r.scores ? L.g5 : ''].filter(Boolean);
   return `<div class="card2 guide" id="guide"><h4>${esc(L.guideH)}</h4><ol>${steps.map(x => `<li>${esc(x)}</li>`).join('')}</ol>
     <div class="acts flush"><button class="btn ghost small" data-act="guide-ok">${esc(L.gotIt)}</button></div></div>`;
@@ -843,7 +859,7 @@ function howLink() {
 function howNow(x, v) {
   const r = v.rules || {};
   if (x.state === 'playing') {
-    if ((v.reported || []).length || !(v.scores || r.scores)) return '';
+    if ((v.reported || []).some(c => !c.fix) || !(v.scores || r.scores)) return '';
     return v.scores ? L.hPlay(v.auto_min) : L.hPlayDesk;
   }
   if (!r.queue) return '';
@@ -858,7 +874,18 @@ function actions(H) {
   if (!v || !H || !H.x) return offer;
   const x = H.x;
   const how = howNow(x, v);
-  return (how ? `<p class="how">${esc(how)}</p>` : '') + actionButtons(v, x, offer);
+  return (how ? `<p class="how">${esc(how)}</p>` : '') + actionButtons(v, x, offer) + fixLine(v);
+}
+
+/* A result they got wrong: for a while after the match, theirs to correct,
+   with the other side confirming — like a score, on a finished match. */
+function fixLine(v) {
+  const f = v && v.fixable;
+  if (!f) return '';
+  const sent = (v.reported || []).find(c => c.fix);
+  if (sent) return `<div class="acts"><p class="note">${esc(L.fixSent(scoreLine(sent.games)))}</p>
+      <button class="btn ghost small" data-act="withdraw" data-id="${esc(sent.id)}">${esc(L.withdraw)}</button></div>`;
+  return `<div class="acts"><button class="link" data-act="fix-pad">${esc(L.fixLink(nice(f.opponent)))}</button></div>`;
 }
 
 function actionButtons(v, x, offer) {
@@ -868,7 +895,7 @@ function actionButtons(v, x, offer) {
     const noShow = x.since && now - x.since > after
       ? `<button class="btn ghost small" data-act="no-show" data-opp="${esc(nice(x.opponent))}">${esc(L.noShow)}</button>` : '';
     if (!v.scores) return noShow ? `<div class="acts">${noShow}</div>` + offer : offer;
-    const mine = (v.reported || [])[0];
+    const mine = (v.reported || []).find(c => !c.fix);
     const line = mine && (mine.counts_at ? L.reportedAuto(scoreLine(mine.games), hhmm(mine.counts_at))
       : SHELL === 'tg' ? L.reported(scoreLine(mine.games), nice(x.opponent)) : L.reportedWait(scoreLine(mine.games)));
     return (mine
@@ -892,9 +919,10 @@ function claims() {
   const v = PV();
   if (!v) return '';
   return (v.confirm || []).map(c => `<div class="ask">
-    <div class="micro">${esc(L.claimBy(nice(c.by)))}</div>
+    <div class="micro">${esc(c.fix ? L.fixBy(nice(c.by)) : L.claimBy(nice(c.by)))}</div>
     <div class="sc">${scoreLine(c.games)}</div>
-    <div>${esc(L.claimQ(c.sets[0] > c.sets[1], c.sets[0], c.sets[1]))}</div>
+    ${c.fix ? `<div class="micro">${esc(L.fixWas(scoreLine(c.was)))}</div>` : ''}
+    <div>${esc(c.fix ? L.fixQ(c.sets[0] > c.sets[1], c.sets[0], c.sets[1]) : L.claimQ(c.sets[0] > c.sets[1], c.sets[0], c.sets[1]))}</div>
     <div class="row">
       <button class="btn" data-act="confirm" data-id="${c.id}" data-yes="1">${esc(L.yes)}</button>
       <button class="btn no" data-act="confirm" data-id="${c.id}" data-yes="">${esc(L.no)}</button>
@@ -1098,8 +1126,7 @@ function standingsBlock(f, ids) {
     const many = groups.length > 1;
     const hd = `<div class="st head${swiss ? ' swiss' : ''}"><span></span><span></span><span>${esc(L.colW)}</span><span>${esc(swiss ? L.colBh : L.colL)}</span><span>${esc(L.colDiff)}</span></div>`;
     out.push(groups.map(g => {
-      // ranked by tonight's form, the server's order is the ranking
-      const rows = open && !g.ranked ? g.rows.slice().sort((a, b) => b.won - a.won || a.lost - b.lost) : g.rows;
+      const rows = open ? g.rows.slice().sort((a, b) => b.won - a.won || a.lost - b.lost) : g.rows;
       const key = f.id + '|' + g.group, open2 = ui.stAll[key];
       const cutAt = open2 ? rows.length : TABLE_ROWS;
       const more = rows.length > TABLE_ROWS
@@ -1210,7 +1237,7 @@ function standingsSection() {
   const fs = (S.formats || []).filter(f => f.status !== 'setup' && inView(f.cup_id));
   const blocks = fs.map(f => ({ f, html: standingsBlock(f, ids) })).filter(x => x.html);
   if (!blocks.length) return '';
-  const title = f => f.kind === 'open_play' ? ((f.standings || [])[0] && f.standings[0].ranked ? L.ranking : L.winsTonight) : (f.view && f.view.bracket ? L.knockout : L.standings);
+  const title = f => f.kind === 'open_play' ? L.winsTonight : (f.view && f.view.bracket ? L.knockout : L.standings);
   if (multiCup() && !selectedCup()) {
     // everyone: one fold per cup, each saying the one thing worth knowing
     return head(L.standings) + blocks.map(({ f, html }) => `<details class="fold"${blocks.length === 1 ? ' open' : ''}>
@@ -1328,15 +1355,29 @@ function openCup(c) {
 /* ------------------------------------------------------------ the score pad */
 
 const playingNow = () => tonight().find(x => x.state === 'playing');
-function openPad() {
-  const x = playingNow();
-  if (!x) return;
-  ui.pad = { games: Array.from({ length: x.bo || 3 }, () => ['', '']), opp: x.opponent, need: x.need || 2, bo: x.bo || 3, pts: x.pts || 11, best: x.best_of };
+function openPad(fix) {
+  if (fix) {
+    const f = (PV() || {}).fixable;
+    if (!f) return;
+    const games = Array.from({ length: f.bo }, (_, i) => f.games[i] ? f.games[i].map(String) : ['', '']);
+    ui.pad = { fix: f.match_id, games, opp: f.opponent, need: f.need, bo: f.bo, pts: f.pts,
+               best: L.bestOf(f.bo, f.pts) };
+  } else {
+    const x = playingNow();
+    if (!x) return;
+    ui.pad = { games: Array.from({ length: x.bo || 3 }, () => ['', '']), opp: x.opponent, need: x.need || 2, bo: x.bo || 3, pts: x.pts || 11, best: x.best_of };
+  }
   renderPad();
   $('scrim').classList.add('on');
   requestAnimationFrame(() => $('pad').classList.add('on'));
   if (tg && tg.BackButton) { try { tg.BackButton.show(); tg.BackButton.onClick(closePad); } catch (e) { } }
   setTimeout(() => { const i = $('g0a'); if (i) i.focus(); }, 300);
+}
+function padSend() {
+  const st = padState();
+  if (!st.decided) return;
+  const fix = ui.pad.fix;
+  act(fix ? 'fix' : 'score', fix ? { match_id: fix, games: st.done } : { games: st.done }, closePad);
 }
 function closePad() {
   ui.pad = null;
@@ -1356,7 +1397,7 @@ function renderPad() {
   if (!p) return;
   const st = padState();
   const f = document.activeElement, fid = f && f.id;
-  $('pad').innerHTML = `<div class="grab"></div><h3>${esc(L.result)}</h3>
+  $('pad').innerHTML = `<div class="grab"></div><h3>${esc(p.fix ? L.fixH : L.result)}</h3>
     <p class="note">${esc([(LANG === 'de' ? 'gegen ' : 'against ') + nice(p.opp), p.best].filter(Boolean).join(' · '))}</p>
     <div class="sheet" style="--g:2">
       <span></span><span class="gh">${esc(L.you)}</span><span class="gh">${esc(first(nice(p.opp)))}</span>
@@ -1366,7 +1407,7 @@ function renderPad() {
     </div>
     <p class="verdict${st.decided && st.w > st.l ? ' win' : ''}">${st.decided ? esc(st.w > st.l ? L.youWin(st.w, st.l) : L.youLose(st.w, st.l)) : '&nbsp;'}</p>
     <button class="btn red wide" data-act="pad-send" ${st.decided ? '' : 'disabled'}>${esc(L.send)}</button>
-    <p class="hint">${esc((PV() || {}).auto_min ? L.padNoteAuto(nice(p.opp), PV().auto_min) : L.padNote(nice(p.opp)))}</p>`;
+    <p class="hint">${esc(p.fix ? L.fixNote(nice(p.opp)) : (PV() || {}).auto_min ? L.padNoteAuto(nice(p.opp), PV().auto_min) : L.padNote(nice(p.opp)))}</p>`;
   if (fid) { const back = $(fid); if (back) back.focus(); }
 }
 function updatePad() {
@@ -1524,7 +1565,7 @@ function render(entering) {
   $('mine').innerHTML = guide() + signup() + evening();
   renderRoom();
   $('tail').innerHTML = howLink() + orga() + settings();
-  if (ui.pad && !playingNow()) closePad();          // the referee got there first
+  if (ui.pad && !ui.pad.fix && !playingNow()) closePad();          // the referee got there first
   const dot = $('dot');
   if (dot) { dot.classList.add('on'); setTimeout(() => dot.classList.remove('on'), 500); }
 }
@@ -1640,7 +1681,8 @@ document.addEventListener('click', async e => {
     if (a === 'confirm') return void act('confirm', { id: +d.id, yes: !!d.yes });
     if (a === 'withdraw') return void act('withdraw_claim', { id: +d.id });
     if (a === 'pad') { buzz('light'); return openPad(); }
-    if (a === 'pad-send') { const st = padState(); if (!st.decided) return; return void act('score', { games: st.done }, closePad); }
+    if (a === 'fix-pad') { buzz('light'); return openPad(true); }
+    if (a === 'pad-send') return void padSend();
     return;
   }
   if (a === 'kind') { ui.kind[d.cup] = d.k; buzz('light'); return render(); }
@@ -1658,7 +1700,8 @@ document.addEventListener('click', async e => {
   if (a === 'confirm') return void act('confirm', { id: +d.id, yes: !!d.yes });
   if (a === 'withdraw') return void act('withdraw', { id: +d.id });
   if (a === 'pad') { buzz('light'); return openPad(); }
-  if (a === 'pad-send') { const st = padState(); if (!st.decided) return; return void act('score', { games: st.done }, closePad); }
+  if (a === 'fix-pad') { buzz('light'); return openPad(true); }
+  if (a === 'pad-send') return void padSend();
   if (a === 'message') { const text = ui.msg.trim(); if (!text) return; return void act('message', { text }, () => { ui.msg = ''; }); }
   if (a === 'news') return void act('news', { on: !V.me.news });
   if (a === 'unlink') { if (!(await ask(L.unlinkQ))) return; return void act('unlink', {}); }

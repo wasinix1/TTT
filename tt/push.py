@@ -39,10 +39,14 @@ WORDS = {
     "en": {"go": lambda t: f"{t} — you’re on", "against": lambda o: f"against {o}",
            "next": "Get ready — you’re next", "next_b": lambda t: f"The first free table is yours · {t}",
            "claim": lambda b: f"{b} reported a result", "claim_b": lambda g: f"{g} — is that right?",
+           "fix": lambda b: f"{b} says your last result was wrong",
+           "fix_b": lambda g: f"It should be {g} — is that right?",
            "table": lambda n: f"Table {n}"},
     "de": {"go": lambda t: f"{t} — du bist dran", "against": lambda o: f"gegen {o}",
            "next": "Gleich bist du dran", "next_b": lambda t: f"Der erste freie Tisch ist deiner · {t}",
            "claim": lambda b: f"{b} meldet ein Ergebnis", "claim_b": lambda g: f"{g} — stimmt das?",
+           "fix": lambda b: f"{b} meldet einen Fehler im letzten Ergebnis",
+           "fix_b": lambda g: f"Richtig wäre {g} — stimmt das?",
            "table": lambda n: f"Tisch {n}"},
 }
 
@@ -182,7 +186,8 @@ class Push:
                                             {"kind": "next", "tables": b.get("tables", [])}))
             for c in s.claims.values():
                 m = s.matches.get(c["match_id"])
-                if c["state"] != "open" or c not in s.open_claims(m):
+                if c["state"] != "open" or (c not in s.open_claims(m)
+                                            and c not in s.open_fixes(m)):
                     continue
                 other = "b" if c["side"] == "a" else "a"
                 for pid in (m.side_b if other == "b" else m.side_a):
@@ -191,7 +196,7 @@ class Push:
                         view = [list(g) if other == "a" else [g[1], g[0]] for g in c["games"]]
                         out.append((f"claim:{c['id']}:{who}", who,
                                     {"kind": "claim", "by": self.app.side_name(m, c["side"]),
-                                     "games": view}))
+                                     "games": view, "fix": bool(c.get("fix"))}))
         return out
 
     def _boards(self):
@@ -221,6 +226,9 @@ class Push:
             return {"title": W["next"], "body": W["next_b"](t).rstrip(" ·"),
                     "tag": "ttt-call", "topic": "call"}
         g = " ".join(f"{a}:{b}" for a, b in what["games"])
+        if what.get("fix"):
+            return {"title": W["fix"](what["by"]), "body": W["fix_b"](g),
+                    "tag": "ttt-claim", "topic": "claim", "sticky": True}
         return {"title": W["claim"](what["by"]), "body": W["claim_b"](g),
                 "tag": "ttt-claim", "topic": "claim", "sticky": True}
 

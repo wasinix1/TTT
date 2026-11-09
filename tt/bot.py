@@ -131,7 +131,9 @@ SETTLED = {"agreed": "✓ Bestätigt und eingetragen.",
            "disputed": "Uneinig — tragt das Ergebnis bitte beide nochmal ein.",
            "replaced": "Ersetzt durch eine neuere Meldung.",
            "stale": "Erledigt — das Spiel ist schon eingetragen.",
-           "withdrawn": "Zurückgezogen — es kommt gleich eine neue Meldung."}
+           "withdrawn": "Zurückgezogen — es kommt gleich eine neue Meldung.",
+           "dismissed": "Erledigt — die Orga hat entschieden.",
+           "settled": "Erledigt — die Orga hat das Ergebnis eingetragen."}
 
 
 def claim_question(app, m, c, side):
@@ -139,6 +141,12 @@ def claim_question(app, m, c, side):
     played it."""
     view = _mine(c["games"], side)
     won = sum(1 for x, y in view if x > y)
+    if c.get("fix"):
+        return (f"<b>{esc(app.side_name(m, c['side']))}</b> meldet einen Fehler "
+                f"in eurem letzten Ergebnis:\n"
+                f"eingetragen {games_line(_mine(m.games, side))}, richtig wäre "
+                f"{games_line(view)} — {'du gewinnst' if won > len(view) - won else 'du verlierst'} "
+                f"{won}:{len(view) - won}\n\nStimmt das?")
     t = app.store.tables.get(m.table)
     return (f"<b>{esc(app.side_name(m, c['side']))}</b> meldet für "
             f"{esc(table_de(t)) if t else 'euer Spiel'}:\n"

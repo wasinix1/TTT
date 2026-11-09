@@ -155,6 +155,8 @@ def view(bot, uid):
         if me.person:
             from .play import live_match, rules_for
             out["rules"] = rules_for(s, me.person.id)
+            from .play import fix_view
+            out["fixable"] = fix_view(app, me.person.id)
             m, _ = live_match(s, me.person.id)
             if m:
                 out["scores"] = bool(s.match_rule(m, "player_scores"))
@@ -296,6 +298,22 @@ def act(bot, user, op, d):
                          else "Gesendet — wartet auf Bestätigung",
                  "agreed": "Eingetragen ✓",
                  "disputed": "Passt nicht zusammen — tragt es nochmal ein"}[st]
+    elif op == "fix":
+        pid = c._person(uid)
+        if not pid:
+            raise ValueError("Das kannst nur du selbst korrigieren.")
+        try:
+            games = [[int(a), int(b)] for a, b in d.get("games") or []]
+        except (TypeError, ValueError):
+            raise ValueError("Das sind keine Punkte.")
+        r = bot.system("score_fix", {"person_id": pid, "via": "telegram",
+                                     "match_id": d.get("match_id"), "games": games})
+        if r["status"] == "invalid":
+            raise ValueError(f"Das ergibt noch keinen Sieg — {r['need']} Gewinnsätze braucht es.")
+        toast = {"same": "So ist es schon eingetragen",
+                 "sent": f"Korrektur gesendet — {r.get('opponent', '')} bestätigt",
+                 "agreed": "Korrigiert ✓",
+                 "disputed": "Passt nicht zusammen — sag der Orga Bescheid"}[r["status"]]
     elif op == "no_show":
         pid = c._person(uid)
         if not pid:

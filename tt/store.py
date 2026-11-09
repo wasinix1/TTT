@@ -795,11 +795,15 @@ class Store:
             "id": seq, "match_id": p["match_id"], "qseq": int(p["qseq"]),
             "side": p["side"], "person_id": p.get("person_id"),
             "via": p.get("via", ""), "games": [list(g) for g in p["games"]],
-            "ts": self._now, "state": "open", "closed_ts": None}
+            "ts": self._now, "state": "open", "closed_ts": None,
+            # a correction to a result already written, rather than a score
+            # for a match still on its table (tt/play.py fix)
+            "fix": bool(p.get("fix"))}
 
     def _ev_claim_close(self, p, seq):
         c = self.claims.get(int(p["id"]))
-        if c and c["state"] == "open":
+        # `force`: the organisers closing one already settled as disputed
+        if c and (c["state"] == "open" or p.get("force")):
             c["state"] = p["state"]
             c["closed_ts"] = self._now
 
@@ -810,7 +814,14 @@ class Store:
             return []
         return [c for c in self.claims.values()
                 if c["state"] == "open" and c["match_id"] == m.id
-                and c["qseq"] == m.queued_seq]
+                and c["qseq"] == m.queued_seq and not c.get("fix")]
+
+    def open_fixes(self, m):
+        """Corrections asked for on this finished match, still unanswered."""
+        if not m or m.status != "done":
+            return []
+        return [c for c in self.claims.values()
+                if c["state"] == "open" and c["match_id"] == m.id and c.get("fix")]
 
     def _ev_match_void(self, p, seq):
         m = self.matches.get(p["match_id"])

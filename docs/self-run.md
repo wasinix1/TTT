@@ -94,6 +94,27 @@ The board now shows scramble's next match as its two teams of two. The
 numbers on phones count four people to a match, not two, so *2 before
 yours* is true for scramble as well as for singles and pairs.
 
+## Correcting a result
+
+Got the score the wrong way round? For 30 minutes after a match, the phone
+offers *Wrong result against Ben?* under the main display. It opens the
+score pad with what was entered already filled in. A correction is a report
+like any other, but on a finished match:
+
+- The other side is asked on their phone, or in Telegram, or by a push
+  call. They see what was entered next to what it would become.
+- Confirmed, the result is rewritten, and anything it decided further on is
+  re-resolved, as when the console corrects a result. The log marks it
+  `how: corrected`.
+- **It never counts on the wait alone,** whatever the cup's setting. A
+  result both sides agreed isn't changed on one side's word.
+- Two corrections that disagree change nothing. The console lists open and
+  disputed corrections above Results, with **Accept** and **Dismiss**;
+  entering the result there settles it too.
+- Only your latest result can be corrected, only in a cup where players
+  enter their own scores, and only for 30 minutes. After that it's the
+  organisers' to change.
+
 ## Calls on a locked phone: Web Push
 
 Once the phone page knows who you are, it offers **Turn on calls**. The

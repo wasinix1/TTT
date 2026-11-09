@@ -506,6 +506,8 @@ class App:
                          for c in s.cup_order if c in s.cups],
                 "board": boards,
                 "idle_tables": board.idle_reservations(s) if role == "admin" else [],
+                # corrections players asked for on results already written
+                "corrections": play.corrections(self) if role in ("admin", "referee") else [],
                 "recent": [self.match_dto(m) for m in recent],
                 "formats": [s.formats[f].to_dict(s) for f in s.format_order
                             if f in s.formats],
@@ -907,6 +909,11 @@ class App:
         involved = list(dict.fromkeys(
             (m.meta.get("queued") or []) + [x for x in (m.entrant_a, m.entrant_b) if x]))
         res = {"match_id": m.id, "games": games, "winner": winner}
+        # a result written here settles any correction asked for on it
+        for c in list(s.claims.values()):
+            if c.get("fix") and c["match_id"] == m.id and c["state"] in ("open", "disputed") \
+                    and p.get("how") != "corrected":
+                s.append("claim_close", {"id": c["id"], "state": "settled", "force": True})
         if p.get("by") == "players":
             res["by"] = "players"          # the players entered it themselves
             if p.get("how"):
@@ -1074,6 +1081,12 @@ class App:
 
     def op_no_show(self, p):
         return play.no_show(self, p)
+
+    def op_score_fix(self, p):
+        return play.fix(self, p)
+
+    def op_claim_dismiss(self, p):
+        return play.dismiss(self, p)
 
     def self_checkin_cups(self):
         """Where a phone may check itself in: the cups that say so, while
@@ -1855,6 +1868,7 @@ OP_LEVEL = {
     "tg_connect": 2, "tg_disconnect": 2, "tg_send": 2, "tg_door_link": 2, "tg_read": 2,
     "tg_register": 3, "tg_attach": 3, "tg_link": 3, "tg_detach": 3, "tg_rsvp": 3,
     "score_claim": 3, "score_answer": 3, "score_withdraw": 3, "no_show": 3, "checkin": 3,
+    "score_fix": 3, "claim_dismiss": 1,
 }
 
 # The door key is not a rung on the ladder above: it runs who is in the
@@ -2283,6 +2297,7 @@ def phone_view(app, pid):
         out["me"] = {"person_id": pid, "name": who.name,
                      "entrants": [e.id for e in play.entrants_of(s, pid)]}
         out["confirm"], out["reported"] = play.pending(app, pid)
+        out["fixable"] = play.fix_view(app, pid)
         out["rules"] = play.rules_for(s, pid)
     if out["checkin"]:
         # entries made ahead for these cups, so somebody can find their own
@@ -2352,6 +2367,14 @@ def phone(app, key, op, d, post, origin=""):
         r = app.act("system", "score_answer", {"person_id": pid, "claim_id": d.get("id"),
                                                 "yes": bool(d.get("yes"))}, actor="phone")
         toast = r["status"]
+    elif op == "fix":
+        r = app.act("system", "score_fix", {"person_id": pid, "via": "phone",
+                                             "match_id": d.get("match_id"),
+                                             "games": d.get("games") or []}, actor="phone")
+        if r["status"] == "invalid":
+            raise ValueError(f"that does not finish the match — it takes {r['need']} games")
+        out["fix"] = r
+        toast = "fix_" + r["status"]
     elif op == "withdraw_claim":
         r = app.act("system", "score_withdraw", {"person_id": pid, "claim_id": d.get("id")}, actor="phone")
         toast = "withdrawn" if r["withdrawn"] else "gone"
