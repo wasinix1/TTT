@@ -332,6 +332,11 @@ class Format:
 
 # ------------------------------------------------------------------ helpers
 
+def _round_cap(config):
+    """How many rounds a group plays. 0 is the whole round robin."""
+    return max(0, int(config.get("max_rounds") or 0))
+
+
 def _record(store, fid, group=None):
     """Per-entrant results table for round robin / Swiss."""
     rec = defaultdict(lambda: dict(
@@ -657,16 +662,52 @@ class GroupStage(Format):
             row = i // n
             col = i % n if row % 2 == 0 else n - 1 - (i % n)
             groups[col].append(eid)
+        drawn = {chr(ord("A") + gi): members for gi, members in enumerate(groups)}
+        # kept so rounds held back by a cap can still be drawn in the same order
+        self.config["group_members"] = drawn
+        store.append("format_update", {"id": self.id,
+                                       "config": {"group_members": drawn}})
+        for gname, members in drawn.items():
+            self._draw_fixtures(store, gname, members)
+
+    def _draw_fixtures(self, store, gname, members, first=0):
+        """Create this group's rounds from `first` up to the cap, skipping
+        any pairing that already has a match and anybody who has gone home."""
+        cap = _round_cap(self.config)
         sc = self.scoring().to_dict()
-        for gi, members in enumerate(groups):
-            gname = chr(ord("A") + gi)
-            for rnd, a, b in circle_fixtures(members):
-                store.create_match(
-                    format_id=self.id, entrant_a=a, entrant_b=b,
-                    label=f"Group {gname}",
-                    meta={"group": gname, "round": rnd, "phase": "groups"},
-                    scoring=sc,
-                )
+        have = {frozenset((m.entrant_a, m.entrant_b)) for m in store.matches.values()
+                if m.format_id == self.id and m.meta.get("phase") == "groups"
+                and m.status != "void"}
+        for rnd, a, b in circle_fixtures(members):
+            if rnd < first or (cap and rnd >= cap) or frozenset((a, b)) in have \
+                    or store.withdrawn(a) or store.withdrawn(b):
+                continue
+            store.create_match(
+                format_id=self.id, entrant_a=a, entrant_b=b,
+                label=f"Group {gname}",
+                meta={"group": gname, "round": rnd, "phase": "groups"},
+                scoring=sc,
+            )
+
+    def settings_changed(self, store, before=None):
+        """Max rounds moved on a draw already made. Lowered, it cuts off the
+        way a Swiss does: past the new count, anything with no result yet is
+        voided, and a result already in stays. Raised or cleared, the rounds
+        it was holding back are drawn now. Once the bracket is out the groups
+        are over and neither applies."""
+        if self.status != "running" or self.phase != "groups":
+            return
+        old, new = _round_cap(before or {}), _round_cap(self.config)
+        if new:
+            cut = [m for m in store.matches.values()
+                   if m.format_id == self.id and m.meta.get("phase") == "groups"
+                   and m.meta.get("round", 0) >= new
+                   and m.status not in ("done", "void")]
+            for m in cut:
+                store.append("match_void", {"match_id": m.id})
+        if old and (not new or new > old):
+            for gname, members in self.config.get("group_members", {}).items():
+                self._draw_fixtures(store, gname, members, first=old)
 
     def warnings(self, store):
         n = max(1, int(self.config.get("n_groups", 1)))
@@ -679,7 +720,28 @@ class GroupStage(Format):
                 f"{'' if short == 1 else 's'} with one entrant and nobody to "
                 f"play — they get no matches at all and cannot qualify. "
                 f"{max(1, field // 2)} groups or fewer fits this field.")
-        return out
+        return out + self._cap_warnings(n, field)
+
+    def _cap_warnings(self, n, field):
+        """A capped group with an odd number in it cannot come out even: one
+        bye a round, and a different person has it each time. Read off the
+        groups as drawn once there are any, because a withdrawal afterwards
+        does not change who was given a bye."""
+        cap = _round_cap(self.config)
+        if not cap or self.phase == "ko":
+            return []
+        setup = self.status == "setup"
+        sizes = {field // n, (field + n - 1) // n} if setup else \
+            {len(g) for g in self.config.get("group_members", {}).values()}
+        fix = "Clear Max rounds so the group plays out" + (
+            ", or change the number of groups so each has an even number"
+            if setup else "")
+        return [
+            f"Not advised: a group of {size} has someone sitting out every "
+            f"round, so after {cap} round{'' if cap == 1 else 's'}, {cap} of "
+            f"them have played one match fewer than the rest. The table ranks "
+            f"on wins, so that can cost them a place. {fix}."
+            for size in sorted(sizes) if size >= 3 and size % 2 and cap < size]
 
     def _group_names(self, store):
         return sorted({m.meta.get("group") for m in store.matches.values()

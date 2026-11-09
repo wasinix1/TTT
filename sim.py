@@ -2541,6 +2541,80 @@ def test_too_many_groups_is_flagged():
     shutil.rmtree(d)
 
 
+def group_cup(app, players, **config):
+    cup = app.act("admin", "add_cup", {"name": "Cup"})["cup_id"]
+    for i in range(players):
+        add_player(app, f"G{i}", 5, cup)
+    fid = app.act("admin", "add_format", {"kind": "groups", "name": "G", "config": {
+        "cup_id": cup, "scoring": {"best_of": 3, "points_to": 11}, **config}})["format_id"]
+    app.act("admin", "update_cup", {"id": cup, "format_id": fid})
+    dispatch.tick(app.store)
+    return fid
+
+
+def group_matches_of(s, fid, *statuses):
+    return [m for m in s.matches.values() if m.format_id == fid
+            and m.meta.get("phase") == "groups"
+            and (not statuses or m.status in statuses)]
+
+
+def test_max_rounds_caps_the_groups():
+    print("\n[max rounds caps a group stage]")
+    app, d = fresh()
+    s = app.store
+    fid = group_cup(app, 8, n_groups=2, advance_per_group=2, then_ko=True, max_rounds=2)
+    app.act("admin", "start_format", {"id": fid})
+    check(len(group_matches_of(s, fid)) == 8, "two groups of four over two rounds is eight matches")
+    drain(app)
+    f = s.formats[fid]
+    check(all(r["played"] == 2 for g in f.standings(s) for r in g["rows"]),
+          "everybody played exactly two")
+    check(f.phase == "ko", "the knockout still follows the shortened groups")
+    shutil.rmtree(d)
+
+
+def test_max_rounds_can_move_on_a_running_draw():
+    print("\n[max rounds moved after the draw]")
+    app, d = fresh()
+    s = app.store
+    cfg = dict(n_groups=1, then_ko=False, max_rounds=2)
+    fid = group_cup(app, 4, **cfg)
+    app.act("admin", "start_format", {"id": fid})
+    check(len(group_matches_of(s, fid)) == 4, "four in one group over two rounds is four matches")
+    app.act("admin", "update_format", {"id": fid, "config": dict(cfg, max_rounds=0)})
+    check(len(group_matches_of(s, fid)) == 6, "clearing the cap draws the rest of the round robin")
+    play_one(app, 1)
+    app.act("admin", "update_format", {"id": fid, "config": dict(cfg, max_rounds=1)})
+    left = group_matches_of(s, fid, "pending", "live")
+    check(all(m.meta["round"] == 0 for m in left), "lowering it takes back what is past the cap")
+    check(len(group_matches_of(s, fid, "done")) == 1, "a result already in stays")
+    app.act("admin", "update_format", {"id": fid, "config": dict(cfg, max_rounds=3)})
+    live = group_matches_of(s, fid, "pending", "live", "done")
+    pairs = [frozenset((m.entrant_a, m.entrant_b)) for m in live]
+    check(len(live) == 6 and len(set(pairs)) == 6, "raising it again repeats no pairing")
+    shutil.rmtree(d)
+
+
+def test_max_rounds_warns_about_the_odd_group():
+    print("\n[max rounds and the odd group]")
+    app, d = fresh()
+    f = app.store.formats[group_cup(app, 5, n_groups=1, then_ko=False, max_rounds=3)]
+    check(any(w.startswith("Not advised") and "match fewer" in w
+              for w in f.warnings(app.store)),
+          "three rounds of a group of five is advised against")
+    f.config["max_rounds"] = 5
+    check(not f.warnings(app.store), "playing the group out is not")
+    shutil.rmtree(d)
+    app, d = fresh()
+    f = app.store.formats[group_cup(app, 6, n_groups=1, then_ko=False, max_rounds=3)]
+    check(not f.warnings(app.store), "nor is a capped even group")
+    app.act("admin", "start_format", {"id": f.id})
+    app.act("admin", "withdraw", {"entrant_id": f.entrant_ids[0]})
+    check(app.store.withdrawn(f.entrant_ids[0]) and not f.warnings(app.store),
+          "a withdrawal after the draw does not make an even group odd")
+    shutil.rmtree(d)
+
+
 # ------------------------------------------------------------------ sandbox
 
 def sim_event(app, kind="groups", entry="single", config=None, tables=3):
@@ -2856,6 +2930,9 @@ if __name__ == "__main__":
     test_lowering_the_round_count_cuts_off()
     test_an_even_round_count_does_not_warn()
     test_too_many_groups_is_flagged()
+    test_max_rounds_caps_the_groups()
+    test_max_rounds_can_move_on_a_running_draw()
+    test_max_rounds_warns_about_the_odd_group()
     test_three_cups_sharing_tables_all_finish()
     test_the_sandbox_copies_the_shape_and_none_of_the_people()
     test_the_sandbox_looks_like_time_passed()
