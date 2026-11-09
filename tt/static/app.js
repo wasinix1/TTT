@@ -1346,6 +1346,7 @@ function summaryOf(kind, cfg) {
     scramble: 'scramble doubles' }[c.mode] || c.mode || 'fixed pairs');
   if (f.kind === 'groups') {
     bits.push((c.n_groups || 2) + ' groups');
+    if (+c.max_rounds > 0) bits.push('max ' + c.max_rounds + ' rounds');
     if (c.then_ko !== false) bits.push('top ' + (c.advance_per_group || 2) + ' to a knockout');
   }
   if (f.kind === 'swiss') {
@@ -1862,6 +1863,7 @@ function formatBlock(f, cup) {
         <button class="ghost tiny" data-act="rm-format" data-i="${f.id}">Remove</button>
       </div>
     </div>
+    ${(f.warnings || []).map(w => `<div class="warn-in">${esc(w)}</div>`).join('')}
     ${open ? drawSettings(f, pfx) : ''}`;
 }
 
@@ -2027,6 +2029,8 @@ const fieldsFor = pfx => {
         <input id="${id('c-groups')}" value="${esc(v('c_groups', 2))}" data-f="${k('c_groups')}" inputmode="numeric"></div>
       <div class="field" style="max-width:150px"><label for="${id('c-adv')}">Advance per group</label>
         <input id="${id('c-adv')}" value="${esc(v('c_adv', 2))}" data-f="${k('c_adv')}" inputmode="numeric"></div>
+      <div class="field" style="max-width:130px"><label for="${id('c-maxr')}">Max rounds</label>
+        <input id="${id('c-maxr')}" value="${esc(v('c_maxr', ''))}" data-f="${k('c_maxr')}" inputmode="numeric" placeholder="All"></div>
       <label class="pick"><input type="checkbox" id="${id('c-ko')}" data-f="${k('c_ko')}" ${v('c_ko') !== false ? 'checked' : ''}> then a knockout</label>
       <label class="pick"><input type="checkbox" id="${id('c-third')}" data-f="${k('c_third')}" ${v('c_third') ? 'checked' : ''}> third place match</label>
     </div>`,
@@ -2086,6 +2090,7 @@ function formatConfig(pfx, kind) {
   if (kind === 'groups') Object.assign(cfg, {
     n_groups: n('c_groups') || 2, then_ko: v('c_ko') !== false,
     advance_per_group: n('c_adv') || 2, third_place: !!v('c_third'),
+    max_rounds: n('c_maxr') || 0,
   });
   if (kind === 'single_elim') cfg.third_place = !!v('c_third');
   if (kind === 'swiss') {
@@ -2113,6 +2118,7 @@ function seedFormat(pfx, kind, cfg) {
   }
   if (kind === 'groups') {
     set('c_groups', cfg.n_groups); set('c_adv', cfg.advance_per_group);
+    form[pfx + 'c_maxr'] = cfg.max_rounds || '';
     form[pfx + 'c_ko'] = cfg.then_ko !== false;
     form[pfx + 'c_third'] = !!cfg.third_place;
   }

@@ -130,7 +130,8 @@ def _people(rng, n, seen):
 # ---------------------------------------------------------------- structure
 
 # format config that belongs to a draw that has run, not to its setup
-RUNTIME_KEYS = ("entrant_ids", "cup_id", "status", "phase", "ko_seeds")
+RUNTIME_KEYS = ("entrant_ids", "cup_id", "status", "phase", "ko_seeds",
+                "group_members")
 
 
 def structure(store):
