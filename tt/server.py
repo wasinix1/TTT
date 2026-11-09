@@ -218,6 +218,7 @@ class App:
             "id": c.id, "name": c.name, "blurb": c.blurb,
             "entry": c.entry,
             "registration": c.registration,
+            "full": s.cup_full(c),
             "format": f.kind if f else "",
             "format_line": self.FORMAT_LINE.get(f.kind, "") if f else "",
             "scoring": (f"Best of {sc.get('best_of', 3)} to {sc.get('points_to', 11)}"
@@ -323,7 +324,8 @@ class App:
                 "version": s.version, "role": role,
                 "event": {k: s.event.get(k, "") for k in ("name", "starts_at", "venue")},
                 "phase": s.phase(), "now": time.time(),
-                "cups": [{k: c[k] for k in ("id", "name", "entry", "registration")}
+                "cups": [{**{k: c[k] for k in ("id", "name", "entry", "registration", "max_entrants")},
+                          "taken": s.cup_taken(c["id"])}
                          for c in (s.cups[i].to_dict() for i in s.cup_order if i in s.cups)],
                 "registrations": [reg_dto(r) for r in regs],
                 "entrants": ents,
@@ -432,7 +434,10 @@ class App:
                 "event": s.event, "phase": s.phase(),
                 "now": time.time(),
                 "tables": tables,
-                "cups": [s.cups[c].to_dict() for c in s.cup_order if c in s.cups],
+                "cups": [{**s.cups[c].to_dict(),
+                          # how many have put their name down stays off the public side
+                          **({"taken": s.cup_taken(c)} if role in ("admin", "door") else {})}
+                         for c in s.cup_order if c in s.cups],
                 "board": boards,
                 "idle_tables": board.idle_reservations(s) if role == "admin" else [],
                 "recent": [self.match_dto(m) for m in recent],
@@ -518,6 +523,8 @@ class App:
     def op_add_player(self, p):
         s = self.store
         cup = self._resolve_cup(p.get("cup_id"))
+        if p.get("solo", True):
+            self._need_room(cup)
         pid = self._make_player(p["name"].strip(), float(p.get("strength", 5)))
         if p.get("solo", True):
             eid = s.new_id("E", s.entrants)
@@ -557,6 +564,7 @@ class App:
     def op_add_team(self, p):
         s = self.store
         cup = self._resolve_cup(p.get("cup_id"))
+        self._need_room(cup)
         pids = [self._make_player(name.strip(), float(strength))
                 for name, strength in p["members"]]
         eid = s.new_id("E", s.entrants)
@@ -567,7 +575,10 @@ class App:
 
     def op_update_entrant(self, p):
         if p.get("cup_id"):
-            self._resolve_cup(p["cup_id"])
+            cup = self._resolve_cup(p["cup_id"])
+            e = self.store.entrants.get(p.get("id") or "")
+            if e and e.cup_id != cup.id:
+                self._need_room(cup)
         self.store.append("entrant_update", p)
 
     def op_withdraw(self, p):
@@ -727,7 +738,38 @@ class App:
         s.append("cup_add", {"id": cid, "name": p.get("name") or "Cup"})
         return {"cup_id": cid}
 
+    @staticmethod
+    def _max_entrants(v):
+        """A cup's limit as the forms send it: blank or 0 is no limit."""
+        try:
+            n = int(v) if v not in (None, "") else 0
+        except (TypeError, ValueError):
+            n = -1
+        if n < 0:
+            raise ValueError("max entrants should be a whole number, or blank for no limit")
+        return n
+
+    def _need_room(self, cup, seeking=False):
+        """The console's and the door's way of hearing a cup is full: they
+        can do something about it, so say what."""
+        if cup and not self.store.cup_has_room(cup, seeking):
+            raise ValueError(f"{cup.name} is full at {cup.max_entrants} — take "
+                             "somebody off, or raise its limit in Setup")
+
+    def full_notice(self, cup):
+        """What somebody signing up hears when a cup is full, with how the
+        other cups taking entries stand — those that have a limit to stand
+        against. The one place the public side is told a count."""
+        s = self.store
+        others = [f"{c.name} {s.cup_taken(c.id)} von {c.max_entrants} belegt"
+                  for c in (s.cups[i] for i in s.cup_order if i in s.cups)
+                  if c.id != cup.id and c.max_entrants and c.registration == "open"]
+        return f"{cup.name} ist leider bereits voll belegt." + (
+            f" Andere Cups: {', '.join(others)}." if others else "")
+
     def op_update_cup(self, p):
+        if "max_entrants" in p:
+            p = dict(p, max_entrants=self._max_entrants(p["max_entrants"]))
         self.store.append("cup_update", p)
 
     def op_remove_cup(self, p):
@@ -960,6 +1002,7 @@ class App:
         s = self.store
         cups = p.get("cups") or []
         tables = p.get("tables") or []
+        limits = [self._max_entrants(c.get("max_entrants")) for c in cups]   # before anything is written
 
         # the wizard is authoritative over cups: it clears them and writes
         # the ones it was given, rather than merging into whatever was there
@@ -971,13 +1014,14 @@ class App:
         })
 
         cup_ids = []
-        for c in cups:
+        for c, limit in zip(cups, limits):
             cid = s.new_id("C", s.cups)
             s.append("cup_add", {
                 "id": cid, "name": (c.get("name") or "").strip() or "Cup",
                 "blurb": c.get("blurb", ""),
                 "entry": c.get("entry") or "single",
                 "registration": c.get("registration") or "closed",
+                "max_entrants": limit,
             })
             cup_ids.append(cid)
 
@@ -1050,6 +1094,7 @@ class App:
             raise ValueError("pick which cup")
         if cup.entry != "pair":
             raise ValueError("only a doubles cup has partners to look for")
+        self._need_room(cup, seeking=True)
         p = dict(p, kind="seeking")
         return self._take_registration(cup, p)
 
@@ -1086,6 +1131,11 @@ class App:
         if kind == "pair" and not distinct and tg_id is None \
                 and self._team_entered(cup.id, name, partner):
             return {"possible_duplicate": True, "cup": cup.name}
+
+        # after the question above: a partner entering a team that is already
+        # down should hear that, not that the cup has filled up since
+        if not s.cup_has_room(cup, kind == "seeking"):
+            raise ValueError(self.full_notice(cup))
 
         clamp = lambda v: max(1.0, min(10.0, float(v)))
         try:
@@ -1147,7 +1197,8 @@ class App:
             "event": s.event.get("name", ""),
             "can_change": before and r.status == "pending",
             "can_restore": before and r.status == "cancelled"
-                           and bool(cup) and cup.registration == "open",
+                           and bool(cup) and cup.registration == "open"
+                           and s.cup_has_room(cup, r.kind == "seeking"),
         }
 
     def op_reg_note(self, p):
@@ -1177,6 +1228,8 @@ class App:
             raise ValueError("Diese Anmeldung ist nicht abgemeldet.")
         if not cup or cup.registration != "open":
             raise ValueError("Für diese Kategorie ist die Anmeldung geschlossen.")
+        if not s.cup_has_room(cup, r.kind == "seeking"):
+            raise ValueError(self.full_notice(cup))
         s.append("registration_update", {"id": r.id, "status": "pending"})
         self._match_seekers(r.cup_id)
         return {}
@@ -1282,6 +1335,11 @@ class App:
 
         if not (cup and cup.entry == "pair" and kind != "pair"):   # doubles: no name check
             self._refuse_duplicate(kind, name, partner)
+
+        # somebody still on the list already holds their place; anyone else
+        # is taking a new one
+        if not (reg and reg.status == "pending" and cup and reg.cup_id == cup.id):
+            self._need_room(cup)
 
         ids = [self._make_player(name, strength, p.get("person_id")
                                  or (reg.person_id if reg else None))]
@@ -1418,6 +1476,7 @@ class App:
         if s.person_playing(who.id):
             raise ValueError(f"{who.name} is already in this event")
         cup = self._resolve_cup(p.get("cup_id"))     # before anything is written
+        self._need_room(cup)
         pid = self._make_player(who.name, p.get("strength", who.strength), who.id)
         eid = s.new_id("E", s.entrants)
         s.append("entrant_add", {"id": eid, "name": who.name, "player_ids": [pid],
@@ -1443,6 +1502,8 @@ class App:
                 raise ValueError("an entry is only ever waiting, taken off, a duplicate or cancelled")
             if reg and reg.status == "confirmed":
                 raise ValueError(f"{reg.name} is already checked in — undo the check-in instead")
+            if reg and p["status"] == "pending" and reg.status != "pending":
+                self._need_room(s.cups.get(reg.cup_id), reg.kind == "seeking")
         if "distinct" in p:
             p = dict(p, distinct=bool(p["distinct"]))
         s.append("registration_update", p)

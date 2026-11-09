@@ -110,7 +110,14 @@ created_seq
 entry: single | pair             # what the form asks for
 registration: open | closed
 format_id                        # where confirmations land
+max_entrants                     # places in the cup; 0 = no limit
 ```
+
+A limit counts everyone in the pool plus everyone still pending, a pair as one
+and two people looking for a partner as one. Pending entries already hold their
+place, so admitting them is never refused; a new sign-up, walk-in or put-back
+is. A full cup's sign-up error is the one thing that tells the public a count:
+how the other capped cups taking entries stand.
 
 `store.event` gains `starts_at`, `blurb`, `phase_pin`, and an `id` for the
 current span of the log.

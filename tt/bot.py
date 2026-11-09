@@ -725,6 +725,9 @@ class Conversation:
                 self.edit(uid, mid, "Schade! Du bist abgemeldet.",
                           [[button("Doch dabei", f"yu:{reg.id}")]])
                 return ""
+            cup = self.bot.app.store.cups.get(reg.cup_id)
+            if cup and not self.bot.app.store.cup_has_room(cup, reg.kind == "seeking"):
+                raise ValueError(self.bot.app.full_notice(cup))
             self.bot.system("update_registration", {"id": reg.id, "status": "pending"})
             self.edit(uid, mid, "👍 Wieder angemeldet — bis dann!")
             return ""
