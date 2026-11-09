@@ -1272,6 +1272,7 @@ function renderSheet() {
     door: tabDoor, event: tabEvent, chat: tabChat, links: tabLinks, more: tabMore,
   }[sheetTab] || tabEvent)();
   body.scrollTop = top;
+  pgSync();
 }
 
 /* What each page of Setup is for, in one line under its title. */
@@ -1387,12 +1388,121 @@ function openWizard() {
   wiz = {
     step: 0,
     name: '', venue: S.event.venue || '', blurb: S.event.blurb || '', starts_at: '',
+    announce: false,
     cups,
     tables: S.tables.length
       ? S.tables.map(t => ({ name: t.name, cup: S.cups.findIndex(c => c.id === t.cup_id) }))
       : [1, 2, 3].map(n => ({ name: 'Table ' + n, cup: -1 })),
   };
   setMode('setup');
+}
+
+/* ------------------------------------------------ the event's text
+
+   One field, written like a group-chat post. The server reads it
+   (tt/programme.py) and says what it understood; nothing here second-guesses
+   that, so the preview is what the page and the message will really be. */
+
+const PG_LIMIT = 3000;
+let pgMode = 'write', pgData = null, pgTimer = null, pgAsked = 0;
+
+const pgEditor = area => `<div class="field pg-field">
+    <div class="pg-bar"><label for="pg-text">Event text</label>
+      <div class="pg-seg">${[['write', 'Write'], ['web', 'Web'], ...(tgOn() ? [['telegram', 'Telegram']] : [])]
+        .map(([m, l]) => `<button type="button" data-act="pg-mode" data-m="${m}">${l}</button>`).join('')}</div></div>
+    ${area}
+    <div class="pg-out" id="pg-out" hidden></div>
+    <div class="pg-meta"><div class="pg-parts" id="pg-parts"></div><span id="pg-count"></span></div>
+    <p class="sub">Write it as for a group chat. A *bold line* starts a section, a short line
+      ending in a colon is a small heading, and lines starting with a time become the timetable.</p>
+    <p class="warn-in" id="pg-warn" hidden></p>
+  </div>`;
+
+function pgBody() {
+  const area = $('pg-text');
+  if (wiz) return {
+    text: area ? area.value : wiz.blurb, name: wiz.name, starts_at: wiz.starts_at, venue: wiz.venue,
+    cups: wiz.cups.map(c => ({ name: c.name, blurb: c.blurb, entry: c.entry,
+                               registration: c.registration, kind: c.kind || '' })),
+  };
+  const ev = S.event || {};
+  return {
+    text: area ? area.value : ev.blurb, name: ev.name, starts_at: ev.starts_at,
+    ends_at: ev.ends_at, venue: ev.venue,
+    cups: S.cups.map(c => ({ name: c.name, blurb: c.blurb, entry: c.entry, registration: c.registration,
+                             kind: (S.formats.find(f => f.id === c.format_id) || {}).kind || '' })),
+  };
+}
+
+// not api(): that redraws the whole console, and this runs as you type
+async function pgAsk() {
+  const ask = ++pgAsked;
+  try {
+    const r = await fetch('/api/action' + simq('?'), {
+      method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Key': TOKEN },
+      body: JSON.stringify({ op: 'event_text_preview', data: pgBody() }),
+    });
+    if (!r.ok) return;
+    const j = await r.json();
+    if (ask === pgAsked) { pgData = j; pgPaint(); }
+  } catch (e) { /* only a preview; the next keystroke asks again */ }
+}
+
+function pgQueue() { clearTimeout(pgTimer); pgTimer = setTimeout(pgAsk, 250); }
+
+// the server built this text and escaped everything in it
+const pgTelegram = t => !t ? '' : `<div class="pg-tg"><div class="pg-bubble">${t.text}</div>${
+  t.buttons.map(row => `<div class="pg-tg-row">${row.map(l => `<span>${esc(l)}</span>`).join('')}</div>`).join('')}</div>`;
+
+function pgPaint() {
+  const d = pgData || {}, area = $('pg-text'), out = $('pg-out'), warn = $('pg-warn');
+  if (area) {
+    const mode = pgMode === 'telegram' && !tgOn() ? 'write' : pgMode;
+    area.hidden = mode !== 'write';
+    out.hidden = mode === 'write';
+    if (mode === 'web') out.innerHTML = d.web ? `<div class="programme">${d.web}</div>` : '<p class="blank">Nothing written yet.</p>';
+    if (mode === 'telegram') out.innerHTML = pgTelegram(d.telegram);
+    document.querySelectorAll('[data-act="pg-mode"]').forEach(b => b.classList.toggle('on', b.dataset.m === mode));
+    $('pg-parts').innerHTML = (d.parts || []).map(p => `<span class="chip state">${esc(p)}</span>`).join('');
+    const n = area.value.length;
+    $('pg-count').textContent = `${n} / ${PG_LIMIT}`;
+    $('pg-count').classList.toggle('over', n > PG_LIMIT);
+  }
+  if (warn) {
+    const m = d.mismatch;
+    warn.hidden = !m;
+    if (m) warn.textContent = `The text says ${m.says}, but this event starts ${m.starts} Carried over from the last event?`;
+  }
+  const rv = $('pg-review');
+  if (rv) rv.innerHTML = pgTelegram(d.telegram);
+}
+
+function pgSync() {
+  if (!$('pg-text') && !$('pg-warn') && !$('pg-review')) return;
+  pgPaint();
+  pgAsk();
+}
+
+/* The round message, from the review step. Off until ticked: it goes to
+   everybody at once and cannot be called back. */
+const wizFollowers = () => (S.telegram && S.telegram.followers) || 0;
+function wizCantSend() {
+  if (!tgOn()) return 'no Telegram bot is connected.';
+  if (!wiz.starts_at || new Date(wiz.starts_at) <= new Date()) return 'the event needs a start time in the future.';
+  if (!wiz.cups.some(c => c.registration === 'open')) return 'no cup is taking entries yet.';
+  if (!wizFollowers()) return 'nobody follows the bot yet.';
+  return '';
+}
+const wizSends = () => !!wiz.announce && !wizCantSend();
+
+function wizRound() {
+  const cant = wizCantSend(), n = wizFollowers();
+  return `${sec('Telegram')}
+    <label class="pick"><input type="checkbox" data-w="announce"
+      ${wizSends() ? 'checked' : ''} ${cant ? 'disabled' : ''}> Send a round message on Telegram</label>
+    <p class="sub">${cant ? esc('Unavailable: ' + cant)
+      : `Goes to ${n} ${n === 1 ? 'follower' : 'followers'} as soon as the event is created. It can’t be recalled.`}</p>
+    ${wizSends() ? '<div id="pg-review"></div>' : ''}`;
 }
 
 function wizCarried() {
@@ -1407,6 +1517,7 @@ function renderWizard() {
   body.innerHTML = `<header class="page-head"><h1>New event</h1><p class="lede">Step ${wiz.step + 1} of ${WIZ_STEPS.length}. Nothing changes until you create it on the last step.</p></header>` +
     [wizEvent, wizCups, wizTables, wizReview][wiz.step]() + wizNav();
   body.scrollTop = top;
+  pgSync();
 }
 
 function wizNav() {
@@ -1415,7 +1526,8 @@ function wizNav() {
     <button class="ghost" data-act="wiz-cancel">Cancel</button>
     <span style="flex:1"></span>
     ${wiz.step ? `<button class="ghost" data-act="wiz-back">Back</button>` : ''}
-    ${last ? `<button class="danger" data-act="wiz-create">Create the event</button>`
+    ${last ? `<button class="danger" data-act="wiz-create">${wizSends()
+                ? `Create and send to ${wizFollowers()}` : 'Create the event'}</button>`
            : `<button class="primary" data-act="wiz-next">Next</button>`}
   </div>`;
 }
@@ -1432,10 +1544,9 @@ function wizEvent() {
     <div class="field"><label for="w-venue">Venue</label>
       <input id="w-venue" value="${esc(wiz.venue)}" data-w="venue"
              placeholder="Turnhalle, Hauptstraße 3"></div>
-    <div class="field"><label for="w-blurb">Blurb</label>
-      <textarea id="w-blurb" rows="2" data-w="blurb"
-        placeholder="Open to everyone, bats provided, first match at seven.">${esc(wiz.blurb)}</textarea></div>
-    ${why('Name and blurb are what the landing page shows. Until the start time the plain ' +
+    ${pgEditor(`<textarea id="pg-text" rows="14" data-w="blurb"
+        placeholder="Open to everyone, bats provided, first match at seven.">${esc(wiz.blurb)}</textarea>`)}
+    ${why('Name and text are what the landing page shows. Until the start time the plain ' +
           'URL is that page; at the start time it becomes the console on its own.')}
     ${wizCarried() ? `<p class="sub">Cups, tables and their settings on the next two steps
       are carried over from ${esc(S.event.name || 'the last event')} — change what moved,
@@ -1578,6 +1689,9 @@ function wizReview() {
         ? ', some reserved for a cup' : ', all shared'}.</span></div>
     </div>
 
+    <p class="warn-in" id="pg-warn" hidden></p>
+    ${wizRound()}
+
     ${sec('And clearing')}
     ${gone.length
       ? `<div class="warn-in">${esc(gone.join(', '))} — gone from the live state.</div>
@@ -1615,7 +1729,7 @@ function tabEvent() {
 
   const event = sblock('The event',
     'What the landing page shows, and when the URL turns into the console.',
-    why('Name and blurb are what the landing page shows. Until the start time the plain ' +
+    why('Name and text are what the landing page shows. Until the start time the plain ' +
         'URL is that page; at the start time it becomes the console on its own — no button ' +
         'to remember to press.',
         'Pin the phase to open the doors early, hold them, or put the landing page back up ' +
@@ -1635,9 +1749,8 @@ function tabEvent() {
         ${auto('ev-venue', 'event_meta', 'venue', ev.venue,
                'placeholder="Turnhalle, Hauptstraße 3"')}</div>
     </div>
-    <div class="field"><label for="ev-blurb">Blurb</label>
-      ${autoArea('ev-blurb', 'event_meta', 'blurb', ev.blurb, 'rows="2" ' +
-        'placeholder="Open to everyone, bats provided, first match at seven."')}</div>`);
+    ${pgEditor(autoArea('pg-text', 'event_meta', 'blurb', ev.blurb, 'rows="14" ' +
+        'placeholder="Open to everyone, bats provided, first match at seven."'))}`);
 
   const cups = sblock('Cups',
     'Each cup is one entry form and one draw. Confirmed people land in its draw.',
@@ -2588,7 +2701,7 @@ function tabChat() {
     ${why('Following is everyone who opened the bot and did not switch the news off. ' +
           'Tonight’s players and a cup reach whoever is playing and linked, news or not — ' +
           'that is the evening talking, not a newsletter.',
-          canAnnounce ? 'Announce sends the event itself — name, date, place and an entry button ' +
+          canAnnounce ? 'Announce sends the event itself — name, date, place, its text and an entry button ' +
             'per open cup — with your message on top, so entering is one tap from the announcement.' : '')}
 
     ${sec('Messages')}
@@ -2886,6 +2999,7 @@ function hopTo(ids, save) {
 }
 
 document.addEventListener('input', e => {
+  if (e.target.id === 'pg-text') pgQueue();
   if (e.target.id === 'nudge-q') { nudgeQ = e.target.value; drawNudgeList(); return; }
   if (e.target.id === 'recent-q') { recentQuery = e.target.value; renderRecent(); return; }
   const mg = e.target.dataset.mg;
@@ -2946,7 +3060,11 @@ function wizInput(e) {
   if (!wiz) return false;
   const val = e.target.type === 'checkbox' ? e.target.checked : e.target.value;
   const w = e.target.dataset.w;
-  if (w) { wiz[w] = val; return true; }
+  if (w) {
+    wiz[w] = val;
+    if (w === 'announce') renderSheet();
+    return true;
+  }
   const wc = e.target.dataset.wc;
   if (wc) {
     const [i, key] = wc.split('|');
@@ -3241,6 +3359,7 @@ document.addEventListener('click', async e => {
   if (a === 'wiz-back') { wiz.step = Math.max(0, wiz.step - 1); renderSheet(); return; }
   if (a === 'wiz-next') {
     if (wiz.step === 0 && !wiz.name.trim()) return toast('Give the event a name');
+    if (wiz.step === 0 && wiz.blurb.length > PG_LIMIT) return toast(`The event text is over ${PG_LIMIT} characters`);
     if (wiz.step === 1 && wiz.cups.some(c => !c.name.trim()))
       return toast('Every cup needs a name');
     wiz.step = Math.min(WIZ_STEPS.length - 1, wiz.step + 1);
@@ -3270,11 +3389,15 @@ document.addEventListener('click', async e => {
     renderSheet();
     return;
   }
+  if (a === 'pg-mode') { pgMode = b.dataset.m; pgPaint(); return; }
   if (a === 'wiz-rm-table') { wiz.tables.splice(+b.dataset.i, 1); renderSheet(); return; }
   if (a === 'wiz-create') {
-    if (!confirm('Create "' + wiz.name + '"? The current players, teams, formats and matches go.')) return;
+    const send = wizSends();
+    if (!confirm('Create "' + wiz.name + '"? The current players, teams, formats and matches go.'
+      + (send ? `\n\nThe round message goes to ${wizFollowers()} on Telegram straight away and can’t be recalled.` : ''))) return;
     const ok = await api('create_event', {
       name: wiz.name, venue: wiz.venue, blurb: wiz.blurb, starts_at: wiz.starts_at,
+      announce: send, url: location.origin + '/',
       cups: wiz.cups.map((c, i) => ({
         name: c.name, blurb: c.blurb, entry: c.entry, registration: c.registration,
         max_entrants: c.max_entrants,
@@ -3283,7 +3406,11 @@ document.addEventListener('click', async e => {
       })),
       tables: wiz.tables.map(t => ({ name: t.name, cup: t.cup })),
     });
-    if (ok) { wiz = null; sheetTab = 'event'; renderSheet(); toast('Event created'); }
+    if (ok) {
+      wiz = null; sheetTab = 'event'; renderSheet();
+      toast(ok.announce_error ? `Event created, but the round message did not go: ${ok.announce_error}`
+        : ok.announced ? `Event created — on its way to ${ok.announced}` : 'Event created');
+    }
     return;
   }
 
