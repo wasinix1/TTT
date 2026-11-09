@@ -468,6 +468,8 @@ function walkMsg(st) {
     return `<b>${esc(label(regNames(st.reg)))}</b> registered ${esc(when(st.reg.created_ts))}.
       ${card && !card.seeking ? `<button type="button" class="link" data-act="checkin" data-k="${esc(card.key)}">Check that in instead</button>` : ''}`;
   }
+  if (cup.max_entrants && cup.taken >= cup.max_entrants && !V.walk.seek)
+    return `<b>${esc(cup.name)}</b> is full at ${cup.max_entrants}. Take somebody off, or raise the limit in Setup.`;
   if (st.here) return `<b>${esc(label(st.names))}</b> ${st.here.players.length > 1 ? 'are' : 'is'} already here, in at ${esc(clock(st.here.added_ts))}.
     <button type="button" class="link" data-sel-ent="${st.here.id}">Show</button> Adding again enters them as “${esc(st.as)}”.`;
   const w = V.walk;
@@ -748,7 +750,8 @@ function render() {
   };
   const strip = !n ? '' : `<div class="strip${n === 1 ? ' one' : n > 4 ? ' many' : ''}" style="--n:${n}">${
     n > 1 ? tile('', 'Everyone', '', V.view === 'desk' && !V.cup, 'all') : ''}${
-    D.cups.map(c => tile(c.id, c.name, '', V.view === 'desk' && (V.cup === c.id || n === 1))).join('')}</div>`;
+    D.cups.map(c => tile(c.id, c.name, c.max_entrants ? `${c.taken} of ${c.max_entrants} places taken` : '',
+      V.view === 'desk' && (V.cup === c.id || n === 1))).join('')}</div>`;
   const top = `<div class="dtop">
       <label class="find"><input type="search" id="q" value="${esc(V.q)}" placeholder="Type a name…" autocomplete="off"
         aria-label="Find who is at the door"><span class="kbd">/</span></label>

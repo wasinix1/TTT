@@ -141,6 +141,7 @@ class Cup:
     entry: str = "single"              # single | pair — what the form asks for
     registration: str = "closed"       # open | closed
     format_id: Optional[str] = None    # where confirmations land
+    max_entrants: int = 0              # places in the cup; 0 = no limit
     # what players may do for themselves in this cup (tt/play.py). None is
     # "nobody said": no self check-in, no wait, and scores as the event's
     # old Telegram switch says, so a cup from before this keeps behaving
