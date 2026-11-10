@@ -142,6 +142,7 @@ class Cup:
     registration: str = "closed"       # open | closed
     format_id: Optional[str] = None    # where confirmations land
     max_entrants: int = 0              # places in the cup; 0 = no limit
+    self_checkin: bool = False         # players may check themselves in (docs/registration-desk.md)
 
     def to_dict(self):
         return asdict(self)

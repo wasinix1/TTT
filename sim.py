@@ -757,8 +757,9 @@ def test_self_checkin():
     code = app.checkin_code()
     app.act("admin", "set_phase", {"phase": "doors"})
     check(refused("public", "checkin", {"code": code, "token": tok}),
-          "nobody checks themselves in while it is switched off")
-    app.act("admin", "event_meta", {"self_checkin": True})
+          "nobody checks themselves in while no cup has it switched on")
+    app.act("admin", "update_cup", {"id": cup, "self_checkin": "on"})
+    check(s.cups[cup].self_checkin is True, "it is switched on per cup")
     check(refused("public", "checkin", {"code": "wrong", "token": tok}),
           "and never without the code from the poster")
     check(not app.state("public")["checkin_code"] and not app.state("referee")["checkin_code"]
@@ -798,7 +799,7 @@ def test_self_checkin():
     # open play takes people all night
     app2, d2 = fresh()
     cup2 = door_event(app2, kind="open_play")
-    app2.act("admin", "event_meta", {"self_checkin": True})
+    app2.act("admin", "update_cup", {"id": cup2, "self_checkin": "on"})
     app2.act("admin", "set_phase", {"phase": "live"})
     c2 = app2.checkin_code()
     app2.act("public", "checkin", {"code": c2, "cup_id": cup2, "name": "A"})
@@ -810,7 +811,7 @@ def test_self_checkin():
     # doubles: a walk-in looking for a partner waits, the next one completes the team
     app3, d3 = fresh()
     cup3 = door_event(app3, entry="pair", kind="open_play")
-    app3.act("admin", "event_meta", {"self_checkin": True})
+    app3.act("admin", "update_cup", {"id": cup3, "self_checkin": True})
     app3.act("admin", "set_phase", {"phase": "live"})
     c3 = app3.checkin_code()
     out = app3.act("public", "checkin", {"code": c3, "cup_id": cup3, "kind": "seeking", "name": "Kim"})
@@ -822,11 +823,31 @@ def test_self_checkin():
                                          "name": "Lea", "partner_name": "Ben"})
     check(len(app3.store.entrants) == 2, "a team walking in checks in together")
 
-    # a new event gets a new code; the switch is a habit and carries over
+    # only the cups that ask for it: a second cup without it stays at the desk
+    app4, d4 = fresh()
+    app4.act("admin", "create_event", {
+        "name": "Two cups", "starts_at": "2099-10-04T19:00",
+        "cups": [{"name": "Open", "kind": "open_play", "registration": "open", "self_checkin": True},
+                 {"name": "Cup", "kind": "swiss", "registration": "open", "config": {"rounds": 3}}],
+        "tables": [{"name": "T1", "cup": -1}]})
+    on, off = app4.store.cup_order
+    r = app4.act("public", "register", {"cup_id": off, "name": "Desk Dora"})["registration_id"]
+    app4.act("admin", "set_phase", {"phase": "doors"})
+    c4 = app4.checkin_code()
+    info = app4.act("public", "checkin_info", {"code": c4})
+    check([c["id"] for c in info["cups"]] == [on], "the check-in page offers only the cups that take it")
+    check(refused("public", "checkin", {"code": c4, "cup_id": off, "name": "Walk Wanda"})
+          and refused("public", "checkin", {"code": c4, "registration_id": r})
+          and not app4.act("public", "checkin_find", {"code": c4, "q": "dor"})["found"],
+          "a cup without it is checked in at the desk, walk-in or registered")
+    app4.act("admin", "update_cup", {"id": on, "self_checkin": "off"})
+    check(refused("public", "checkin_info", {"code": c4}), "switching the last one off closes the page")
+
+    # cups carry over to the next event with their switch; the code does not
     app.act("admin", "new_event", {"name": "November"})
-    check(app.checkin_code() != code and app.store.event["self_checkin"],
-          "a new event keeps the switch but not the code")
-    for x in (d, d2, d3):
+    check(app.checkin_code() != code and app.store.cups[cup].self_checkin,
+          "a new event keeps the cup's switch but not the code")
+    for x in (d, d2, d3, d4):
         shutil.rmtree(x)
 
 

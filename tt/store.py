@@ -34,12 +34,11 @@ BLANK_EVENT = {
     "ends_at": "",          # optional "HH:MM", shown as a range on the landing
     "phase_pin": "",        # admin override; "" = derive from the clock
     "player_scores": False, # players may enter results over Telegram, both sides agreeing
-    "self_checkin": False,  # players check themselves in from a QR code in the hall
 }
 
 # Event fields that are really the club's habits rather than one evening's,
 # so a new event keeps them — decided once, like the tables.
-CARRIED = ("player_scores", "self_checkin")
+CARRIED = ("player_scores",)
 
 
 class Store:
@@ -422,7 +421,8 @@ class Store:
             m.table = None
             m.started_ts = None
 
-    CUP_FIELDS = ("name", "blurb", "entry", "registration", "format_id", "max_entrants")
+    CUP_FIELDS = ("name", "blurb", "entry", "registration", "format_id", "max_entrants",
+                  "self_checkin")
 
     def _ev_cup_add(self, p, seq):
         c = Cup(id=p["id"], name=p.get("name") or "Cup")
@@ -440,6 +440,7 @@ class Store:
         for k in self.CUP_FIELDS:
             if k in p:
                 setattr(c, k, p[k] or (0 if k == "max_entrants"
+                                       else False if k == "self_checkin"
                                        else "" if k != "format_id" else None))
 
     def _ev_cup_remove(self, p, seq):

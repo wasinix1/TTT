@@ -245,10 +245,12 @@ plumbing stays whole.
 ## Self check-in
 
 An opt-in exception to rule 2 of `docs/events-and-registration.md` ("nothing
-public ever writes to live state"), for evenings that should run without
-somebody at the door. Off by default; switched on in the console under Links →
-Self check-in (`event.self_checkin`, carried to the next event like
-`player_scores`).
+public ever writes to live state"), for cups that should run without somebody
+at the door. It is a setting of the cup, not the event (`cup.self_checkin`,
+in the cup's card and in the wizard), and off unless a cup asks for it: an
+evening can let its open play check itself in while its knockout goes through
+the desk. Cups carry over to the next event, and the switch with them. Links →
+Self check-in has the poster while any cup has it on.
 
 **The venue code.** While it is on, a poster (`/print?mode=checkin`, admin or
 door key only) carries a QR code to `/checkin?v=<code>`. The code is what
@@ -271,6 +273,9 @@ cup's limit hold exactly as at the desk:
   once. A name already down in that cup uses that entry instead of a second.
   Somebody looking for a partner waits on the list until the next one checks
   in, and then the two of them go in together as a team.
+
+Only the cups that have it on are offered, found by name or accepted; for
+any other the page sends people to the desk.
 
 **When it stops.** A cup takes self check-ins until its draw starts. Open play
 is the exception (`SELF_CHECKIN_ALL_NIGHT`): it is the format meant to run with

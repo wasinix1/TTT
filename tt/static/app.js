@@ -1379,6 +1379,7 @@ function openWizard() {
       entry: c.entry || 'single',
       registration: c.registration || 'closed',
       max_entrants: c.max_entrants || '',
+      self_checkin: c.self_checkin ? 'on' : 'off',
       kind: f ? f.kind : 'swiss',
     };
   });
@@ -1583,6 +1584,11 @@ function wizCups() {
           <div class="field" style="max-width:120px"><label for="wc-max-${i}">Max entrants</label>
             <input id="wc-max-${i}" type="number" min="1" step="1" inputmode="numeric"
                    value="${esc(c.max_entrants)}" data-wc="${i}|max_entrants" placeholder="No limit"></div>
+          <div class="field" style="max-width:135px"><label for="wc-self-${i}">Self check-in</label>
+            <select id="wc-self-${i}" data-wc="${i}|self_checkin">
+              <option value="off" ${c.self_checkin !== 'on' ? 'selected' : ''}>Off</option>
+              <option value="on" ${c.self_checkin === 'on' ? 'selected' : ''}>On</option>
+            </select></div>
           ${wiz.cups.length > 1
             ? `<button class="ghost tiny" data-act="wiz-rm-cup" data-i="${i}">Remove</button>` : ''}
         </div>
@@ -1809,6 +1815,9 @@ function cupCard(c) {
       <div class="field" style="max-width:190px"><label for="cr-${c.id}">Sign-ups</label>
         ${pick('cr-' + c.id, 'update_cup:' + c.id, 'registration', c.registration || 'closed',
           [['open', 'Open'], ['closed', 'Closed']])}</div>
+      <div class="field" style="max-width:190px"><label for="cs-${c.id}">Self check-in</label>
+        ${pick('cs-' + c.id, 'update_cup:' + c.id, 'self_checkin', c.self_checkin ? 'on' : 'off',
+          [['off', 'Off — at the desk'], ['on', 'On — QR code in the hall']])}</div>
       <div class="field" style="max-width:130px"><label for="cm-${c.id}">Max entrants</label>
         ${auto('cm-' + c.id, 'update_cup:' + c.id, 'max_entrants', c.max_entrants || '',
                'type="number" min="1" step="1" inputmode="numeric" placeholder="No limit"')}</div>
@@ -2609,19 +2618,19 @@ function tabLinks() {
           'the link does the advertising on its own.')}
 
     ${sec('Self check-in')}
-    <label class="pick"><input type="checkbox" data-selfcheckin="1"
-      ${S.event.self_checkin ? 'checked' : ''}> Players can check themselves in with a QR code in the hall</label>
-    ${S.event.self_checkin ? `<div class="inline">
+    ${S.cups.some(c => c.self_checkin) ? `<p class="sub">On for ${esc(S.cups.filter(c => c.self_checkin).map(c => c.name).join(', '))}.</p>
+    <div class="inline">
       <a href="/print?mode=checkin&token=${encodeURIComponent(S.keys.admin || '')}&base=${encodeURIComponent(base + '/')}" target="_blank"
         ><button>Poster for self check-in</button></a>
       <span class="key">${base}/checkin?v=${esc(S.checkin_code || '')}</span>
-    </div>` : ''}
+    </div>` : `<p class="sub">Off for every cup. Switch it on per cup under Event → Cups.</p>`}
     ${why('Once the doors open, scanning the poster checks you in: one tap for an entry made ' +
           'on that phone, a name picked from who is expected, or a walk-in typed in. It goes ' +
           'through the same checks as the desk — no duplicate names, no more than the cup ' +
           'takes — and the desk shows who checked in themselves.',
           'A cup stops taking self check-ins once its draw starts, except open play, which ' +
-          'takes people all night. The code on the poster is fixed for this event and changes ' +
+          'takes people all night. Cups without it are checked in at the desk as usual. ' +
+          'The code on the poster is fixed for this event and changes ' +
           'with the next one, so keep it on the wall, not in a chat.')}
   </div>`;
 }
@@ -3202,10 +3211,6 @@ document.addEventListener('change', e => {
     api('event_meta', { auto_lend: e.target.checked });
     return;
   }
-  if (e.target.dataset.selfcheckin) {
-    api('event_meta', { self_checkin: e.target.checked });
-    return;
-  }
   if (e.target.dataset.tgscores) {
     api('event_meta', { player_scores: e.target.checked });
     return;
@@ -3427,6 +3432,7 @@ document.addEventListener('click', async e => {
       cups: wiz.cups.map((c, i) => ({
         name: c.name, blurb: c.blurb, entry: c.entry, registration: c.registration,
         max_entrants: c.max_entrants,
+        self_checkin: c.self_checkin === 'on',
         kind: c.kind || '',
         config: c.kind ? formatConfig('w' + i + '_', c.kind) : {},
       })),

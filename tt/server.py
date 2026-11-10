@@ -339,7 +339,7 @@ class App:
                 "people": [{"id": p.id, "name": p.name, "playing": bool(s.person_playing(p.id))}
                            for p in (s.people[i] for i in s.people_order if i in s.people)],
                 "activity": self.activity(40),
-                "self_checkin": bool(s.event.get("self_checkin")),
+                "self_checkin": bool(self.checkin_cups()),
                 "checkin_code": self.checkin_code(),
             }
 
@@ -782,6 +782,8 @@ class App:
             f" Andere Cups: {', '.join(others)}." if others else "")
 
     def op_update_cup(self, p):
+        if "self_checkin" in p:
+            p = dict(p, self_checkin=p["self_checkin"] in (True, 1, "on", "true"))
         if "max_entrants" in p:
             p = dict(p, max_entrants=self._max_entrants(p["max_entrants"]))
         self.store.append("cup_update", p)
@@ -1052,6 +1054,7 @@ class App:
                 "entry": c.get("entry") or "single",
                 "registration": c.get("registration") or "closed",
                 "max_entrants": limit,
+                "self_checkin": bool(c.get("self_checkin")),
             })
             cup_ids.append(cid)
 
@@ -1420,15 +1423,16 @@ class App:
 
     # ------------------------------------------------------- self check-in
     #
-    # An opt-in exception to "nothing public writes to live state": with
-    # event.self_checkin on, a QR code in the hall lets players check
+    # An opt-in exception to "nothing public writes to live state": for the
+    # cups that have self_checkin switched on, a QR code in the hall lets players check
     # themselves in, pre-registered or walking in. What stands in for the door
     # seeing them is the venue code on that poster — fixed for the event,
     # different for every event, so last month's photo of it lets nobody in.
     # Every check-in still goes through op_admit, with its duplicate refusal
     # and its room check, and the desk sees who did it themselves.
     #
-    # A cup takes self check-ins until its draw starts. Open play is the
+    # Off unless a cup asks for it. A cup that does takes self check-ins
+    # until its draw starts. Open play is the
     # exception: it is the format meant to run without anyone watching, and
     # people come and go all night.
 
@@ -1441,18 +1445,25 @@ class App:
 
     def _checkin_gate(self, p):
         s = self.store
-        if not s.event.get("self_checkin"):
+        if not self.checkin_cups():
             raise ValueError("Selbst einchecken ist gerade aus — melde dich bitte am Eingang.")
         if not secrets.compare_digest(str(p.get("code") or ""), self.checkin_code()):
             raise ValueError("Dieser Code gilt nicht für heute — scanne den Code im Saal.")
         if s.phase() not in CONSOLE_PHASES:
             raise ValueError("Einchecken geht erst, wenn die Türen offen sind.")
 
+    def checkin_cups(self):
+        """The cups that take self check-ins at all, in their order."""
+        s = self.store
+        return [s.cups[i] for i in s.cup_order if i in s.cups and s.cups[i].self_checkin]
+
     def _checkin_closed(self, cup):
         """Why nobody can check themselves into this cup right now, or ""."""
         f = self.store.formats.get(cup.format_id) if cup else None
         if not cup:
             return "Melde dich bitte am Eingang."
+        if not cup.self_checkin:
+            return f"Für {cup.name} checkst du bitte am Eingang ein."
         if not f or f.status == "setup":
             return ""
         if f.kind in self.SELF_CHECKIN_ALL_NIGHT and f.takes_new_entrants():
@@ -1477,7 +1488,7 @@ class App:
             "cups": [{"id": c.id, "name": c.name, "entry": c.entry,
                       "closed": self._checkin_closed(c),
                       "full": not s.cup_has_room(c)}
-                     for c in (s.cups[i] for i in s.cup_order if i in s.cups)],
+                     for c in self.checkin_cups()],
         }
 
     def op_checkin_find(self, p):
@@ -1492,9 +1503,10 @@ class App:
         hit = lambda n: any(w.startswith(q) for w in [s.name_key(n)] + s.name_key(n).split())
         out = []
         for r in (s.registrations[i] for i in s.registration_order if i in s.registrations):
-            if r.status != "pending" or not (hit(r.name) or (r.partner_name and hit(r.partner_name))):
-                continue
             cup = s.cups.get(r.cup_id)
+            if r.status != "pending" or not (cup and cup.self_checkin) \
+                    or not (hit(r.name) or (r.partner_name and hit(r.partner_name))):
+                continue
             out.append({"id": r.id, "name": r.name + (f" & {r.partner_name}" if r.partner_name else ""),
                         "cup": cup.name if cup else ""})
             if len(out) >= 8:
