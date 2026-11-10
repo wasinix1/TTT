@@ -155,6 +155,50 @@ def games_line(games):
     return " · ".join(f"{a}:{b}" for a, b in games)
 
 
+def sent_line(r):
+    """What the reporter is told once their score is waiting on the other
+    side — and, when nobody there can be asked, what happens instead."""
+    opp = esc(r.get("opponent") or "")
+    if r.get("reachable"):
+        tail = f"{opp} muss noch bestätigen."
+    else:
+        tail = f"{opp} ist nicht am Handy erreichbar."
+    if r.get("auto_min"):
+        tail += f" Es zählt in {r['auto_min']} Min, wenn niemand widerspricht."
+    elif not r.get("reachable"):
+        tail += " Bestätigen kann es die andere Seite auf ihrer Seite oder die Orga."
+    return "Danke! " + tail
+
+
+# What a question about a score turns into once it is settled, wherever.
+SETTLED = {"agreed": "✓ Bestätigt und eingetragen.",
+           "timed": "✓ Eingetragen — niemand hat widersprochen.",
+           "disputed": "Uneinig — tragt das Ergebnis bitte beide nochmal ein.",
+           "replaced": "Ersetzt durch eine neuere Meldung.",
+           "stale": "Erledigt — das Spiel ist schon eingetragen.",
+           "withdrawn": "Zurückgezogen — es kommt gleich eine neue Meldung.",
+           "dismissed": "Erledigt — die Orga hat entschieden.",
+           "settled": "Erledigt — die Orga hat das Ergebnis eingetragen."}
+
+
+def claim_question(app, m, c, side):
+    """The question a report puts to the other side, the way round they
+    played it."""
+    view = _mine(c["games"], side)
+    won = sum(1 for x, y in view if x > y)
+    if c.get("fix"):
+        return (f"<b>{esc(app.side_name(m, c['side']))}</b> meldet einen Fehler "
+                f"in eurem letzten Ergebnis:\n"
+                f"eingetragen {games_line(_mine(m.games, side))}, richtig wäre "
+                f"{games_line(view)} — {'du gewinnst' if won > len(view) - won else 'du verlierst'} "
+                f"{won}:{len(view) - won}\n\nStimmt das?")
+    t = app.store.tables.get(m.table)
+    return (f"<b>{esc(app.side_name(m, c['side']))}</b> meldet für "
+            f"{esc(table_de(t)) if t else 'euer Spiel'}:\n"
+            f"{games_line(view)} — {'du gewinnst' if won > len(view) - won else 'du verlierst'} "
+            f"{won}:{len(view) - won}\n\nStimmt das?")
+
+
 def _opponents(app, m, pid):
     s = app.store
     side = _side_of(m, pid)
@@ -402,7 +446,8 @@ class Conversation:
             # answer to a question from an hour ago
             self.wire.set_chat(uid, pending="")
         games = parse_score(text)
-        if games and self.store.event.get("player_scores"):
+        # whether their cup takes scores from players is play.claim's to say
+        if games:
             if self.on_score(uid, games):
                 return
         self.to_orga(uid, text)
@@ -998,195 +1043,73 @@ class Conversation:
 
     # -------------------------------------------------------------- scores
 
-    def _live_for(self, uid):
-        """The match this account is on a table in right now, and which side."""
-        s = self.store
-        me = self.who(uid)
-        if not me.person:
-            return None, None, None
-        pids = {p.id for p in s.players.values() if p.person_id == me.person.id}
-        for t in s.tables.values():
-            m = s.matches.get(t.match_id) if t.match_id else None
-            if m and m.status == "live" and pids & set(m.players()):
-                pid = next(iter(pids & set(m.players())))
-                return m, _side_of(m, pid), pid
-        return None, None, None
+    def _person(self, uid):
+        """The person this account plays as tonight, for tt/play.py."""
+        with self.store.lock:
+            me = self.who(uid)
+        return me.person.id if me.person else None
 
     def claim(self, uid, games_mine):
-        """A score from one side of a table, the writer's points first.
-        Shared by the chat and the Mini App; returns what came of it:
-
-          not_playing   they are on no table, so it was not a score
-          invalid       it does not decide the match
-          sent          the other side has been asked
-          agreed        the other side had said the same; it is written
-          disputed      the other side had said something else
-          no_opponent   nobody on the other side is on Telegram"""
-        s = self.store
-        with s.lock:
-            m, side, pid = self._live_for(uid)
-            if not m:
-                return {"status": "not_playing"}
-            games = _mine(games_mine, side)     # back to a/b
-            if not decide_winner(games, m.scoring):
-                return {"status": "invalid", "need": m.scoring.games_to_win(),
-                        "best_of": best_of(m)}
-            other = "b" if side == "a" else "a"
-            from .notify import reach_map
-            reach = reach_map(s, self.bot.ok_chats())
-            theirs = sorted({reach[p] for p in (m.side_b if side == "a" else m.side_a)
-                             if p in reach})
-            opp = self.app.side_name(m, other)
-            me_name = self.app.side_name(m, side)
-            t = s.tables.get(m.table)
-            match_id, qseq = m.id, m.queued_seq
-        for c in self.wire.claims_for(match_id, qseq):
-            if c["side"] != side:
-                if c["games"] == games:
-                    self._settle(c, "agreed")
-                    self._write(match_id, qseq, games)
-                    return {"status": "agreed"}
-                self._settle(c, "disputed")
-                self._disputed(t, [(opp, games_line(_mine(c["games"], c["side"]))),
-                                   (me_name, games_line(games_mine))])
-                self.say(c["chat_id"], "Eure Ergebnisse passen nicht zusammen — "
-                                       "bitte meldet euch beim Schiri.")
-                return {"status": "disputed"}
-            self._settle(c, "replaced")
-        if not theirs:
-            return {"status": "no_opponent", "opponent": opp}
-        cid = self.wire.add_claim(match_id, qseq, side, uid, games)
-        # shown the way round the reader played it: their points first
-        view = _mine(games, other)
-        mine_sets = sum(1 for x, y in view if x > y)
-        their_sets = len(view) - mine_sets
-        msgs = []
-        for c in theirs:
-            sent = self.say(c, f"<b>{esc(me_name)}</b> meldet für "
-                               f"{esc(table_de(t)) if t else 'euer Spiel'}:\n"
-                               f"{games_line(view)} — "
-                               f"{'du gewinnst' if mine_sets > their_sets else 'du verlierst'} "
-                               f"{mine_sets}:{their_sets}\n\nStimmt das?",
-                            [[button("✓ Stimmt", f"k+:{cid}"),
-                              button("✗ Stimmt nicht", f"k-:{cid}")]])
-            if sent:
-                msgs.append([c, sent["message_id"]])
-        self.wire.set_claim_msgs(cid, msgs)
-        self.bot.changed()
-        return {"status": "sent", "opponent": opp, "id": cid}
+        """A score from this account's side of a table. The work is
+        tt/play.py's, shared with the phone page; the other side is asked in
+        their chat by the planner (notify.plan), from the claim itself."""
+        pid = self._person(uid)
+        if not pid:
+            return {"status": "not_playing"}
+        return self.bot.system("score_claim", {"person_id": pid, "games": games_mine,
+                                               "via": "telegram"})
 
     def answer(self, uid, cid, yes):
         """The other side's answer to a score: gone, stale, agreed, disputed."""
-        c = self.wire.claim(cid)
-        if not c or c["state"] != "open":
+        pid = self._person(uid)
+        if not pid:
             return {"status": "gone"}
-        s = self.store
-        with s.lock:
-            m, side, pid = self._live_for(uid)
-            ok = bool(m) and m.id == c["match_id"] and side != c["side"] \
-                and m.queued_seq == c["qseq"]
-            t = s.tables.get(m.table) if m else None
-            names = (self.app.side_name(m, c["side"]),
-                     self.app.side_name(m, side)) if ok else ("", "")
-        if not ok:
-            self._settle(c, "stale")
-            return {"status": "stale"}
-        if yes:
-            self._settle(c, "agreed")
-            self._write(c["match_id"], c["qseq"], c["games"])
-            return {"status": "agreed"}
-        self._settle(c, "disputed")
-        self._disputed(t, [(names[0], games_line(_mine(c["games"], c["side"]))),
-                           (names[1], "that is wrong")])
-        self.say(c["chat_id"], f"{esc(names[1])} sagt, das Ergebnis stimmt nicht. "
-                               "Bitte meldet euch beim Schiri.")
-        return {"status": "disputed"}
-
-    SETTLED = {"agreed": "✓ Bestätigt und eingetragen.",
-               "disputed": "Uneinig — bitte meldet euch beim Schiri.",
-               "replaced": "Ersetzt durch eine neuere Meldung.",
-               "stale": "Erledigt — das Spiel ist schon eingetragen.",
-               "withdrawn": "Zurückgezogen — es kommt gleich eine neue Meldung."}
-
-    def _settle(self, c, state):
-        """Close a report, and turn every question it asked into its answer,
-        wherever it was answered — chat or app."""
-        self.wire.close_claim(c["id"], state)
-        for chat, mid in c.get("msgs") or []:
-            self.edit(chat, mid, self.SETTLED[state])
-        self.bot.changed()
+        return self.bot.system("score_answer", {"person_id": pid, "claim_id": cid,
+                                                "yes": bool(yes)})
 
     def pending_claims(self, uid):
         """Reports about this account's current match: ones it is asked to
-        confirm, and its own still waiting for the other side."""
-        s = self.store
-        with s.lock:
-            m, side, pid = self._live_for(uid)
-            if not m:
-                return [], []
-            names = {x: self.app.side_name(m, x) for x in ("a", "b")}
-            match_id, qseq = m.id, m.queued_seq
-        ask, mine = [], []
-        for c in self.wire.claims_for(match_id, qseq):
-            view = _mine(c["games"], side)
-            won = sum(1 for x, y in view if x > y)
-            item = {"id": c["id"], "by": names[c["side"]], "games": view,
-                    "sets": [won, len(view) - won]}
-            (mine if c["side"] == side else ask).append(item)
-        return ask, mine
+        confirm, and its own side's still waiting for the other side."""
+        from . import play
+        pid = self._person(uid)
+        if not pid:
+            return [], []
+        with self.store.lock:
+            return play.pending(self.app, pid)
 
     def on_score(self, uid, games_mine):
         """A score typed into the chat. False if it was not one after all
         (they are not playing), so it goes to the orga instead."""
         r = self.claim(uid, games_mine)
         st = r["status"]
-        if st == "not_playing":
+        if st in ("not_playing", "off"):
             return False
         if st == "invalid":
-            self.say(uid, f"Das ergibt noch keinen Sieg — bei {r['best_of']} braucht es "
+            self.say(uid, f"Das ergibt noch keinen Sieg — bei Best of {r['best_of']} braucht es "
                           f"{r['need']} Gewinnsätze. Zum Beispiel: 11:7 9:11 11:5")
         elif st == "disputed":
-            self.say(uid, "Eure Ergebnisse passen nicht zusammen — bitte meldet euch beim Schiri.")
-        elif st == "no_opponent":
-            self.say(uid, f"{esc(r['opponent'])} ist nicht über Telegram verbunden — "
-                          "bitte trag das Ergebnis beim Schiri ein.")
+            self.say(uid, "Eure Ergebnisse passen nicht zusammen — "
+                          "tragt es bitte beide nochmal ein.")
         elif st == "sent":
-            self.say(uid, f"Danke! {esc(r['opponent'])} muss noch bestätigen.",
-                     [[button("↩ Zurückziehen", f"kw:{r['id']}")]])
+            self.say(uid, sent_line(r), [[button("↩ Zurückziehen", f"kw:{r['id']}")]])
         return True
 
     def withdraw(self, uid, cid):
         """Take back a score you sent, before the other side has answered —
         a typo should not need a referee."""
-        c = self.wire.claim(cid)
-        if not c or c["chat_id"] != uid:
+        pid = self._person(uid)
+        if not pid:
             raise ValueError("Das ist nicht deine Meldung.")
-        if c["state"] != "open":
-            return False
-        self._settle(c, "withdrawn")
-        return True
+        try:
+            return self.bot.system("score_withdraw", {"person_id": pid,
+                                                      "claim_id": cid})["withdrawn"]
+        except ValueError:
+            raise ValueError("Das ist nicht deine Meldung.")
 
     def on_claim_answer(self, uid, cid, yes, mid):
         r = self.answer(uid, cid, yes)
-        if r["status"] == "gone":
+        if r["status"] in ("gone", "stale"):
             self.edit(uid, mid, "Erledigt.")
             return ""
-        return {"agreed": "Eingetragen ✓", "disputed": "Okay — ab zum Schiri"}.get(
+        return {"agreed": "Eingetragen ✓", "disputed": "Okay — tragt es nochmal ein"}.get(
             r["status"], "")
-
-    def _write(self, match_id, qseq, games):
-        s = self.store
-        with s.lock:
-            m = s.matches.get(match_id)
-            if not m or m.status != "live" or m.queued_seq != qseq:
-                return None
-            return self.bot.system("report", {"match_id": match_id, "games": games,
-                                              "by": "players"})
-
-    def _disputed(self, t, says):
-        """Tell the organisers a table needs a referee — in the console's
-        language, each side's score as they typed it."""
-        where = (t.name or f"Table {t.number}") if t else "A table"
-        self.wire.note(None, "sys", f"{where} needs a referee: " + ", ".join(
-            f"{name} says {what}" for name, what in says) + ".")
-        self.bot.changed()

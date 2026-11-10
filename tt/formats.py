@@ -516,6 +516,58 @@ class OpenPlay(Format):
     def mode(self):
         return self.config.get("mode", "pairs")   # pairs | singles | scramble
 
+    def by_results(self):
+        """Pair people who are doing about as well as each other tonight —
+        Swiss-like, read off the evening's own results rather than a
+        strength somebody typed in. On unless the organiser turned it off."""
+        return self.config.get("by_results", True) is not False
+
+    # How far apart two forms may be before it costs as much as the
+    # tolerance starts at: 5 makes a 1-0 and a 0-1 (forms .67 and .33) just
+    # too far for a first pick, and 3-0 against 0-3 something only a long
+    # wait allows. Priced in the same units as the rematch penalty.
+    RESULTS_SCALE = 5.0
+
+    def record(self, store):
+        """Every entrant's results in this draw, scramble included — a
+        scramble match has no entrant per side, only the four it drew, so
+        each of them is found on their side by their player."""
+        rec = defaultdict(lambda: dict(played=0, won=0, lost=0, gw=0, gl=0, pw=0, pl=0))
+        for m in store.matches.values():
+            if m.format_id != self.id or m.status != "done" or m.meta.get("bye"):
+                continue
+            gw = sum(1 for g in m.games if g[0] > g[1])
+            gl = sum(1 for g in m.games if g[1] > g[0])
+            pa = sum(g[0] for g in m.games)
+            pb = sum(g[1] for g in m.games)
+            if m.meta.get("queued"):
+                sides = {eid: ("a" if set(store.entrants[eid].player_ids) & set(m.side_a) else "b")
+                         for eid in m.meta["queued"] if eid in store.entrants}
+            else:
+                sides = {e: s for e, s in ((m.entrant_a, "a"), (m.entrant_b, "b")) if e}
+            for eid, side in sides.items():
+                r = rec[eid]
+                mine = side == "a"
+                r["played"] += 1
+                r["won" if m.winner == side else "lost"] += 1
+                r["gw"] += gw if mine else gl
+                r["gl"] += gl if mine else gw
+                r["pw"] += pa if mine else pb
+                r["pl"] += pb if mine else pa
+        return rec
+
+    @staticmethod
+    def form(r):
+        """How well somebody is doing tonight, 0 to 1. Matches won, pulled
+        toward the middle while there are few of them — 1-0 is not
+        unbeatable and nobody starts at the bottom — with a little of games
+        won, so a 1-2 loss reads closer than 0-2."""
+        if not r:
+            return 0.5
+        matches = (r["won"] + 1) / (r["played"] + 2)
+        games = (r["gw"] + 1) / (r["gw"] + r["gl"] + 2)
+        return 0.8 * matches + 0.2 * games
+
     def _entries(self, store, busy):
         out = [q for q in store.queue
                if q.format_id == self.id and store.entrant_available(q.entrant_id, busy)]
@@ -543,12 +595,16 @@ class OpenPlay(Format):
         w_rematch = (float(self.config.get("rematch_weight", 0.6))
                      if self.config.get("avoid_rematch", True) else 0.0)
         meets = store.meetings()
+        rec = self.record(store) if self.by_results() and not USE_STRENGTH else None
 
         def dist(a, b):
-            if not USE_STRENGTH:
-                return 0.0         # wait time and rematches decide on their own
-            return abs(store.entrant_strength(a.entrant_id)
-                       - store.entrant_strength(b.entrant_id))
+            if USE_STRENGTH:
+                return abs(store.entrant_strength(a.entrant_id)
+                           - store.entrant_strength(b.entrant_id))
+            if rec is not None:    # Swiss-like: how they are doing tonight
+                return self.RESULTS_SCALE * abs(self.form(rec.get(a.entrant_id))
+                                                - self.form(rec.get(b.entrant_id)))
+            return 0.0             # wait time and rematches decide on their own
 
         cap = float(self.config.get("max_gap", 4.0))
 
@@ -578,6 +634,7 @@ class OpenPlay(Format):
         anchor = pool[0]
         partners = store.partnerships()
         meets = store.meetings()
+        rec = self.record(store) if self.by_results() and not USE_STRENGTH else None
         tolerance = 99.0 if force else min(
             float(self.config.get("base_gap", 1.5)) +
             (anchor.passes // max(1, int(self.config.get("widen_every", 3)))) *
@@ -603,6 +660,13 @@ class OpenPlay(Format):
                             sa = eff(*[store.entrant_strength(q.entrant_id) for q in pa])
                             sb = eff(*[store.entrant_strength(q.entrant_id) for q in pb])
                             imb = abs(sa - sb)
+                        elif rec is not None:
+                            # two teams doing as well as each other tonight:
+                            # somebody on a run is partnered with somebody
+                            # who is not, rather than the two of them together
+                            fa = sum(self.form(rec.get(q.entrant_id)) for q in pa) / 2
+                            fb = sum(self.form(rec.get(q.entrant_id)) for q in pb) / 2
+                            imb = self.RESULTS_SCALE * abs(fa - fb)
                         rep = 0.0
                         for p in (pa, pb):
                             ids = frozenset(
@@ -634,9 +698,14 @@ class OpenPlay(Format):
         ), entrants=drawn)
 
     def standings(self, store):
-        rec = _record(store, self.id)
+        rec = self.record(store)
         ids = sorted(rec.keys(), key=lambda e: store.entrant_name(e))
-        return [{"group": "Open play", "rows": _table(store, rec, ids)}] if ids else []
+        if not ids:
+            return []
+        # a plain table — wins, then games, then points — for whoever wants
+        # to be on top of it. The form pairing uses stays the pairing's own:
+        # it is a tool for balanced matches, not a score to show anybody
+        return [{"group": "Open play", "rows": _table(store, rec, ids)}]
 
     def is_complete(self, store):
         return False

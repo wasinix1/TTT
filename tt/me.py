@@ -98,7 +98,9 @@ def view(bot, uid):
                    "known": bool(me.person),
                    "news": bool(chat.get("news", 1)),
                    "linked": bool(me.person) or any(r.tg_id == uid for r in me.regs)},
-            "scores": bool(ev.get("player_scores")),
+            # what their match on a table lets them do (Cup rules)
+            "scores": False,
+            "auto_min": 0,
             "entries": [],
             "open": [],
             "tonight": [],
@@ -149,6 +151,16 @@ def view(bot, uid):
         out["matches"].sort(key=lambda m: -m["seq"])
         if phase == "done":
             out["places"] = [p for p in (_place(app, e) for e in me.ents) if p]
+
+        if me.person:
+            from .play import live_match, rules_for
+            out["rules"] = rules_for(s, me.person.id)
+            from .play import fix_view
+            out["fixable"] = fix_view(app, me.person.id)
+            m, _ = live_match(s, me.person.id)
+            if m:
+                out["scores"] = bool(s.match_rule(m, "player_scores"))
+                out["auto_min"] = int(s.match_rule(m, "score_auto_min") or 0)
 
         mine_ids = {p.id for p in s.players.values()
                     if me.person and p.person_id == me.person.id}
@@ -276,20 +288,44 @@ def act(bot, user, op, d):
         st = r["status"]
         if st == "not_playing":
             raise ValueError("Gerade läuft kein Spiel von dir.")
+        if st == "off":
+            raise ValueError("Hier trägt die Orga die Ergebnisse ein.")
         if st == "invalid":
             raise ValueError(f"Das ergibt noch keinen Sieg — {r['need']} Gewinnsätze braucht es.")
-        if st == "no_opponent":
-            raise ValueError(f"{r['opponent']} ist nicht über Telegram verbunden — "
-                             "bitte beim Schiri eintragen.")
-        toast = {"sent": f"Gesendet — {r.get('opponent', '')} bestätigt",
+        toast = {"sent": f"Gesendet — {r.get('opponent', '')} bestätigt"
+                         if r.get("reachable") else
+                         f"Gesendet — zählt in {r.get('auto_min')} Min" if r.get("auto_min")
+                         else "Gesendet — wartet auf Bestätigung",
                  "agreed": "Eingetragen ✓",
-                 "disputed": "Passt nicht zusammen — ab zum Schiri"}[st]
+                 "disputed": "Passt nicht zusammen — tragt es nochmal ein"}[st]
+    elif op == "fix":
+        pid = c._person(uid)
+        if not pid:
+            raise ValueError("Das kannst nur du selbst korrigieren.")
+        try:
+            games = [[int(a), int(b)] for a, b in d.get("games") or []]
+        except (TypeError, ValueError):
+            raise ValueError("Das sind keine Punkte.")
+        r = bot.system("score_fix", {"person_id": pid, "via": "telegram",
+                                     "match_id": d.get("match_id"), "games": games})
+        if r["status"] == "invalid":
+            raise ValueError(f"Das ergibt noch keinen Sieg — {r['need']} Gewinnsätze braucht es.")
+        toast = {"same": "So ist es schon eingetragen",
+                 "sent": f"Korrektur gesendet — {r.get('opponent', '')} bestätigt",
+                 "agreed": "Korrigiert ✓",
+                 "disputed": "Passt nicht zusammen — sag der Orga Bescheid"}[r["status"]]
+    elif op == "no_show":
+        pid = c._person(uid)
+        if not pid:
+            raise ValueError("Gerade läuft kein Spiel von dir.")
+        r = bot.system("no_show", {"person_id": pid})
+        toast = "Tisch frei — " + (", ".join(r["rested"]) or "die anderen") + " pausiert"
     elif op == "withdraw":
         toast = ("Zurückgezogen" if c.withdraw(uid, int(d.get("id") or 0))
                  else "Schon erledigt")
     elif op == "confirm":
         r = c.answer(uid, int(d.get("id") or 0), bool(d.get("yes")))
-        toast = {"agreed": "Eingetragen ✓", "disputed": "Okay — ab zum Schiri",
+        toast = {"agreed": "Eingetragen ✓", "disputed": "Okay — tragt es nochmal ein",
                  "stale": "Schon eingetragen", "gone": "Schon erledigt"}[r["status"]]
     elif op == "message":
         text = str(d.get("text") or "").strip()[:2000]

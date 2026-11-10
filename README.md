@@ -100,6 +100,33 @@ instead, which is what a tournament desk would call out anyway.
 
 ## How the pairing works
 
+**With strength parked (now): tonight's results.** Open play pairs people
+who are doing about as well as each other this evening, like a Swiss. It's
+a format setting, *Balanced matchmaking*, on by default; off pairs purely
+on wait time and rematches. Players only ever hear "balanced matches". The
+form below stays inside the pairing, and the standings remain a plain
+table of wins for whoever wants to be top of it.
+
+How well somebody is doing is their *form*, from 0 to 1. It is mostly
+matches won, pulled toward the middle while there are few of them, so
+1–0 isn't unbeatable and nobody starts at the bottom. A little of it is
+games won, so a 1–2 loss counts as closer than 0–2. Two people's forms
+apart, times 5, is their distance, priced in the same units as the rematch
+penalty and the waiting tolerance below. So a 1–0 and a 0–1 are just too
+far apart for a first choice, and 3–0 against 0–3 only happens after a
+long wait. Scramble doubles balances the two teams' average form, which
+partners somebody on a run with somebody who isn't.
+
+The first round or two are as good as random, because nobody has results
+yet; after that the field sorts itself. On twelve players of mixed
+ability over two tables, the average skill gap in the second half of the
+evening drops from about 4.1 to about 3.0 (`sim.py`). Everything else
+below — anchoring on the longest waiter, the widening tolerance, avoiding
+rematches, never leaving a table idle — works as before, so nobody waits
+all night for a close match.
+
+**With strength on:** what follows.
+
 Longest waiter anchors, then takes the best available opponent within a
 strength tolerance. Not a global optimum: minimum-weight matching over the
 whole queue will starve an outlier all evening because the optimum keeps
@@ -202,13 +229,29 @@ phones join in:
   what players write back in Setup → Chat.
 - **Players entering scores**, if you switch it on: one side types it, the
   other confirms, and only then is it written. Disagreements show up in Chat
-  as a table that needs a referee.
+  as a table that needs a referee. The same reports work from the web phone
+  page — see below.
 
 Identity is the part that matters. A Telegram account is attached to a
 player only by something the door saw happen — confirming an entry made from
 that account, or the player scanning the code on their row — never by name.
 The server long-polls Telegram, so there is no webhook and nothing to open
 on the server. All of it is in [docs/telegram.md](docs/telegram.md).
+
+## A night nobody referees
+
+Open play can run itself. Under Setup → Event → *Players on their own*,
+one row per cup, people check themselves in from the phone page, take breaks and go home
+from it, and enter their own scores. The other side confirms on their phone
+or in Telegram, or, if you set a wait, the score counts once nobody has
+contradicted it in that time. Somebody who never came to the table can be
+flagged by whoever did, and the table moves on. The console and the wall
+point out a report waiting for an answer, two that disagree, and a table
+running so long its result was probably forgotten. Phones can turn on calls (Web
+Push, written out in the standard library, nothing to install), and the
+page and the wall tell players what to do at each step. It is trust, not proof,
+the same as giving the desk a name. All of it is in
+[docs/self-run.md](docs/self-run.md).
 
 ## Hosting
 
@@ -273,7 +316,8 @@ not be buffered or updates arrive in batches. `deploy/Caddyfile` sets
 
 **Strength is parked for now.** It is still stored, but the console hides it
 (`SHOW_STRENGTH` in `tt/static/app.js`) and nothing pairs, seeds or draws on it
-(`USE_STRENGTH` in `tt/formats.py`): open play pairs on wait time and rematches,
+(`USE_STRENGTH` in `tt/formats.py`): open play pairs on wait time, rematches
+and — Swiss-like — how people are doing tonight (below),
 groups, knockouts and Swiss round one are drawn at random. Flip both to bring it
 back. The strength sections of this README describe it as it works when on.
 
