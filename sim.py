@@ -737,6 +737,99 @@ def test_duplicates_are_grouped_never_lost():
     shutil.rmtree(d)
 
 
+def test_self_checkin():
+    print("\n[self check-in]")
+    app, d = fresh()
+    s = app.store
+
+    def refused(role, op, data):
+        try:
+            app.act(role, op, data)
+        except (ValueError, PermissionError):
+            return True
+        return False
+
+    cup = door_event(app)
+    rid = app.act("public", "register", {"cup_id": cup, "name": "Jana Berger"})["registration_id"]
+    tok = s.registrations[rid].token
+    r2 = app.act("public", "register", {"cup_id": cup, "name": "Tobias Wendt"})["registration_id"]
+    app.act("public", "register", {"cup_id": cup, "name": "Mira Scholz"})
+    code = app.checkin_code()
+    app.act("admin", "set_phase", {"phase": "doors"})
+    check(refused("public", "checkin", {"code": code, "token": tok}),
+          "nobody checks themselves in while it is switched off")
+    app.act("admin", "event_meta", {"self_checkin": True})
+    check(refused("public", "checkin", {"code": "wrong", "token": tok}),
+          "and never without the code from the poster")
+    check(not app.state("public")["checkin_code"] and not app.state("referee")["checkin_code"]
+          and app.state("door")["checkin_code"] == code,
+          "the code is for the admin and the door, not in anybody else's payload")
+
+    out = app.act("public", "checkin", {"code": code, "token": tok})
+    check(s.registrations[rid].status == "confirmed" and out["name"] == "Jana Berger",
+          "a pre-registered phone checks itself in with its own entry")
+    check(app.act("public", "checkin", {"code": code, "token": tok}).get("already"),
+          "doing it twice only says so")
+    check("Checked in themselves: Jana Berger · Cup" in [x["text"] for x in app.activity(10)],
+          "and the desk can see who did it themselves")
+
+    found = app.act("public", "checkin_find", {"code": code, "q": "wen"})["found"]
+    check([f["id"] for f in found] == [r2], "typing the start of a name finds who is expected")
+    check(not app.act("public", "checkin_find", {"code": code, "q": "jan"})["found"],
+          "and not who is already in")
+    app.act("public", "checkin", {"code": code, "registration_id": r2})
+    check(s.registrations[r2].status == "confirmed", "picking the name checks it in")
+
+    out = app.act("public", "checkin", {"code": code, "cup_id": cup, "name": "Ilya Marek"})
+    check(out["drawn"] and any(e.name == "Ilya Marek" for e in s.entrants.values()),
+          "a walk-in is put down and checked in in one go")
+    check(refused("public", "checkin", {"code": code, "cup_id": cup, "name": "Ilya  marek"}) is False
+          and sum(e.name == "Ilya Marek" for e in s.entrants.values()) == 1,
+          "typing the same name again finds them rather than adding a second")
+    n = len(s.registrations)
+    app.act("public", "checkin", {"code": code, "cup_id": cup, "name": "mira scholz"})
+    check(len(s.registrations) == n and any(e.name == "Mira Scholz" for e in s.entrants.values()),
+          "a registered name typed as a walk-in uses their entry")
+
+    app.act("admin", "start_format", {"id": s.cups[cup].format_id})
+    check(refused("public", "checkin", {"code": code, "cup_id": cup, "name": "Late Larry"}),
+          "a Swiss stops taking self check-ins once its draw starts")
+
+    # open play takes people all night
+    app2, d2 = fresh()
+    cup2 = door_event(app2, kind="open_play")
+    app2.act("admin", "event_meta", {"self_checkin": True})
+    app2.act("admin", "set_phase", {"phase": "live"})
+    c2 = app2.checkin_code()
+    app2.act("public", "checkin", {"code": c2, "cup_id": cup2, "name": "A"})
+    app2.act("public", "checkin", {"code": c2, "cup_id": cup2, "name": "B"})
+    app2.act("admin", "start_format", {"id": app2.store.cups[cup2].format_id})
+    out = app2.act("public", "checkin", {"code": c2, "cup_id": cup2, "name": "Late Larry"})
+    check(out["drawn"], "open play keeps taking self check-ins after it starts")
+
+    # doubles: a walk-in looking for a partner waits, the next one completes the team
+    app3, d3 = fresh()
+    cup3 = door_event(app3, entry="pair", kind="open_play")
+    app3.act("admin", "event_meta", {"self_checkin": True})
+    app3.act("admin", "set_phase", {"phase": "live"})
+    c3 = app3.checkin_code()
+    out = app3.act("public", "checkin", {"code": c3, "cup_id": cup3, "kind": "seeking", "name": "Kim"})
+    check(out.get("waiting"), "somebody looking for a partner waits for one")
+    out = app3.act("public", "checkin", {"code": c3, "cup_id": cup3, "kind": "seeking", "name": "Ole"})
+    check(set(out["name"].split(" / ")) == {"Kim", "Ole"} and len(app3.store.entrants) == 1,
+          "and the next one checks the two of them in as a team")
+    out = app3.act("public", "checkin", {"code": c3, "cup_id": cup3, "kind": "pair",
+                                         "name": "Lea", "partner_name": "Ben"})
+    check(len(app3.store.entrants) == 2, "a team walking in checks in together")
+
+    # a new event gets a new code; the switch is a habit and carries over
+    app.act("admin", "new_event", {"name": "November"})
+    check(app.checkin_code() != code and app.store.event["self_checkin"],
+          "a new event keeps the switch but not the code")
+    for x in (d, d2, d3):
+        shutil.rmtree(x)
+
+
 def test_the_form_asks_before_a_team_registers_twice():
     print("\n[public form: a team sent twice]")
     app, d = fresh()
@@ -2900,6 +2993,7 @@ if __name__ == "__main__":
     test_the_door()
     test_the_door_pairs()
     test_the_door_key()
+    test_self_checkin()
     test_the_desk_payload()
     test_the_desk_actions_and_their_undo()
     test_duplicates_are_grouped_never_lost()

@@ -88,7 +88,7 @@ a{color:inherit}
 .strip .bar2{height:4px;border-radius:2px;background:rgba(27,27,27,.1);overflow:hidden}
 .strip .bar2 i{display:block;height:100%;border-radius:2px;background:var(--ink);transition:width .6s var(--ease)}
 .strip .e{font-size:11.5px;color:var(--ink-2)}
-.dirl{display:flex;justify-content:flex-end;margin-top:10px}
+.dirl{display:flex;justify-content:flex-end;gap:18px;flex-wrap:wrap;margin-top:10px}
 .dirback{padding-bottom:12px}
 
 /* ---- the desk: the list, and the side */

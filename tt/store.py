@@ -34,11 +34,12 @@ BLANK_EVENT = {
     "ends_at": "",          # optional "HH:MM", shown as a range on the landing
     "phase_pin": "",        # admin override; "" = derive from the clock
     "player_scores": False, # players may enter results over Telegram, both sides agreeing
+    "self_checkin": False,  # players check themselves in from a QR code in the hall
 }
 
 # Event fields that are really the club's habits rather than one evening's,
 # so a new event keeps them — decided once, like the tables.
-CARRIED = ("player_scores",)
+CARRIED = ("player_scores", "self_checkin")
 
 
 class Store:

@@ -2607,6 +2607,22 @@ function tabLinks() {
           'landing page before the event and the console once it starts.',
           'Pasting that URL into a chat shows the event name, date and blurb as a card, so ' +
           'the link does the advertising on its own.')}
+
+    ${sec('Self check-in')}
+    <label class="pick"><input type="checkbox" data-selfcheckin="1"
+      ${S.event.self_checkin ? 'checked' : ''}> Players can check themselves in with a QR code in the hall</label>
+    ${S.event.self_checkin ? `<div class="inline">
+      <a href="/print?mode=checkin&token=${encodeURIComponent(S.keys.admin || '')}&base=${encodeURIComponent(base + '/')}" target="_blank"
+        ><button>Poster for self check-in</button></a>
+      <span class="key">${base}/checkin?v=${esc(S.checkin_code || '')}</span>
+    </div>` : ''}
+    ${why('Once the doors open, scanning the poster checks you in: one tap for an entry made ' +
+          'on that phone, a name picked from who is expected, or a walk-in typed in. It goes ' +
+          'through the same checks as the desk — no duplicate names, no more than the cup ' +
+          'takes — and the desk shows who checked in themselves.',
+          'A cup stops taking self check-ins once its draw starts, except open play, which ' +
+          'takes people all night. The code on the poster is fixed for this event and changes ' +
+          'with the next one, so keep it on the wall, not in a chat.')}
   </div>`;
 }
 
@@ -3184,6 +3200,10 @@ document.addEventListener('change', e => {
   if (wizInput(e)) return;
   if (e.target.dataset.autolend) {
     api('event_meta', { auto_lend: e.target.checked });
+    return;
+  }
+  if (e.target.dataset.selfcheckin) {
+    api('event_meta', { self_checkin: e.target.checked });
     return;
   }
   if (e.target.dataset.tgscores) {

@@ -241,3 +241,43 @@ absent from every payload but their owner's.
 Parked, as everywhere (see `CLAUDE.md`). The desk neither shows nor asks for
 it; `admit` keeps sending the directory's or the default number so the
 plumbing stays whole.
+
+## Self check-in
+
+An opt-in exception to rule 2 of `docs/events-and-registration.md` ("nothing
+public ever writes to live state"), for evenings that should run without
+somebody at the door. Off by default; switched on in the console under Links →
+Self check-in (`event.self_checkin`, carried to the next event like
+`player_scores`).
+
+**The venue code.** While it is on, a poster (`/print?mode=checkin`, admin or
+door key only) carries a QR code to `/checkin?v=<code>`. The code is what
+stands in for the door having seen somebody: it is fixed for the event, so the
+poster can be printed once, and different for every event — an HMAC of the
+event id under the admin key, so it is never stored and last month's photo of
+it opens nothing. It is only in the admin's and the door's payloads. Nothing
+works before the doors open (phase `doors` or `live`).
+
+**Three ways in**, all ending in `op_admit`, so the duplicate refusal and the
+cup's limit hold exactly as at the desk:
+
+- the entry this phone made — the page reads the tokens the public site saved
+  and offers one tap per entry still expected;
+- a name picked from who is expected (`checkin_find`: the first letters of a
+  name, at least two, names only) — the same trust-by-name the live page
+  already extends to Telegram;
+- a walk-in: name, cup and, for doubles, a partner or "looking for a partner".
+  It writes the registration they would have made at home and checks it in at
+  once. A name already down in that cup uses that entry instead of a second.
+  Somebody looking for a partner waits on the list until the next one checks
+  in, and then the two of them go in together as a team.
+
+**When it stops.** A cup takes self check-ins until its draw starts. Open play
+is the exception (`SELF_CHECKIN_ALL_NIGHT`): it is the format meant to run with
+nobody watching, and people come and go all night. After that, the page sends
+people to the desk.
+
+**What the desk sees.** The log already records who wrote what, so the
+activity list says "Checked in themselves: …", and Undo check-in works as for
+anything else. No IP rate limit applies here: a hall's wifi puts every phone
+behind one address, and the code is the gate.
