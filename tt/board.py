@@ -127,6 +127,7 @@ def cup_board(store, cup_id, app):
                 "deferred": int(m.meta.get("deferred", 0)),
                 "blocked": not (store.entrant_available(m.entrant_a, busy)
                                 and store.entrant_available(m.entrant_b, busy)),
+                "elsewhere": app.elsewhere(m.entrant_a) + app.elsewhere(m.entrant_b),
             })
     # then whoever is waiting in a queue. The match they will make is shown
     # as a pairing, worked out by the very function that will seat them, so
@@ -145,7 +146,7 @@ def cup_board(store, cup_id, app):
                     "kind": "pairing", "id": f"{f.id}:{a}:{b}", "format_name": f.name,
                     "entrants": [a, b],
                     "a": store.entrant_name(a), "b": store.entrant_name(b),
-                    "label": f.name, "blocked": False,
+                    "label": f.name, "blocked": False, "elsewhere": [],
                 })
                 qs = [q for q in qs if q.entrant_id not in (a, b)]
         for q in qs:
@@ -155,6 +156,7 @@ def cup_board(store, cup_id, app):
                 "a": store.entrant_name(q.entrant_id), "b": None,
                 "label": f.name,
                 "blocked": not store.entrant_available(q.entrant_id, busy),
+                "elsewhere": app.elsewhere(q.entrant_id),
             })
 
     seat = 0                     # which match-slot this row is waiting for

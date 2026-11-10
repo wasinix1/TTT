@@ -72,6 +72,11 @@ async function api(op, data) {
   });
   const j = await r.json().catch(() => ({ error: 'bad response' }));
   if (!r.ok) { toast(j.error || 'That did not work'); return null; }
+  if (j.ask) {
+    // nothing was written: a question only the organiser can answer
+    const again = await answerAsk(op, data || {}, j);
+    return again ? api(op, again) : null;
+  }
   await poll(true);
   return j;
 }
@@ -721,6 +726,13 @@ function cupName(id) {
    marked Next in red; on any other, hovering shows what can be done with it
    — Seat now (to the front of the line) and Sit out. Whoever only watches
    sees Get ready, the players' word, and no actions. */
+/* Somebody in two cups who is on a table for the other one right now: said
+   on the row, rather than leaving it looking stuck (docs/player-identity.md). */
+function elsewhereChip(r) {
+  const x = (r.elsewhere || [])[0];
+  return x ? `<span class="chip" title="Called here once that match is over">${esc(nice(x.name))} playing in ${
+    esc(x.cup || 'another cup')} · T${x.table}</span>` : '';
+}
 function upTail(r) {
   // the front of the line is Next, as are any that will go on as soon as a
   // table frees (the board's on_deck); a pair still playing elsewhere is not
@@ -738,6 +750,7 @@ function upTail(r) {
   return `<span class="tail">
       ${r.kind === 'pairing' && !(canScore() && next) ? `<span class="chip" title="Worked out by the same rule that will seat them">next</span>` : ''}
       ${r.deferred > 0 ? `<span class="chip">put back</span>` : ''}
+      ${elsewhereChip(r)}
       ${canScore() ? (next ? '<span class="tag-next">Next</span>' : '') : r.on_deck ? '<span class="ready">Get ready</span>' : ''}
       ${acts ? `<span class="ac">${acts}</span>` : ''}
     </span>`;
@@ -2151,29 +2164,26 @@ const playerName = id => (S.players.find(p => p.id === id) || {}).name || '';
 const cupById = id => S.cups.find(c => c.id === id);
 const regById = id => (S.registrations || []).find(r => r.id === id);
 
-/* The mirror of the server's check (App._refuse_duplicate), so the door can
-   say so while you type instead of after you press the button. The server
-   is still the one that refuses.
+/* The mirror of the server's refusal, so the door can say so while you type
+   instead of after you press the button. The server is still the one that
+   refuses.
 
-   Singles: the name must be new tonight. Doubles: only the same two people
-   together are a duplicate — somebody can be in a singles cup and a doubles
-   cup, and can change partners. Pre-registrations are not checked; they
-   are allowed to overlap, and this is where the overlap is sorted out. */
+   Nobody plays one cup twice, so a name already in this cup has to be told
+   apart. The same name in another cup is not a clash: the server asks
+   whether it is the same person (docs/player-identity.md). Pre-registrations
+   are not checked; they are allowed to overlap, and this is where the
+   overlap is sorted out. */
 function dupMsg(cupId, kind, name, partner) {
   const cup = cupById(cupId);
-  if (!nameKey(name)) return '';
-  if (kind === 'pair') {
-    if (!nameKey(partner)) return '';
-    const want = [nameKey(name), nameKey(partner)].sort().join('|');
-    const hit = S.entrants.some(e => e.player_ids.length === 2 &&
-      e.player_ids.map(i => nameKey(playerName(i))).sort().join('|') === want);
-    return hit ? `${name.trim()} & ${partner.trim()} are already a team tonight.` : '';
+  const names = [name].concat(kind === 'pair' ? [partner] : []).filter(n => nameKey(n));
+  const where = cup ? cup.name : 'tonight';
+  for (const n of names) {
+    const hit = S.entrants.some(e => (e.cup_id || '') === (cupId || '') && e.status !== 'withdrawn'
+      && e.player_ids.some(i => nameKey(playerName(i)) === nameKey(n)));
+    if (hit) return `There is already a “${n.trim()}” in ${where} — add something to tell them ` +
+      `apart, like “${n.trim()} (blue shirt)”.`;
   }
-  if (cup && cup.entry === 'pair') return '';
-  const hit = S.entrants.some(e => e.player_ids.length === 1 &&
-    nameKey(playerName(e.player_ids[0])) === nameKey(name));
-  return hit ? `There is already a “${name.trim()}” tonight — add something to tell them ` +
-    `apart, like “${name.trim()} (blue shirt)”.` : '';
+  return '';
 }
 
 /* What the door will actually use, before anyone touches the box. Rendering
@@ -2432,7 +2442,7 @@ function memberRows(e) {
   if (players.length < 2) return '';
   const cols = SHOW_STRENGTH ? '1fr 60px auto' : '1fr auto';
   return players.map(p => `<div class="drow member" style="--cols:${cols}">
-      ${auto('pn-' + p.id, 'update_player:' + p.id, 'name', p.name,
+      ${auto('pn-' + p.id, 'update_player:' + p.id, 'name', p.full || p.name,
              'aria-label="Player name"')}
       ${SHOW_STRENGTH ? auto('ps-' + p.id, 'update_player:' + p.id, 'strength',
              p.strength, 'inputmode="decimal" aria-label="Strength"') : ''}
@@ -2449,7 +2459,7 @@ function personRow(e) {
   const cols = (SHOW_STRENGTH ? '1fr 60px ' : '1fr ') + (many ? '112px 130px auto' : '112px auto');
   return `<div class="entry"><div class="drow" style="--cols:${cols}"${
       e.resting || out ? ' data-dim="1"' : ''}>
-    ${solo ? auto('pn-' + solo.id, 'update_player:' + solo.id, 'name', solo.name)
+    ${solo ? auto('pn-' + solo.id, 'update_player:' + solo.id, 'name', solo.full || solo.name)
            : auto('en-' + e.id, 'update_entrant:' + e.id, 'name', e.name,
                   'aria-label="Team name"')}
     ${!SHOW_STRENGTH ? '' : solo

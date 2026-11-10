@@ -58,6 +58,16 @@ function remember(v) {
       allSaved().filter(x => x.token !== v.token).concat([v]).slice(-8)));
   } catch (e) { }
 }
+/* A link this phone opened rather than made — a partner's — joins the list
+   of links it knows, so its own sign-ups later carry it (prev), without
+   becoming "the entry this phone made". */
+function keep(v) {
+  v = { ...v, event: P && P.event_id || '' };
+  try {
+    localStorage.setItem('tt_regs', JSON.stringify(
+      allSaved().filter(x => x.token !== v.token).concat([v]).slice(-8)));
+  } catch (e) { }
+}
 function allSaved() {
   try { return (JSON.parse(localStorage.getItem('tt_regs') || '[]') || []).filter(x => x && x.token); }
   catch (e) { return []; }
@@ -205,6 +215,11 @@ function renderJoin() {
       ${draft.done.token ? `<a class="cta" href="/me/${esc(draft.done.token)}">Anmeldung ansehen</a>` : ''}
       ${tg ? `<a class="cta tg" href="${esc(tg)}" target="_blank" rel="noopener">Per Telegram Bescheid bekommen</a>
         <p class="tg-note">Wir schreiben dir, wenn du gleich dran bist und wenn dein Tisch frei ist.</p>` : ''}
+      ${draft.done.partner_token ? `<div class="linkbox">
+        <p>${esc(`Schick diesen Link an ${draft.done.partner}: dann wissen wir am Abend gleich, wer ${draft.done.partner} ist, und ${draft.done.partner} bekommt auch Bescheid, wenn ihr dran seid.`)}</p>
+        <div class="linkrow"><input readonly value="${esc(linkFor(draft.done.partner_token))}" aria-label="Link für deine:n Partner:in"></div>
+        ${draft.done.partner_telegram ? `<p><a href="${esc(draft.done.partner_telegram)}" target="_blank" rel="noopener">Oder als Telegram-Link →</a></p>` : ''}
+      </div>` : ''}
       <button class="cta ghost" data-act="again">Noch jemanden anmelden</button>
       ${backLink()}`, open);
     return;
@@ -218,8 +233,8 @@ function renderJoin() {
   box.innerHTML = joinShell(`<div class="jform">
     ${here.length ? `<div class="mine"><span>Auf diesem Handy angemeldet:</span>${here.map(x =>
       `<a href="/me/${esc(x.token)}">${esc(x.name)}${x.cup ? ` · ${esc(x.cup)}` : ''} →</a>`).join('')}</div>` : ''}
-    <label class="sr" for="j-name">Name</label>
-    <input id="j-name" value="${esc(draft.name)}" data-j="name" placeholder="Name"
+    <label class="sr" for="j-name">Vor- und Nachname</label>
+    <input id="j-name" value="${esc(draft.name)}" data-j="name" placeholder="Vor- und Nachname"
            autocomplete="name" autocapitalize="words" enterkeyhint="next">
 
     ${open.length > 1 ? `<label class="sr" for="j-cup">Kategorie</label>
@@ -235,9 +250,9 @@ function renderJoin() {
       </div>` : ''}
 
     ${pair && draft.kind === 'pair' ? `
-      <label class="sr" for="j-pname">Teampartner:in</label>
+      <label class="sr" for="j-pname">Partner:in, Vor- und Nachname</label>
       <input id="j-pname" class="partner" value="${esc(draft.partner_name)}" data-j="partner_name"
-             placeholder="Teampartner:in" autocomplete="off" autocapitalize="words">
+             placeholder="Partner:in, Vor- und Nachname" autocomplete="off" autocapitalize="words">
       <label class="sr" for="j-team">Teamname</label>
       <input id="j-team" class="partner" value="${esc(draft.team_name)}" data-j="team_name"
              placeholder="Teamname" autocomplete="off">
@@ -263,20 +278,32 @@ function renderJoin() {
 async function send(distinct) {
   if (sending) return;
   if (!draft.name.trim()) { error = 'Wir brauchen einen Namen.'; return renderJoin(); }
+  // the surname is how the evening tells two of the same name apart; it
+  // stays with the organisers, the wall shows the first name
+  const whole = n => n.trim().split(/\s+/).length > 1;
+  if (!whole(draft.name) || (draft.kind === 'pair' && draft.partner_name.trim() && !whole(draft.partner_name))) {
+    error = 'Bitte Vor- und Nachnamen — öffentlich zeigen wir nur den Vornamen.';
+    return renderJoin();
+  }
   sending = true; error = ''; renderJoin();
   const team = draft.kind === 'pair' && !!draft.partner_name.trim();
   const who = team ? `${draft.name.trim()} & ${draft.partner_name.trim()}` : draft.name.trim();
   try {
     const r = await fetch('/api/action', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ op: 'register', data: { ...draft, distinct: !!distinct } }),
+      // the links this phone already has: one under the same name is the same
+      // person, so the door does not have to ask (docs/player-identity.md)
+      body: JSON.stringify({ op: 'register', data: { ...draft, distinct: !!distinct,
+                                                     prev: saved().map(x => x.token) } }),
     });
     const j = await r.json().catch(() => ({ error: 'Da ist etwas schiefgegangen.' }));
     if (!r.ok) { error = j.error || 'Da ist etwas schiefgegangen.'; }
     else if (j.possible_duplicate) { twice = { names: who, cup: j.cup }; }
     else {
       twice = null;
-      draft.done = { name: who, cup: j.cup, team, token: j.token, telegram: j.telegram || '' };
+      draft.done = { name: who, cup: j.cup, team, token: j.token, telegram: j.telegram || '',
+                     partner: team ? draft.partner_name.trim() : '',
+                     partner_token: j.partner_token || '', partner_telegram: j.partner_telegram || '' };
       remember({ id: j.registration_id, name: who, cup: j.cup, token: j.token, telegram: j.telegram || '' });
     }
   } catch (e) {
@@ -309,7 +336,10 @@ async function meCall(op, extra) {
 }
 
 async function meLoad() {
-  try { me = await meCall('reg_view'); meError = ''; }
+  try {
+    me = await meCall('reg_view'); meError = '';
+    if (me.role === 'partner') keep({ token: ME, name: me.name, cup: me.cup });
+  }
   catch (e) { meError = e.message; }
   renderJoin();
 }

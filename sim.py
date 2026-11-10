@@ -528,7 +528,7 @@ def test_the_door_key():
 
     rid = app.act("public", "register", {"cup_id": cup, "name": "Jana Berger"})["registration_id"]
     eid = app.act("door", "admit", {"registration_id": rid})["entrant_id"]
-    check(s.entrants[eid].name == "Jana Berger", "the door can check somebody in")
+    check(s.entrants[eid].name == "Jana", "the door can check somebody in")
     app.act("door", "admit", {"cup_id": cup, "name": "Ilya Marek"})
     app.act("door", "set_resting", {"entrant_id": eid, "resting": True})
     check(eid in s.opted_out, "and sit them out")
@@ -708,8 +708,17 @@ def test_duplicates_are_grouped_never_lost():
 
     app.act("door", "update_registration", {"id": a, "distinct": 1})
     check(s.registrations[a].distinct is True, "different team: it is kept apart from the other")
-    app.act("door", "admit", {"registration_id": a, "name": "Lea Hoffmann (2)"})
-    check(len(s.entrants) == 2, "and comes in as a second team under a name that tells them apart")
+    # both of them, now: one name is one person tonight, and nobody plays in
+    # one cup twice (docs/player-identity.md)
+    try:
+        app.act("door", "admit", {"registration_id": a, "name": "Lea Hoffmann (2)"})
+        half = False
+    except ValueError:
+        half = True
+    check(half, "a different team that shares one name is asked to tell that one apart too")
+    app.act("door", "admit", {"registration_id": a, "name": "Lea Hoffmann (2)",
+                              "partner_name": "Ben Krüger (2)"})
+    check(len(s.entrants) == 2, "and comes in as a second team under names that tell them apart")
 
     def refused(data):
         try:
@@ -719,7 +728,7 @@ def test_duplicates_are_grouped_never_lost():
         return False
     check(refused({"id": a, "status": "pending"}),
           "a checked-in entry cannot be put back on the list behind the pool's back")
-    check(refused({"id": reg(name="X", partner_name="Y"), "status": "confirmed"}),
+    check(refused({"id": reg(name="X Ray", partner_name="Y Zed"), "status": "confirmed"}),
           "and confirming is only ever done by checking in")
 
     texts = [x["text"] for x in app.activity(20)]
@@ -729,8 +738,8 @@ def test_duplicates_are_grouped_never_lost():
           "the activity says what was decided")
 
     # a seeker whose match is cleared as a duplicate goes back to looking
-    k = app.act("public", "register", {"cup_id": cup, "kind": "seeking", "name": "Kim"})["registration_id"]
-    o = app.act("public", "register", {"cup_id": cup, "kind": "seeking", "name": "Ole"})["registration_id"]
+    k = app.act("public", "register", {"cup_id": cup, "kind": "seeking", "name": "Kim Vogel"})["registration_id"]
+    o = app.act("public", "register", {"cup_id": cup, "kind": "seeking", "name": "Ole Brandt"})["registration_id"]
     check(s.registrations[k].matched_with == o, "two people looking are matched")
     app.act("door", "update_registration", {"id": o, "status": "duplicate"})
     check(s.registrations[k].matched_with is None, "clearing one of them sets the other looking again")
@@ -782,8 +791,8 @@ def test_the_personal_link():
     view = app.act("public", "reg_view", {"token": tok})
     check(view["name"] == "Lea Hoffmann" and view["status"] == "pending" and view["can_change"],
           "the link opens that entry")
-    other = app.act("public", "register", {"cup_id": cup, "kind": "seeking", "name": "Kim"})["token"]
-    check(app.act("public", "reg_view", {"token": other})["name"] == "Kim"
+    other = app.act("public", "register", {"cup_id": cup, "kind": "seeking", "name": "Kim Vogel"})["token"]
+    check(app.act("public", "reg_view", {"token": other})["name"] == "Kim Vogel"
           and "partner_name" in view and "token" not in view, "and only that one")
     for bad in ("", "short", tok[:-1] + ("A" if tok[-1] != "A" else "B")):
         try:
@@ -802,14 +811,14 @@ def test_the_personal_link():
     app.act("public", "reg_restore", {"token": tok})
     check(s.registrations[rid].status == "pending", "and undoing it puts them back on the list")
 
-    k2 = app.act("public", "register", {"cup_id": cup, "kind": "seeking", "name": "Ole"})["token"]
-    kim = next(r for r in s.registrations.values() if r.name == "Kim")
+    k2 = app.act("public", "register", {"cup_id": cup, "kind": "seeking", "name": "Ole Brandt"})["token"]
+    kim = next(r for r in s.registrations.values() if r.name == "Kim Vogel")
     check(kim.matched_with, "two people looking are matched")
     app.act("public", "reg_cancel", {"token": k2})
     check(kim.matched_with is None, "one of them cancelling sets the other looking again")
 
     texts = [x["text"] for x in app.activity(20)]
-    check("Cancelled with their link: Ole" in texts and "Note changed with their link: Lea Hoffmann & Ben Krüger" in texts
+    check("Cancelled with their link: Ole Brandt" in texts and "Note changed with their link: Lea Hoffmann & Ben Krüger" in texts
           and "Registered again with their link: Lea Hoffmann & Ben Krüger" in texts,
           "the desk's activity says what was done with a link")
 
@@ -1576,9 +1585,9 @@ def test_registration():
           "it creates no player and no entrant — nothing the dispatcher sees")
 
     app.act("public", "register", {"cup_id": doubles, "kind": "pair",
-                                   "name": "Ada", "partner_name": "Ben",
+                                   "name": "Ada Lenz", "partner_name": "Ben Ott",
                                    "team_name": "Two Left Hands"})
-    app.act("public", "register", {"cup_id": doubles, "kind": "seeking", "name": "Milo"})
+    app.act("public", "register", {"cup_id": doubles, "kind": "seeking", "name": "Milo Frey"})
     check(len(s.regs_for_cup(doubles)) == 2, "pairs and lone entrants both land")
     check(s.regs_for_cup(doubles)[1].kind == "seeking",
           "somebody without a partner says so")
@@ -1599,6 +1608,10 @@ def test_registration():
           "and an unknown cup")
     check(refused({"cup_id": doubles, "kind": "pair", "name": "A"}, "half a pair"),
           "a pair needs both names")
+    check(refused({"cup_id": singles, "name": "Jana"}, "first name only")
+          and refused({"cup_id": doubles, "kind": "pair", "name": "Ada Lenz", "partner_name": "Ben"},
+                      "partner by first name only"),
+          "signing up from home takes whole names, the partner's too")
 
     # claims are claims: clamped and trimmed, never trusted
     out = app.act("public", "register",
@@ -1611,7 +1624,7 @@ def test_registration():
 
     # entering a singles cup as a pair cannot smuggle a second player in
     out = app.act("public", "register", {"cup_id": singles, "kind": "pair",
-                                         "name": "Solo", "partner_name": "Ghost"})
+                                         "name": "Solo Single", "partner_name": "Ghost Pair"})
     check(s.registrations[out["registration_id"]].partner_name == "",
           "a singles cup takes one name however the form is filled in")
 
@@ -1638,14 +1651,14 @@ def test_registration_closes():
     app.act("admin", "set_phase", {"phase": "live"})
     ok = True
     try:
-        app.act("public", "register", {"cup_id": cid, "name": "Late"})
+        app.act("public", "register", {"cup_id": cid, "name": "Late Comer"})
         ok = False
     except ValueError:
         pass
     check(ok, "once the console is up the form stops taking entries")
 
     app.act("admin", "set_phase", {"phase": ""})
-    app.act("public", "register", {"cup_id": cid, "name": "Early"})
+    app.act("public", "register", {"cup_id": cid, "name": "Early Bird"})
     check(len(s.pending_regs()) == 1, "and takes them again when it is not")
 
     app.act("admin", "new_event", {"name": "Next one"})
@@ -1669,7 +1682,7 @@ def test_registration_throttle():
     def post(name):
         c = http.client.HTTPConnection("127.0.0.1", port)
         c.request("POST", "/api/action", json.dumps(
-            {"op": "register", "data": {"cup_id": cid, "name": name}}),
+            {"op": "register", "data": {"cup_id": cid, "name": name + " Doe"}}),
             {"Content-Type": "application/json"})
         return c.getresponse().status
 
@@ -1704,7 +1717,9 @@ def test_the_door():
     check(s.registrations[rid].entrant_id == out["entrant_id"],
           "and records what it became")
     e = s.entrants[out["entrant_id"]]
-    check(e.name == "Jana Berger" and len(e.player_ids) == 1, "a player exists now")
+    check(e.name == "Jana" and len(e.player_ids) == 1, "a player exists now")
+    check(s.players[e.player_ids[0]].full == "Jana Berger",
+          "the wall calls her Jana; the desk keeps the surname")
     check(s.players[e.player_ids[0]].strength == 7.0,
           "at the strength the door set, not the one they claimed")
     f = s.formats[s.cups[cup].format_id]
@@ -1733,8 +1748,8 @@ def test_the_door_pairs():
     s = app.store
     cup = door_event(app, entry="pair", kind="groups")
     rid = app.act("public", "register",
-                  {"cup_id": cup, "kind": "pair", "name": "Ada", "strength": 6,
-                   "partner_name": "Ben", "partner_strength": 4,
+                  {"cup_id": cup, "kind": "pair", "name": "Ada Lenz", "strength": 6,
+                   "partner_name": "Ben Ott", "partner_strength": 4,
                    "team_name": "Two Left Hands"})["registration_id"]
     out = app.act("admin", "admit", {"registration_id": rid})
     e = s.entrants[out["entrant_id"]]
@@ -1744,7 +1759,7 @@ def test_the_door_pairs():
           "each with their own strength")
 
     rid2 = app.act("public", "register",
-                   {"cup_id": cup, "kind": "seeking", "name": "Milo"})["registration_id"]
+                   {"cup_id": cup, "kind": "seeking", "name": "Milo Frey"})["registration_id"]
     out = app.act("admin", "admit", {"registration_id": rid2,
                                      "kind": "pair", "partner_name": "Sofia"})
     check(len(s.entrants[out["entrant_id"]].player_ids) == 2,
@@ -1783,7 +1798,7 @@ def test_directory():
     check(who.strength == 7.0, "at the strength the door settled on")
 
     # tuning during the evening is what next month starts from
-    pl = [p for p in s.players.values() if p.name == "Jana Berger"][0]
+    pl = [p for p in s.players.values() if p.full == "Jana Berger"][0]
     app.act("admin", "update_player", {"id": pl.id, "strength": 8})
     check(s.people[who.id].strength == 8.0, "a strength tuned tonight writes back")
 
@@ -2237,40 +2252,389 @@ def test_resting_holds_a_scheduled_fixture():
 
 
 # ------------------------------------- one human, two cups, one table each
-def test_one_person_two_cups():
-    print("\n[the same name in a singles cup and a doubles cup does not hold either up]")
+
+# ------------------------------------------------ player identity across cups
+# docs/player-identity.md: identity is decided by evidence or by the desk,
+# never by a name alone, and one person is never on two tables at once.
+
+def two_cup_night(entry_b="single", tables=4, registration="closed", kind="groups"):
     app, d = fresh()
-    for t in (4, 5, 6):
+    for t in range(1, tables + 1):
         app.act("admin", "set_table", {"number": t, "name": f"T{t}"})
-    c1 = app.act("admin", "add_cup", {"name": "Singles"})["cup_id"]
-    c2 = app.act("admin", "add_cup", {"name": "Doubles"})["cup_id"]
-    app.act("admin", "admit", {"cup_id": c1, "name": "Jana Berger", "strength": 7})
-    app.act("admin", "admit", {"cup_id": c2, "name": "Jana Berger", "strength": 7,
-                               "partner_name": "Tom Frei", "partner_strength": 6,
-                               "kind": "pair"})
-    for i in range(5):
-        app.act("admin", "admit", {"cup_id": c1, "name": f"S{i}", "strength": 6})
-    for i in range(3):
-        app.act("admin", "admit", {"cup_id": c2, "name": f"D{i}", "strength": 6,
-                                   "partner_name": f"E{i}", "partner_strength": 6,
-                                   "kind": "pair"})
-    s = app.store
-    for cup in (c1, c2):
-        fid = app.act("admin", "add_format", {"kind": "swiss", "name": "S", "config": {
-            "cup_id": cup, "rounds": 4, "continuous": False,
-            "scoring": {"best_of": 3, "points_to": 11}}})["format_id"]
+    c1 = app.act("admin", "add_cup", {"name": "Open singles"})["cup_id"]
+    c2 = app.act("admin", "add_cup", {"name": "Second"})["cup_id"]
+    app.act("admin", "update_cup", {"id": c2, "entry": entry_b})
+    for c in (c1, c2):
+        app.act("admin", "update_cup", {"id": c, "registration": registration})
+    return app, d, c1, c2
+
+
+def start_cups(app, *cups, kind="groups"):
+    for cup in cups:
+        cfg = {"cup_id": cup, "scoring": {"best_of": 1, "points_to": 11}}
+        cfg.update({"groups": 1} if kind == "groups" else {"rounds": 3, "continuous": False})
+        fid = app.act("admin", "add_format", {"kind": kind, "name": "D", "config": cfg})["format_id"]
         app.act("admin", "update_cup", {"id": cup, "format_id": fid})
         app.act("admin", "start_format", {"id": fid})
+
+
+def seated_twice(s):
+    """Any person on two tables at once."""
+    seen = {}
+    for t in s.tables.values():
+        m = s.matches.get(t.match_id) if t.match_id else None
+        for pid in (m.players() if m else []):
+            k = s.who(pid)
+            if k in seen and seen[k] != t.number:
+                return True
+            seen[k] = t.number
+    return False
+
+
+def drain_watching(app, limit=600):
+    """drain(), checking after every result that nobody is on two tables."""
+    s = app.store
+    twice = seated_twice(s)
+    for _ in range(limit):
+        played = False
+        for n in sorted(s.tables):
+            if play_one(app, n):
+                played = True
+                twice = twice or seated_twice(s)
+        if not played:
+            return twice
+    raise AssertionError("did not settle")
+
+
+def test_one_person_two_cups():
+    print("\n[one person in a singles and a doubles cup: told by the surname, never on two tables]")
+    app, d, c1, c2 = two_cup_night(entry_b="pair", tables=3)
+    s = app.store
+    app.act("admin", "admit", {"cup_id": c1, "name": "Jana Berger"})
+    pair = {"cup_id": c2, "name": "Jana", "partner_name": "Tom Frei", "kind": "pair"}
+    n = s.seq
+    ask = app.act("admin", "admit", pair)
+    check(ask.get("ask") == "surname" and ask["slot"] == "a"
+          and ask["cups"] == ["Open singles"],
+          "only a first name somebody here has: the door is asked for the surname")
+    check(s.seq == n and len(s.entrants) == 1, "and nothing is written until it is answered")
+    out = app.act("admin", "admit", {**pair, "name": "jana  berger"})
+    jana = [p for p in s.players.values() if s.name_key(s.full_name(p)) == "jana berger"]
+    check(len(jana) == 2 and len({p.person_id for p in jana}) == 1 and "entrant_id" in out,
+          "the same surname is the same person, with two entries")
+    for i in range(5):
+        app.act("admin", "admit", {"cup_id": c1, "name": f"S{i}"})
+    for i in range(3):
+        app.act("admin", "admit", {"cup_id": c2, "name": f"D{i}", "partner_name": f"E{i}",
+                                   "kind": "pair"})
+    start_cups(app, c1, c2)
     dispatch.tick(s)
-    jana = [p.id for p in s.players.values() if p.name.startswith("Jana")]
-    on = [n for n, t in sorted(s.tables.items())
-          if t.match_id and any(j in s.matches[t.match_id].players() for j in jana)]
-    # a shared name across cups used to block one of them; organisers want
-    # matches seated as they are queued, so both go on
-    check(len(on) == 2, "both of her matches are seated, one per cup")
-    drain(app)
-    check(all(f.is_complete(s) for f in s.formats.values()),
-          "and both cups still finish")
+    check(not seated_twice(s), "she is not called to two tables at once")
+    check(not drain_watching(app), "nor at any point of the evening")
+    check(all(f.is_complete(s) for f in s.formats.values()), "and both cups still finish")
+    shutil.rmtree(d)
+
+
+def test_namesakes_in_two_cups():
+    print("\n[two different people with one name: told apart, never blocking each other]")
+    app, d, c1, c2 = two_cup_night()
+    s = app.store
+    app.act("admin", "admit", {"cup_id": c1, "name": "Max Müller"})
+    ask = app.act("admin", "admit", {"cup_id": c2, "name": "Max"})
+    check(ask.get("ask") == "surname", "a second Max in another cup is asked for a surname")
+    out = app.act("admin", "admit", {"cup_id": c2, "name": "Max Mayer"})
+    maxes = [p for p in s.players.values() if p.name.startswith("Max")]
+    check("entrant_id" in out and len({p.person_id for p in maxes}) == 2,
+          "a different surname is somebody else, without a question")
+    check(sorted(p.name for p in maxes) == ["Max Ma.", "Max Mü."],
+          "and the wall gets just enough of each surname to tell them apart")
+    pub = app.state("public")
+    check(all("full" not in p for p in pub["players"])
+          and "Müller" not in json.dumps(pub, ensure_ascii=False),
+          "the surnames themselves never reach the public side")
+    try:
+        app.act("admin", "admit", {"cup_id": c1, "name": "max  mueller"})
+        refused = False
+    except ValueError as e:
+        refused = "Open singles" in str(e)
+    check(refused, "the same full name twice in one cup is refused, however it is spelled")
+    for i in range(3):
+        app.act("admin", "admit", {"cup_id": c1, "name": f"a{i}"})
+        app.act("admin", "admit", {"cup_id": c2, "name": f"b{i}"})
+    start_cups(app, c1, c2)
+    dispatch.tick(s)
+    on = [t for t in s.tables.values() if t.match_id and
+          {p.id for p in maxes} & set(s.matches[t.match_id].players())]
+    check(len(on) == 2, "both Maxes are seated at the same time")
+    ask = app.act("admin", "admit", {"cup_id": c2, "name": "Max Müler"})
+    check(ask.get("ask") == "same_person" and ask["name"] == "Max Müller",
+          "a surname a letter off is put to the door: one person typed twice?")
+    app.act("admin", "admit", {"cup_id": c2, "name": "Max Müler", "other": {"a": True}})
+    check(len({p.person_id for p in s.players.values() if p.name.startswith("Max")}) == 3,
+          "“someone else” keeps them apart")
+    shutil.rmtree(d)
+
+
+def test_one_cup_once_two_cups_fine():
+    print("\n[the same person twice in one cup is refused; the same pair in two doubles cups is not]")
+    app, d, c1, c2 = two_cup_night(entry_b="pair")
+    s = app.store
+    app.act("admin", "update_cup", {"id": c1, "entry": "pair"})
+    pair = lambda cup, a="Ana Roth", b="Ola Berg", **k: app.act("admin", "admit", {
+        "cup_id": cup, "name": a, "kind": "pair", "partner_name": b, **k})
+    pair(c1)
+    a = pair(c2, a="Ana", b="Ola")
+    b = pair(c2, a="Ana Roth", b="Ola")
+    check(a.get("ask") == "surname" and a["slot"] == "a" and b.get("ask") == "surname"
+          and b["slot"] == "b", "each of the two first names is asked about, one at a time")
+    out = pair(c2)
+    check("entrant_id" in out and len(s.entrants) == 2, "and the same pair is in both doubles cups")
+    try:
+        pair(c2)
+        twice = False
+    except ValueError:
+        twice = True
+    check(twice, "but not twice in one")
+    try:
+        app.act("admin", "admit", {"cup_id": c1, "name": "Kim", "kind": "pair",
+                                   "partner_name": "kim"})
+        same = False
+    except ValueError:
+        same = True
+    check(same, "a pair is two different people")
+    shutil.rmtree(d)
+
+
+def test_witnessed_keys_decide_without_asking():
+    print("\n[a Telegram account or the same browser says who it is; different accounts are different people]")
+    app, d = fresh()
+    app.act("admin", "create_event", {
+        "name": "Cups", "starts_at": FUTURE_START,
+        "cups": [{"name": "Open singles", "entry": "single", "registration": "open", "kind": "swiss"},
+                 {"name": "Doubles", "entry": "pair", "registration": "open", "kind": "swiss"},
+                 {"name": "U18", "entry": "single", "registration": "open", "kind": "swiss"}],
+        "tables": [{"name": "T1", "cup": -1}]})
+    s = app.store
+    c1, c2, c3 = s.cup_order
+    tg = lambda cup, uid, name, **k: app.act("system", "tg_register", {
+        "cup_id": cup, "tg_id": uid, "name": name, **k})["registration_id"]
+    r1 = tg(c1, 101, "Jana Berger")
+    r2 = tg(c2, 101, "Jana Berger", kind="pair", partner_name="Tom Frei")
+    r3 = tg(c3, 202, "Jana Berger")
+    app.act("admin", "set_phase", {"phase": "live"})
+    app.act("door", "admit", {"registration_id": r1})
+    out = app.act("door", "admit", {"registration_id": r2})
+    jana = [p for p in s.players.values() if s.full_name(p) == "Jana Berger"]
+    check("entrant_id" in out and len({p.person_id for p in jana}) == 1,
+          "the same Telegram account in two cups is one person, without a question")
+    try:
+        app.act("door", "admit", {"registration_id": r3})
+        told = ""
+    except ValueError as e:
+        told = str(e)
+    check("Telegram" in told, "another account under the same name is somebody else, and has to be told apart")
+
+    # the web form: the same browser, the same name
+    app2, d2 = fresh()
+    app2.act("admin", "create_event", {
+        "name": "Cups", "starts_at": FUTURE_START,
+        "cups": [{"name": "Open singles", "entry": "single", "registration": "open", "kind": "swiss"},
+                 {"name": "U18", "entry": "single", "registration": "open", "kind": "swiss"}],
+        "tables": [{"name": "T1", "cup": -1}]})
+    s2 = app2.store
+    k1, k2 = s2.cup_order
+    reg = lambda cup, name, prev=(): app2.act("public", "register", {
+        "cup_id": cup, "name": name, "prev": list(prev)})
+    a = reg(k1, "Max Keller")
+    b = reg(k2, "Max Keller", [a["token"]])
+    kid = reg(k2, "Lena Keller", [a["token"], b["token"]])
+    stranger = reg(k2, "Max Keller (U18)", ["x" * 22])
+    R = s2.registrations
+    check(R[a["registration_id"]].holder == R[b["registration_id"]].holder,
+          "a second sign-up from the same browser under the same name shares its key")
+    check(R[kid["registration_id"]].holder != R[a["registration_id"]].holder,
+          "a sign-up for somebody else from that phone does not")
+    check(R[stranger["registration_id"]].holder != R[a["registration_id"]].holder,
+          "and a link the server does not know is ignored")
+    check(all(k not in R[a["registration_id"]].to_dict() for k in ("holder", "token")),
+          "the key never leaves the server")
+    app2.act("admin", "set_phase", {"phase": "live"})
+    app2.act("door", "admit", {"registration_id": a["registration_id"]})
+    out = app2.act("door", "admit", {"registration_id": b["registration_id"]})
+    check("entrant_id" in out, "and the door lets the second in as the same person, without a question")
+    shutil.rmtree(d); shutil.rmtree(d2)
+
+
+def test_the_partner_link():
+    print("\n[a partner named on a pair entry: their own link, or the door asks]")
+    app, d = fresh()
+    app.act("admin", "create_event", {
+        "name": "Cups", "starts_at": FUTURE_START,
+        "cups": [{"name": "Open singles", "entry": "single", "registration": "open", "kind": "swiss"},
+                 {"name": "Doubles", "entry": "pair", "registration": "open", "kind": "swiss"}],
+        "tables": [{"name": "T1", "cup": -1}]})
+    s = app.store
+    c1, c2 = s.cup_order
+    pair = app.act("public", "register", {"cup_id": c2, "kind": "pair", "name": "Max Keller",
+                                          "partner_name": "Tom Frei"})
+    check(pair.get("partner_token") and pair["partner_token"] != pair["token"],
+          "a pair entry comes with a second link, for the partner")
+    view = app.act("public", "reg_view", {"token": pair["partner_token"]})
+    check(view["role"] == "partner" and view["name"] == "Tom Frei" and not view["can_change"],
+          "which shows the partner the entry, and changes nothing")
+    try:
+        app.act("public", "reg_cancel", {"token": pair["partner_token"]})
+        cancelled = True
+    except ValueError:
+        cancelled = False
+    check(not cancelled, "calling it off stays with whoever registered it")
+    app.act("system", "tg_attach", {"token": pair["partner_token"], "tg_id": 555, "partner": True})
+    tom = app.act("system", "tg_register", {"cup_id": c1, "tg_id": 555, "name": "Tom Frei"})
+    eva = app.act("public", "register", {"cup_id": c1, "name": "Eva Roth"})
+    lone = app.act("public", "register", {"cup_id": c2, "kind": "pair", "name": "Ute Lang",
+                                          "partner_name": "Eva Roth"})
+    app.act("admin", "set_phase", {"phase": "live"})
+    app.act("door", "admit", {"registration_id": tom["registration_id"]})
+    out = app.act("door", "admit", {"registration_id": pair["registration_id"]})
+    toms = [p for p in s.players.values() if s.full_name(p) == "Tom Frei"]
+    check("entrant_id" in out and len({p.person_id for p in toms}) == 1,
+          "a partner who opened their link is recognised at the door without a question")
+    check(s.people[toms[0].person_id].tg_id == 555, "and gets the table calls")
+    app.act("door", "admit", {"registration_id": eva["registration_id"]})
+    out = app.act("door", "admit", {"registration_id": lone["registration_id"]})
+    evas = [p for p in s.players.values() if s.full_name(p) == "Eva Roth"]
+    check("entrant_id" in out and len({p.person_id for p in evas}) == 1,
+          "a partner named in full who already plays tonight is that person, without a question")
+    ask = app.act("door", "admit", {"cup_id": c2, "kind": "pair", "name": "Ida Wolf",
+                                    "partner_name": "Tom"})
+    check(ask.get("ask") == "surname" and ask["slot"] == "b",
+          "a partner named by first name only is asked for a surname")
+    shutil.rmtree(d)
+
+
+def test_renames_and_gone_home_across_cups():
+    print("\n[a person in two cups: renaming asks which, gone home reaches both]")
+    app, d, c1, c2 = two_cup_night()
+    s = app.store
+    app.act("admin", "admit", {"cup_id": c1, "name": "Mxa Keller"})
+    app.act("admin", "admit", {"cup_id": c2, "name": "Mxa Keller"})
+    p1, p2 = [p.id for p in s.players.values()]
+    q = app.act("admin", "update_player", {"id": p1, "name": "Max Keller"})
+    check(q.get("ask") == "rename_scope" and s.full_name(s.players[p1]) == "Mxa Keller",
+          "renaming somebody in two cups asks: a typo, or someone else stepping in?")
+    app.act("admin", "update_player", {"id": p1, "name": "Max Keller", "scope": "everywhere"})
+    check(s.full_name(s.players[p1]) == s.full_name(s.players[p2]) == "Max Keller"
+          and s.players[p1].name == "Max"
+          and s.players[p1].person_id == s.players[p2].person_id
+          and s.people[s.players[p1].person_id].name == "Max Keller",
+          "a typo is fixed in both cups and in the directory")
+    app.act("admin", "update_player", {"id": p2, "name": "Ben Ott", "scope": "here"})
+    check(s.players[p2].name == "Ben" and s.players[p1].name == "Max"
+          and s.players[p1].person_id != s.players[p2].person_id,
+          "someone stepping in is somebody else, in that cup only")
+    q = app.act("admin", "update_player", {"id": p2, "name": "Max", "scope": "here"})
+    check(q.get("ask") == "surname" and s.players[p2].name == "Ben",
+          "renaming to a first name somebody already has asks for the surname")
+
+    e1 = next(e for e in s.entrants.values() if p1 in e.player_ids)
+    app.act("admin", "update_player", {"id": p2, "name": "Max Keller"})
+    check(s.players[p2].person_id == s.players[p1].person_id, "with the same surname, they are one again")
+    app.act("admin", "withdraw", {"entrant_id": e1.id, "everywhere": True})
+    check(all(not e.active for e in s.entrants.values()), "gone home from all cups withdraws both entries")
+    app.act("admin", "withdraw", {"entrant_id": e1.id, "everywhere": True, "withdrawn": False})
+    check(all(e.active for e in s.entrants.values()), "and back again")
+
+    e2 = next(e for e in s.entrants.values() if p2 in e.player_ids)
+    app.act("admin", "remove_entrant", {"id": e2.id})
+    check(p1 in s.players and e1.id in s.entrants and p2 not in s.players,
+          "taking one entry out leaves the other as it was")
+    shutil.rmtree(d)
+
+
+def test_merge_and_split():
+    print("\n[a wrong answer at the door is fixed with Merge or Split, and undone]")
+    app, d, c1, c2 = two_cup_night()
+    s = app.store
+    app.act("admin", "admit", {"cup_id": c1, "name": "Max Keller"})
+    app.act("admin", "admit", {"cup_id": c2, "name": "Max Braun"})
+    a, b = [p.id for p in s.players.values()]
+    before = s.seq
+    app.act("door", "merge_players", {"id": b, "into": a})
+    check(s.players[a].person_id == s.players[b].person_id and s.players[b].name == "Max"
+          and s.full_name(s.players[b]) == "Max Keller",
+          "Merge makes them one person, under one name")
+    app.act("admin", "rewind", {"seq": before})
+    check(s.players[a].person_id != s.players[b].person_id, "and Undo takes it back")
+    app.act("door", "merge_players", {"id": b, "into": a})
+    try:
+        app.act("door", "split_player", {"id": b, "name": "Max Keller"})
+        same = False
+    except ValueError:
+        same = True
+    check(same, "Split needs a name that tells them apart")
+    app.act("door", "split_player", {"id": b, "name": "Max Braun"})
+    check(s.players[a].person_id != s.players[b].person_id and s.players[b].name == "Max B.",
+          "Split makes a second person")
+    app.act("admin", "admit", {"cup_id": c1, "name": "Ute"})
+    u = next(p.id for p in s.players.values() if p.name == "Ute")
+    try:
+        app.act("door", "merge_players", {"id": u, "into": a})
+        same = False
+    except ValueError:
+        same = True
+    check(same, "two people in the same cup cannot be merged")
+    shutil.rmtree(d)
+
+
+def test_a_breather_between_cups():
+    print("\n[somebody in two cups gets a breather, but never at the cost of an empty table]")
+    app, d, c1, c2 = two_cup_night(tables=1)
+    s = app.store
+    app.act("admin", "admit", {"cup_id": c1, "name": "Max Keller"})
+    app.act("admin", "admit", {"cup_id": c2, "name": "Max Keller"})
+    app.act("admin", "admit", {"cup_id": c1, "name": "A"})
+    for n in ("B", "C"):
+        app.act("admin", "admit", {"cup_id": c2, "name": n})
+    start_cups(app, c1)
+    dispatch.tick(s)
+    play_one(app, 1)
+    check(s.breathing_players() == {p.id for p in s.players.values() if p.name == "Max"},
+          "just off a table, he is breathing")
+    start_cups(app, c2)
+    dispatch.tick(s)
+    m = s.matches[s.tables[1].match_id]
+    maxes = {p.id for p in s.players.values() if p.name == "Max"}
+    check(not (maxes & set(m.players())), "the table goes to B and C first")
+    play_one(app, 1)
+    m = s.matches[s.tables[1].match_id]
+    check(maxes & set(m.players()), "and with nobody else ready, he plays rather than the table standing empty")
+    app.act("admin", "event_meta", {"breather": 0})
+    check(not s.breathing_players(), "a breather of 0 turns it off")
+    shutil.rmtree(d)
+
+def test_playing_elsewhere_is_said():
+    print("\n[somebody on a table for their other cup: the desk, Up next and the wall say where]")
+    app, d, c1, c2 = two_cup_night(tables=2)
+    s = app.store
+    app.act("admin", "admit", {"cup_id": c1, "name": "Max Keller"})
+    app.act("admin", "admit", {"cup_id": c2, "name": "Max Keller"})
+    for n in ("A",):
+        app.act("admin", "admit", {"cup_id": c1, "name": n})
+    for n in ("B", "C"):
+        app.act("admin", "admit", {"cup_id": c2, "name": n})
+    start_cups(app, c1)
+    dispatch.tick(s)
+    start_cups(app, c2)
+    dispatch.tick(s)
+    mine = [e for e in s.entrants.values() if e.cup_id == c2 and e.name == "Max"][0]
+    where = app.elsewhere(mine.id)
+    check(where and where[0]["cup"] == "Open singles" and where[0]["table"],
+          "his Second entry knows he is on a table for Open singles")
+    row = next(e for e in app.desk_state("door")["entrants"] if e["id"] == mine.id)
+    check(row["elsewhere"] and row["elsewhere"][0]["cup"] == "Open singles",
+          "the door sees it on his row")
+    up = [r for b in app.state("admin")["board"] for r in b["up"] if mine.id in r.get("entrants", [])]
+    check(up and up[0]["elsewhere"], "and Up next says it on his match")
     shutil.rmtree(d)
 
 
@@ -2920,6 +3284,14 @@ if __name__ == "__main__":
     test_withdrawal_resolves_a_bracket()
     test_resting_holds_a_scheduled_fixture()
     test_one_person_two_cups()
+    test_namesakes_in_two_cups()
+    test_one_cup_once_two_cups_fine()
+    test_witnessed_keys_decide_without_asking()
+    test_the_partner_link()
+    test_renames_and_gone_home_across_cups()
+    test_merge_and_split()
+    test_a_breather_between_cups()
+    test_playing_elsewhere_is_said()
     test_best_of_change_mid_event()
     test_a_correction_redraws_an_unplayed_bracket()
     test_a_late_correction_is_reported_not_forced()

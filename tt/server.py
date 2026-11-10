@@ -21,6 +21,16 @@ from .models import Scoring, decide_winner
 from . import dispatch, board, programme, simulate
 from .bot import announce_preview
 
+
+class Ask(Exception):
+    """Not an error: the op needs an answer only the organiser has, and
+    has written nothing. The client puts `data` to them and sends the op
+    again with the answer (docs/player-identity.md)."""
+
+    def __init__(self, data):
+        super().__init__(data.get("ask", "ask"))
+        self.data = data
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 STATIC = os.path.join(HERE, "static")
 
@@ -127,6 +137,30 @@ class App:
             if e.id in f.entrant_ids:
                 return "entered" if f.status == "setup" else "drawn"
         return "outside"
+
+    def elsewhere(self, eid):
+        """Who of this entry is on a table for another entry right now —
+        somebody in two cups — and where: what the desk, Up next and the
+        wall say instead of a bare "blocked" (docs/player-identity.md)."""
+        s = self.store
+        e = s.entrants.get(eid or "")
+        if not e:
+            return []
+        out = []
+        for pid in e.player_ids:
+            if pid not in s.players:
+                continue
+            k = s.who(pid)
+            for n, t in sorted(s.tables.items()):
+                m = s.matches.get(t.match_id) if t.match_id else None
+                if not m or eid in (m.entrant_a, m.entrant_b):
+                    continue
+                if any(s.who(q) == k for q in m.players()):
+                    cup = s.cup_of_format(s.formats.get(m.format_id))
+                    out.append({"name": s.players[pid].name, "table": n,
+                                "table_name": t.name or f"Table {n}",
+                                "cup": s.cups[cup].name if cup else ""})
+        return out
 
     def side_name(self, m, which):
         """What to call one side of a match: the pair's name, the entrant's,
@@ -297,10 +331,21 @@ class App:
             ents = []
             for e in s.entrants.values():
                 t = seat.get(e.id)
+                ps = [s.players[p] for p in e.player_ids if p in s.players]
+                auto = e.name == " / ".join(p.name for p in ps)
                 ents.append({
-                    "id": e.id, "name": e.name, "cup_id": e.cup_id,
-                    "players": [s.players[p].name for p in e.player_ids if p in s.players],
+                    # full names at the desk, unless the team named itself
+                    "id": e.id, "cup_id": e.cup_id,
+                    "name": " / ".join(s.full_name(p) for p in ps) if ps and auto else e.name,
+                    # the desk works with full names; `labels` are what
+                    # the wall and the phones call them
+                    "players": [s.full_name(s.players[p]) for p in e.player_ids if p in s.players],
+                    "labels": [s.players[p].name for p in e.player_ids if p in s.players],
                     "player_ids": [p for p in e.player_ids if p in s.players],
+                    # who each player is: two entries with one person id are
+                    # one human in two cups (docs/player-identity.md)
+                    "persons": [s.players[p].person_id for p in e.player_ids if p in s.players],
+                    "elsewhere": self.elsewhere(e.id),
                     "status": self.entrant_status(e),
                     "table": t[0] if t else None, "vs": t[1] if t else "",
                     "removable": not self._why_not_removable(e),
@@ -356,13 +401,25 @@ class App:
             p, ty, line = h["payload"], h["type"], ""
             if ty == "entrant_add" or (ty == "entrant_update" and "name" in p):
                 ents[p.get("id")] = p.get("name", "")
-            if ty == "player_update" and "name" in p:
+                # the desk says full names: a name made of first names is
+                # told with the surnames the players gave
+                fulls = [players.get(q, "") for q in p.get("player_ids") or ()]
+                if fulls and all(fulls) and p.get("name") == " / ".join(
+                        s.split_name(n)[0] for n in fulls):
+                    ents[p.get("id")] = " / ".join(fulls)
+            if ty == "player_update" and "full" in p:
+                was = players.get(p.get("id")) or (s.full_name(s.players[p["id"]])
+                                                   if p.get("id") in s.players else "")
+                line = f"Renamed {was} → {p['full']}" if was and was != p["full"] \
+                    else f"Renamed to {p['full']}"
+            elif ty == "player_update" and "name" in p and not p.get("label"):
                 was = players.get(p.get("id")) or (s.players[p["id"]].name
                                                    if p.get("id") in s.players else "")
                 line = f"Renamed {was} → {p['name']}" if was and was != p["name"] \
                     else f"Renamed to {p['name']}"
-            if ty in ("player_add", "player_update") and "name" in p:
-                players[p.get("id")] = p["name"]
+            if ty in ("player_add", "player_update") and ("full" in p or (
+                    "name" in p and not p.get("label"))):
+                players[p.get("id")] = p.get("full") or p["name"]
             if ty == "registration_add":
                 line = f"New entry: {p.get('name', '')}" + (
                     f" & {p['partner_name']}" if p.get("partner_name") else "") + (
@@ -388,7 +445,7 @@ class App:
                     and reg(p["matched_with"]) and p["id"] < p["matched_with"]:
                 line = f"{reg(p['id']).name} and {reg(p['matched_with']).name} matched as partners"
             elif ty == "entrant_add":
-                line = f"In: {p.get('name', '')}" + (
+                line = f"In: {ents.get(p.get('id')) or p.get('name', '')}" + (
                     f" · {cup_name(p.get('cup_id'))}" if cup_name(p.get("cup_id")) else "")
             elif ty == "entrant_remove":
                 line = f"Removed: {ent_name(p.get('id'))}"
@@ -447,11 +504,14 @@ class App:
                 "recent": [self.match_dto(m) for m in recent],
                 "formats": [s.formats[f].to_dict(s) for f in s.format_order
                             if f in s.formats],
-                "players": [p.to_dict() for p in sorted(
-                    s.players.values(), key=lambda p: p.name.lower())],
+                # surnames stay with the people running the evening
+                "players": [{k: v for k, v in p.to_dict().items()
+                             if k != "full" or role in ("admin", "referee", "door")}
+                            for p in sorted(s.players.values(), key=lambda p: p.name.lower())],
                 "entrants": [{**e.to_dict(),
                               "strength": round(s.entrant_strength(e.id), 1),
                               "status": self.entrant_status(e),
+                              "elsewhere": self.elsewhere(e.id),
                               # which way out applies: delete them outright
                               # while nothing depends on them, or withdraw
                               # them and settle what they owe once something
@@ -498,6 +558,7 @@ class App:
             s.actor = "telegram" if role == "system" else role
             try:
                 out = fn(p)
+                self._relabel()
                 s.actor = "system"
                 dispatch.tick(s)
             finally:
@@ -532,10 +593,16 @@ class App:
         cup = self._resolve_cup(p.get("cup_id"))
         if p.get("solo", True):
             self._need_room(cup)
-        pid = self._make_player(p["name"].strip(), float(p.get("strength", 5)))
+        try:
+            person, name = self._identity(" ".join(p["name"].split()), cup, "a",
+                                          same_as=self._same_as(p, "a"),
+                                          other=self._other(p, "a"))
+        except Ask as a:
+            return a.data
+        pid = self._make_player(name, float(p.get("strength", 5)), person)
         if p.get("solo", True):
             eid = s.new_id("E", s.entrants)
-            s.append("entrant_add", {"id": eid, "name": p["name"].strip(),
+            s.append("entrant_add", {"id": eid, "name": s.players[pid].name,
                                      "player_ids": [pid],
                                      "cup_id": cup.id if cup else ""})
         return {"player_id": pid}
@@ -544,38 +611,82 @@ class App:
         s = self.store
         pl = s.players.get(p.get("id"))
         name = " ".join(str(p.get("name") or "").split())
-        if pl and name and s.name_key(name) != s.name_key(pl.name):
+        if pl and name and s.name_key(name) != s.name_key(s.full_name(pl)):
             # A rename is either a typo being fixed or a substitution —
             # somebody else stepping into the team when a partner drops out,
             # which is the fastest way to do it and therefore the way it
             # will get done. Renaming the club record is right for the first
             # and quietly wrong for the second: it rewrites a real member's
             # identity, and their strength, because a roster line changed.
-            # Re-pointing this player at whoever the new name *is* works for
-            # both. The worst it leaves behind is a spare directory entry,
-            # which is visible in Setup and removable.
+            # So the new name is decided like an admission: whoever it is
+            # tonight, or the directory's, or somebody new.
             p = dict(p, name=name)
-            who = s.person_by_name(name)
-            if who is None:
-                who = self._person_for(name, p.get("strength", pl.strength))
-            p["person_id"] = who.id
+            others = [q for q in s.players_of(pl.person_id) if q.id != pl.id]
+            scope = p.pop("scope", None)
+            if others and scope not in ("everywhere", "here"):
+                # the same person plays in another cup: is this the name
+                # being fixed, or somebody else taking this one place?
+                return {"ask": "rename_scope", "name": s.full_name(pl), "new_name": name,
+                        "cups": self._cups_of(pl.person_id)}
+            if others and scope == "everywhere":
+                clash = self._tonight_named(name, skip=pl.person_id)
+                if clash:
+                    raise ValueError(f"{name} is somebody else tonight — "
+                                     f"pick a name that tells them apart")
+                strength = p.get("strength")
+                for q in [pl] + others:
+                    s.append("player_update", {"id": q.id, "full": name})
+                s.append("person_update", {"id": pl.person_id, "name": name})
+                rest = {k: v for k, v in p.items() if k not in ("name", "person_id", "other")}
+                if len(rest) > 1:
+                    s.append("player_update", rest)
+                if strength is not None:
+                    self._remember_strength(pl, strength)
+                return {}
+            cup = self._cup_of_player(pl)
+            try:
+                person, name = self._identity(
+                    name, cup, "a", same_as=self._same_as(p, "a"),
+                    skip_eid=None, skip_pid=pl.id, other=self._other(p, "a"))
+            except Ask as a:
+                return a.data
+            p.pop("same_as", None)
+            p.pop("other", None)
+            p.pop("name", None)
+            p["full"] = name
+            if person is None:
+                person = self._person_for(name, p.get("strength", pl.strength)).id
+            p["person_id"] = person
+        else:
+            p = {k: v for k, v in p.items() if k not in ("same_as", "scope", "other", "name")}
         s.append("player_update", p)
         pl = s.players.get(p.get("id"))
-        if pl and pl.person_id and pl.person_id in s.people and "strength" in p:
+        if pl and "strength" in p:
+            self._remember_strength(pl, p["strength"])
+
+    def _remember_strength(self, pl, strength):
+        s = self.store
+        if pl.person_id and pl.person_id in s.people:
             # the whole point of the directory: tonight's tuning is next
             # month's starting point
             s.append("person_update", {"id": pl.person_id,
-                                       "strength": float(p["strength"]),
+                                       "strength": float(strength),
                                        "last_seen": s.event.get("id", "")})
 
     def op_add_team(self, p):
         s = self.store
         cup = self._resolve_cup(p.get("cup_id"))
         self._need_room(cup)
-        pids = [self._make_player(name.strip(), float(strength))
-                for name, strength in p["members"]]
+        try:
+            slots = self._identities(
+                [(" ".join(str(n).split()), {}, self._same_as(p, k))
+                 for k, (n, _) in zip("ab", p["members"])], cup, p)
+        except Ask as a:
+            return a.data
+        pids = [self._make_player(name, float(strength), person)
+                for (person, name), (_, strength) in zip(slots, p["members"])]
         eid = s.new_id("E", s.entrants)
-        label = p.get("name") or " / ".join(n for n, _ in p["members"])
+        label = p.get("name") or " / ".join(s.players[q].name for q in pids)
         s.append("entrant_add", {"id": eid, "name": label, "player_ids": pids,
                                  "cup_id": cup.id if cup else ""})
         return {"entrant_id": eid}
@@ -608,6 +719,8 @@ class App:
         if not e:
             raise ValueError("no such entrant")
         want_out = bool(p.get("withdrawn", True))
+        if p.get("everywhere"):
+            return self._withdraw_everywhere(e, p.get("person_id"), want_out)
         if want_out == (not e.active):
             return {"entrant_id": e.id, "withdrawn": want_out, "walkovers": 0}
         owed = [m for m in s.matches.values()
@@ -617,6 +730,31 @@ class App:
         s.append("entrant_update", {"id": e.id, "active": not want_out})
         return {"entrant_id": e.id, "name": e.name, "withdrawn": want_out,
                 "walkovers": len(owed), "freed_tables": freed}
+
+    def _withdraw_everywhere(self, e, person_id, want_out):
+        """Gone home from every cup, not just this one. For a pair it has to
+        say which of the two left: the other may still be playing singles."""
+        s = self.store
+        persons = {s.players[q].person_id for q in e.player_ids
+                   if q in s.players and s.players[q].person_id}
+        if person_id:
+            if person_id not in persons:
+                raise ValueError("they are not in this entry")
+        elif len(persons) == 1:
+            person_id = next(iter(persons))
+        else:
+            raise ValueError("which of the two has gone home?")
+        out = {"entrant_ids": [], "walkovers": 0, "freed_tables": [],
+               "withdrawn": want_out}
+        for x in s.entries_of(person_id, active=False):
+            if want_out != x.active:
+                continue
+            r = self.op_withdraw({"entrant_id": x.id, "withdrawn": want_out})
+            out["entrant_ids"].append(x.id)
+            out["walkovers"] += r.get("walkovers", 0)
+            out["freed_tables"] += r.get("freed_tables", [])
+        out["freed_tables"] = sorted(set(out["freed_tables"]))
+        return out
 
     def op_set_resting(self, p):
         """Sit somebody out, or bring them back. The queue itself is never
@@ -1117,13 +1255,16 @@ class App:
             raise ValueError("pick which cup you are entering")
         if cup.registration != "open" or self.store.shows_console():
             raise ValueError("that cup is not taking entries")
+        self._whole_names(p, "Bitte Vor- und Nachnamen — öffentlich zeigen wir nur den Vornamen.")
         out = self._take_registration(cup, p)
         tg = self.telegram
         if tg and tg.on and "registration_id" in out:
             # the entry's own private link into the bot: opening it is how a
             # web registration gets its table calls (docs/telegram.md)
-            out["telegram"] = tg.link("r_" + self.store.registrations[
-                out["registration_id"]].token)
+            r = self.store.registrations[out["registration_id"]]
+            out["telegram"] = tg.link("r_" + r.token)
+            if r.partner_token:
+                out["partner_telegram"] = tg.link("q_" + r.partner_token)
         return out
 
     def op_add_registration(self, p):
@@ -1137,6 +1278,15 @@ class App:
         self._need_room(cup, seeking=True)
         p = dict(p, kind="seeking")
         return self._take_registration(cup, p)
+
+    def _whole_names(self, p, why):
+        """Signing up from home asks for the whole name: it costs nothing
+        there, and the surname is what later tells two of a name apart
+        (docs/player-identity.md). The door does not: there a surname is
+        only asked for when somebody else has that first name."""
+        names = [p.get("name")] + ([p.get("partner_name")] if p.get("partner_name") else [])
+        if any(len(str(n or "").split()) < 2 for n in names):
+            raise ValueError(why)
 
     def _take_registration(self, cup, p, tg_id=None, person_id=None):
         s = self.store
@@ -1184,6 +1334,7 @@ class App:
         except (TypeError, ValueError):
             raise ValueError("strength should be a number from 1 to 10")
 
+        holder = self._holder_from(p.get("prev"), name) or secrets.token_urlsafe(12)
         rid = s.new_id("R", s.registrations)
         s.append("registration_add", {
             "id": rid, "cup_id": cup.id, "kind": kind,
@@ -1194,14 +1345,42 @@ class App:
             "note": text(p.get("note"), 500),
             "distinct": distinct,
             "token": secrets.token_urlsafe(16),
+            "holder": holder,
+            **({"partner_token": secrets.token_urlsafe(16),
+                "partner_holder": secrets.token_urlsafe(12)} if kind == "pair" else {}),
             "ts": time.time(),
             "tg_id": tg_id, "person_id": person_id,
         })
         self._match_seekers(cup.id)
         mate = s.registrations.get(s.registrations[rid].matched_with or "")
+        r = s.registrations[rid]
         return {"registration_id": rid, "cup": cup.name,
                 "matched_with": mate.name if mate else "",
-                "token": s.registrations[rid].token}
+                "token": r.token,
+                **({"partner_token": r.partner_token} if r.partner_token else {})}
+
+    def _holder_from(self, prev, name):
+        """The identity key of an earlier sign-up from this browser under
+        this same name, or "" (docs/player-identity.md). The browser sends
+        the links it was given; a wrong or unknown one is ignored without a
+        word, so this says nothing about anybody else's entry. Only the same
+        name counts: one phone can sign up a whole family."""
+        s = self.store
+        if not isinstance(prev, list):
+            return ""
+        k = s.name_key(name)
+        for tok in prev[:16]:
+            tok = str(tok or "")
+            if len(tok) < 16:
+                continue
+            for r in s.registrations.values():
+                if r.token and secrets.compare_digest(r.token, tok):
+                    if r.holder and s.name_key(r.name) == k:
+                        return r.holder
+                elif r.partner_token and secrets.compare_digest(r.partner_token, tok):
+                    if r.partner_holder and s.name_key(r.partner_name) == k:
+                        return r.partner_holder
+        return ""
 
     # ---------------------------------------------------------- the link
     #
@@ -1223,12 +1402,31 @@ class App:
         if self.store.phase() not in ("announced", "registration"):
             raise ValueError("Die Veranstaltung läuft schon — sag vor Ort Bescheid.")
 
+    def _reg_by_partner_token(self, p):
+        t = str(p.get("token") or "")
+        if len(t) >= 16:
+            for r in self.store.registrations.values():
+                if r.partner_token and secrets.compare_digest(r.partner_token, t):
+                    return r
+        return None
+
     def op_reg_view(self, p):
         s = self.store
+        r = self._reg_by_partner_token(p)
+        if r:
+            # the partner's own link: they see the entry, and opening it is
+            # what gives them an identity of their own; changing or calling
+            # it off stays with whoever registered it
+            cup = s.cups.get(r.cup_id)
+            return {"role": "partner", "name": r.partner_name, "partner_name": r.name,
+                    "team_name": r.team_name, "kind": r.kind, "status": r.status,
+                    "created_ts": r.created_ts, "cup": cup.name if cup else "",
+                    "event": s.event.get("name", ""), "note": "", "matched": False,
+                    "can_change": False, "can_restore": False}
         r = self._reg_by_token(p)
         cup = s.cups.get(r.cup_id)
         before = s.phase() in ("announced", "registration")
-        return {
+        return {"role": "registrant",
             "name": r.name, "partner_name": r.partner_name, "team_name": r.team_name,
             "kind": r.kind, "note": r.note, "status": r.status, "created_ts": r.created_ts,
             "cup": cup.name if cup else "",
@@ -1319,13 +1517,26 @@ class App:
         return who
 
     def _make_player(self, name, strength, person_id=None):
+        """A player for tonight. `name` is the full name as given; what
+        everybody else sees starts as the first name, and _relabel adds
+        surname letters when somebody else has it too."""
         s = self.store
         who = self._person_for(name, strength, person_id)
         pid = s.new_id("P", s.players)
-        s.append("player_add", {"id": pid, "name": name,
-                                "strength": float(strength),
+        s.append("player_add", {"id": pid, "name": s.split_name(name)[0],
+                                "full": name, "strength": float(strength),
                                 "person_id": who.id})
         return pid
+
+    def _relabel(self):
+        """Keep every public name in step with who is here: a second Max
+        arriving turns the first into "Max Mü." as well. Logged like any
+        rename, so a replay shows the same names (Store.labels)."""
+        s = self.store
+        for pid, label in s.labels().items():
+            pl = s.players.get(pid)
+            if pl and pl.name != label:
+                s.append("player_update", {"id": pid, "name": label, "label": True})
 
     def _intake(self, cup):
         """What becoming part of this cup will mean for somebody: in the
@@ -1373,26 +1584,40 @@ class App:
         num = lambda v, dflt: max(1.0, min(10.0, float(v if v not in (None, "") else dflt)))
         strength = num(p.get("strength"), reg.strength if reg else 5.0)
 
-        if not (cup and cup.entry == "pair" and kind != "pair"):   # doubles: no name check
-            self._refuse_duplicate(kind, name, partner)
-
         # somebody still on the list already holds their place; anyone else
         # is taking a new one
         if not (reg and reg.status == "pending" and cup and reg.cup_id == cup.id):
             self._need_room(cup)
 
-        ids = [self._make_player(name, strength, p.get("person_id")
-                                 or (reg.person_id if reg else None))]
+        # who they are — before anything is written (docs/player-identity.md)
+        keys_a = {"tg": [reg.tg_id] if reg else [],
+                  "person": [p.get("person_id"), reg.person_id if reg else None],
+                  "holder": [reg.holder] if reg else []}
+        keys_b = ({"tg": [mate.tg_id], "person": [p.get("partner_person_id"), mate.person_id],
+                   "holder": [mate.holder]} if mate else
+                  {"tg": [reg.partner_tg_id] if reg else [],
+                   "person": [p.get("partner_person_id")],
+                   "partner_holder": [reg.partner_holder] if reg else []})
+        want = [(name, keys_a, self._same_as(p, "a"))]
+        if kind == "pair":
+            want.append((partner, keys_b, self._same_as(p, "b")))
+        try:
+            slots = self._identities(want, cup, p)
+        except Ask as a:
+            return a.data
+
+        ids = [self._make_player(slots[0][1], strength, slots[0][0])]
         if kind == "pair":
             ps = num(p.get("partner_strength"),
                      mate.strength if mate else reg.partner_strength if reg else 5.0)
-            ids.append(self._make_player(partner, ps, p.get("partner_person_id")
-                                         or (mate.person_id if mate else None)))
+            ids.append(self._make_player(slots[1][1], ps, slots[1][0]))
         # The door is the witness: whoever this registration came from on
         # Telegram is now, for good, the person just let in.
-        for r, pid in ((reg, ids[0]), (mate, ids[-1])):
-            if r and r.tg_id:
-                self._link_tg(s.players[pid].person_id, r.tg_id)
+        tg_b = (mate.tg_id if mate else reg.partner_tg_id if reg else None)
+        for tg, pid in ((reg.tg_id if reg else None, ids[0]),
+                        (tg_b if kind == "pair" else None, ids[-1])):
+            if tg:
+                self._link_tg(s.players[pid].person_id, tg)
 
         label = (p.get("team_name") or (reg.team_name if reg else "")
                  or (mate.team_name if mate else "")
@@ -1409,7 +1634,9 @@ class App:
             s.append("registration_update", {"id": mate.id, "status": "confirmed",
                                              "entrant_id": eid})
         return {"entrant_id": eid, "where": where, "why": why,
-                "cup": cup.name if cup else ""}
+                "cup": cup.name if cup else "",
+                # as they went in, a surname the desk was asked for included
+                "names": [s.full_name(s.players[i]) for i in ids]}
 
     def _link_tg(self, person_id, tg_id, tg_name=None):
         s = self.store
@@ -1431,7 +1658,7 @@ class App:
         if not e:
             return
         mine = next((pid for pid in e.player_ids if pid in s.players and
-                     s.name_key(s.players[pid].name) == s.name_key(dup.name)),
+                     s.name_key(s.full_name(s.players[pid])) == s.name_key(dup.name)),
                     e.player_ids[0] if e.player_ids else None)
         if mine in s.players:
             self._link_tg(s.players[mine].person_id, dup.tg_id)
@@ -1439,20 +1666,227 @@ class App:
         if kept and not kept.tg_id:
             s.append("registration_update", {"id": kept.id, "tg_id": dup.tg_id})
 
-    def _refuse_duplicate(self, kind, name, partner=""):
-        """Two people with the same name is how the wrong strength ends up
-        on the wrong person, so the second one has to be told apart before
-        they are saved. Singles: the name must be new tonight. Doubles: only
-        the same two people together count — a person is allowed to be in a
-        singles cup and a doubles cup, and to change partners."""
+    # ------------------------------------------------------------ identity
+    #
+    # Whether somebody being let in is a person already playing tonight.
+    # Decided by evidence or by the organiser, never by a name alone: a name
+    # match is a reason to ask (docs/player-identity.md). Three rules hold
+    # at every way in — one person, one entry per cup; one name, one person
+    # tonight; and so the dispatcher can hold back people, not entries.
+
+    @staticmethod
+    def _same_as(p, slot):
+        v = p.get("same_as")
+        if isinstance(v, dict):
+            return v.get(slot) or None
+        return (v or None) if slot == "a" else None
+
+    def _cups_of(self, person_id):
         s = self.store
-        if kind == "pair":
-            if s.pair_named(name, partner):
-                raise ValueError(f"{name} & {partner} are already a team tonight")
-        elif s.solo_named(name):
-            raise ValueError(
-                f"There is already a {name} tonight — add something to tell "
-                f"them apart, like \u201c{name} (blue shirt)\u201d")
+        return [s.cups[e.cup_id].name if e.cup_id in s.cups else ""
+                for e in s.entries_of(person_id)]
+
+    def _cup_of_player(self, pl):
+        s = self.store
+        e = next((e for e in s.entrants.values() if pl.id in e.player_ids), None)
+        return s.cups.get(e.cup_id) if e else None
+
+    def _in_cup(self, who, cup, skip_pid=None):
+        """Whether this person (a Store.who key) has an entry in this cup."""
+        s = self.store
+        cid = cup.id if cup else ""
+        return any(e.active and (e.cup_id or "") == cid and
+                   any(q != skip_pid and q in s.players and s.who(q) == who
+                       for q in e.player_ids)
+                   for e in s.entrants.values())
+
+    def _tonight_named(self, name, skip=None, skip_pid=None):
+        """A player tonight who goes by this name — or is the directory's
+        person of that name — other than person `skip`."""
+        s = self.store
+        k = s.name_key(name)
+        if not k:
+            return None
+        for pl in s.players.values():
+            if pl.id != skip_pid and s.name_key(s.full_name(pl)) == k \
+                    and not (skip and pl.person_id == skip):
+                return pl
+        who = s.person_by_name(name)
+        if who and who.id != skip:
+            return next((q for q in s.players_of(who.id) if q.id != skip_pid), None)
+        return None
+
+    def _keyed(self, keys):
+        """The person tonight that witnessed evidence points at, if any: the
+        same Telegram account, a directory link the door made, or a sign-up
+        from the same browser under the same name as one already let in."""
+        s = self.store
+        for tg in keys.get("tg") or ():
+            who = s.person_by_tg(tg) if tg else None
+            if who and s.players_of(who.id):
+                return who.id
+        for pid in keys.get("person") or ():
+            if pid and pid in s.people and s.players_of(pid):
+                return pid
+        held = [(h, False) for h in keys.get("holder") or () if h] + \
+               [(h, True) for h in keys.get("partner_holder") or () if h]
+        for h, _ in held:
+            for r in s.registrations.values():
+                if r.status != "confirmed":
+                    continue
+                e = s.entrants.get(r.entrant_id or "")
+                if not e or not e.player_ids:
+                    continue
+                if r.holder == h:
+                    pl = s.players.get(e.player_ids[0])
+                elif r.partner_holder == h and len(e.player_ids) == 2:
+                    pl = s.players.get(e.player_ids[1])
+                else:
+                    continue
+                if pl and pl.person_id:
+                    return pl.person_id
+        return None
+
+    @staticmethod
+    def _other(p, slot):
+        """The organiser said this name is somebody new, not the one with
+        the same first name already here."""
+        v = p.get("other")
+        return bool(v.get(slot)) if isinstance(v, dict) else bool(v) and slot == "a"
+
+    def _longest(self, person_id, name=""):
+        """The fullest name anybody gave for this person tonight."""
+        names = [self.store.full_name(q) for q in self.store.players_of(person_id)] + [name]
+        return max(names, key=len)
+
+    def _identity(self, name, cup, slot, keys=None, same_as=None,
+                  skip_eid=None, skip_pid=None, other=False):
+        """Who one name being let in is: (person id or None for "nobody
+        tonight", the name to use). Raises Ask when only the organiser can
+        say, and ValueError when the answer can only be a different name.
+
+        The surname decides (docs/player-identity.md): the same full name as
+        somebody here tonight is them; a first name somebody here already
+        has, without a surname, is a question for the surname; a surname
+        only a typo away, or set against somebody who never gave one, is a
+        question for the organiser. Anything else is somebody new."""
+        s = self.store
+        where = cup.name if cup else "tonight"
+        if not name:
+            raise ValueError("we need a name")
+        if same_as:
+            pl = s.players.get(same_as)
+            if not pl or not pl.person_id:
+                raise ValueError("no such player")
+            if self._in_cup(s.who(pl.id), cup, skip_pid):
+                raise ValueError(f"{s.full_name(pl)} is already in {where}")
+            return pl.person_id, self._longest(pl.person_id, name)
+        person = self._keyed(keys or {})
+        if person:
+            if self._in_cup("N:" + person, cup, skip_pid):
+                raise ValueError(f"{name} is already in {where}")
+            return person, self._longest(person, name)
+        tell = (f"add something to tell them apart, like "
+                f"\u201c{name} (blue shirt)\u201d")
+        mine_tg = [tg for tg in (keys or {}).get("tg") or () if tg]
+        tg_of = lambda pl: s.people[pl.person_id].tg_id if pl.person_id in s.people else None
+        first, rest = s.split_name(name)
+        hit = self._tonight_named(name, skip_pid=skip_pid)
+        if hit and rest:
+            # the same first and last name: the same person
+            if tg_of(hit) and any(tg != tg_of(hit) for tg in mine_tg):
+                raise ValueError(f"The {name} already playing tonight is somebody "
+                                 f"else (another Telegram account) — {tell}")
+            if not hit.person_id:
+                raise ValueError(f"There is already a {name} tonight — {tell}")
+            if self._in_cup(s.who(hit.id), cup, skip_pid):
+                raise ValueError(f"{name} is already in {where} — if this is somebody "
+                                 f"else with the same name, {tell}")
+            return hit.person_id, self._longest(hit.person_id, name)
+        if other:
+            return None, name
+        k = s.name_key(first)
+        mates = {}
+        for pl in s.players.values():
+            if pl.id != skip_pid and s.name_key(s.split_name(s.full_name(pl))[0]) == k:
+                mates.setdefault(s.who(pl.id), pl)
+        if not mates:
+            return None, name
+        cups = lambda pl: (self._cups_of(pl.person_id) if pl.person_id
+                           else [c.name for c in [self._cup_of_player(pl)] if c])
+        if not rest:
+            raise Ask({"ask": "surname", "slot": slot, "name": name,
+                       "cups": sorted({c for pl in mates.values() for c in cups(pl)})})
+        for who, pl in mates.items():
+            theirs = s.split_name(s.full_name(pl))[1]
+            if theirs and not s.near_surname(rest, theirs):
+                continue                      # a different surname: somebody else
+            if not pl.person_id or self._in_cup(who, cup, skip_pid):
+                continue                      # cannot be them: one entry per cup
+            if tg_of(pl) and any(tg != tg_of(pl) for tg in mine_tg):
+                continue                      # another Telegram account
+            raise Ask({"ask": "same_person", "slot": slot, "name": s.full_name(pl),
+                       "new_name": name, "player_id": pl.id, "cups": cups(pl)})
+        return None, name
+
+    def _identities(self, want, cup, p=None):
+        """`_identity` for each name of an entry, and the two of a pair are
+        two different people."""
+        p = p or {}
+        out = [self._identity(n, cup, slot, keys, same, other=self._other(p, slot))
+               for slot, (n, keys, same) in zip("ab", want)]
+        if len(out) == 2:
+            (pa, na), (pb, nb) = out
+            if self.store.name_key(na) == self.store.name_key(nb) or (pa and pa == pb):
+                raise ValueError("a pair needs two different people")
+        return out
+
+    def op_merge_players(self, p):
+        """These two players are one person (a wrong "someone else" at the
+        door). Every player of the second person becomes the first."""
+        s = self.store
+        a, b = s.players.get(p.get("into") or ""), s.players.get(p.get("id") or "")
+        if not a or not b or not a.person_id or not b.person_id:
+            raise ValueError("no such player")
+        if a.person_id == b.person_id:
+            return {}
+        theirs = s.players_of(b.person_id)
+        busy_on = {q for t in s.tables.values()
+                   if t.match_id in s.matches for q in s.matches[t.match_id].players()}
+        if busy_on & {q.id for q in theirs} and busy_on & {q.id for q in s.players_of(a.person_id)}:
+            raise ValueError("both are on a table right now — merge them once one finishes")
+        mine = {e.cup_id for e in s.entries_of(a.person_id)}
+        for e in s.entries_of(b.person_id):
+            if e.cup_id in mine:
+                cup = s.cups.get(e.cup_id)
+                raise ValueError(f"both are in {cup.name if cup else 'the same cup'} "
+                                 f"— one person cannot be in a cup twice")
+        for q in theirs:
+            upd = {"id": q.id, "person_id": a.person_id}
+            if s.name_key(s.full_name(q)) != s.name_key(s.full_name(a)):
+                upd["full"] = s.full_name(a)
+            s.append("player_update", upd)
+        return {}
+
+    def op_split_player(self, p):
+        """This player is somebody else (a wrong "same" at the door): a new
+        person, under a name that tells them apart."""
+        s = self.store
+        pl = s.players.get(p.get("id") or "")
+        if not pl:
+            raise ValueError("no such player")
+        name = " ".join(str(p.get("name") or "").split())[:60]
+        if not name:
+            raise ValueError("we need a name that tells them apart")
+        if self._tonight_named(name, skip_pid=pl.id):
+            raise ValueError(f"{name} is somebody else tonight — pick another name")
+        who = s.person_by_name(name)
+        if who is None:
+            pid = s.new_id("N", s.people)
+            s.append("person_add", {"id": pid, "name": name, "strength": pl.strength})
+            who = s.people[pid]
+        s.append("player_update", {"id": pl.id, "full": name, "person_id": who.id})
+        return {}
 
     def _why_not_removable(self, e):
         """Why this entrant cannot be deleted, or "" if they can. A match
@@ -1513,13 +1947,20 @@ class App:
         who = s.people.get(p.get("person_id") or "")
         if not who:
             raise ValueError("no such person")
-        if s.person_playing(who.id):
-            raise ValueError(f"{who.name} is already in this event")
         cup = self._resolve_cup(p.get("cup_id"))     # before anything is written
+        # picking them from the directory says who they are; the only things
+        # left to refuse are a second entry in one cup, and a different
+        # person playing tonight under the same name
+        if self._in_cup("N:" + who.id, cup):
+            raise ValueError(f"{who.name} is already in {cup.name if cup else 'this event'}")
+        clash = self._tonight_named(who.name, skip=who.id)
+        if clash:
+            raise ValueError(f"A different {who.name} is playing tonight — rename "
+                             f"one of them so they can be told apart")
         self._need_room(cup)
         pid = self._make_player(who.name, p.get("strength", who.strength), who.id)
         eid = s.new_id("E", s.entrants)
-        s.append("entrant_add", {"id": eid, "name": who.name, "player_ids": [pid],
+        s.append("entrant_add", {"id": eid, "name": s.players[pid].name, "player_ids": [pid],
                                  "cup_id": cup.id if cup else ""})
         where, why = self._intake(cup) if cup else ("roster", "")
         return {"entrant_id": eid, "where": where, "why": why}
@@ -1601,6 +2042,8 @@ class App:
         if cup.registration != "open" or self.store.shows_console():
             raise ValueError("Dafür ist die Anmeldung gerade zu.")
         person = self.store.person_by_tg(p.get("tg_id"))
+        if not person:
+            self._whole_names(p, "Bitte Vor- und Nachnamen.")
         return self._take_registration(cup, p, tg_id=p["tg_id"],
                                        person_id=person.id if person else None)
 
@@ -1610,6 +2053,8 @@ class App:
         account becomes the person it was confirmed as."""
         s = self.store
         tok = p.get("token") or ""
+        if p.get("partner"):
+            return self._tg_attach_partner(tok, p)
         reg = next((r for r in s.registrations.values()
                     if tok and r.token == tok and r.status not in OFF_THE_LIST), None)
         if not reg:
@@ -1621,6 +2066,25 @@ class App:
             self._link_tg(s.players[e.player_ids[0]].person_id, p["tg_id"],
                           p.get("tg_name", ""))
         return {"name": reg.name, "cup": cup.name if cup else ""}
+
+    def _tg_attach_partner(self, tok, p):
+        """The partner's link, opened in Telegram: their account becomes
+        the partner slot's key, and once the door has let the pair in, the
+        partner's person — so their table calls reach them too."""
+        s = self.store
+        reg = next((r for r in s.registrations.values()
+                    if tok and r.partner_token == tok and r.status not in OFF_THE_LIST), None)
+        if not reg:
+            raise ValueError("unknown link")
+        s.append("registration_update", {"id": reg.id, "partner_tg_id": p["tg_id"]})
+        e = s.entrants.get(reg.entrant_id or "")
+        if reg.status == "confirmed" and e and len(e.player_ids) == 2 \
+                and e.player_ids[1] in s.players:
+            self._link_tg(s.players[e.player_ids[1]].person_id, p["tg_id"],
+                          p.get("tg_name", ""))
+        cup = s.cups.get(reg.cup_id)
+        return {"name": reg.partner_name, "partner": reg.name,
+                "cup": cup.name if cup else ""}
 
     def op_tg_link(self, p):
         if p.get("person_id") not in self.store.people:
@@ -1752,6 +2216,7 @@ OP_LEVEL = {
     "register": 0, "update_registration": 2,
     "reg_view": 0, "reg_note": 0, "reg_cancel": 0, "reg_restore": 0,
     "sim_start": 2, "sim_stop": 2,
+    "merge_players": 2, "split_player": 2,
     "admit": 2, "add_registration": 2, "remove_entrant": 2, "remove_entrants": 2, "update_person": 2, "remove_person": 2, "add_from_directory": 2,
     "tg_connect": 2, "tg_disconnect": 2, "tg_send": 2, "tg_door_link": 2, "tg_read": 2,
     "tg_register": 3, "tg_attach": 3, "tg_link": 3, "tg_detach": 3, "tg_rsvp": 3,
@@ -1765,7 +2230,7 @@ DOOR_OPS = frozenset({
     "admit", "add_registration", "update_registration",
     "update_player", "update_entrant",
     "set_resting", "withdraw", "remove_entrant",
-    "add_from_directory",
+    "add_from_directory", "merge_players", "split_player",
     # the QR code that links somebody's Telegram at the door: witnessing
     # who is standing there is the door's job (docs/telegram.md)
     "tg_door_link",

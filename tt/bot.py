@@ -336,8 +336,17 @@ class Conversation:
                 if person and p.person_id == person.id}
         for r in regs:           # confirmed before this account was linked
             e = s.entrants.get(r.entrant_id or "")
-            if e and r.tg_id == uid:
-                pids.add(e.player_ids[0])
+            if e and e.player_ids and r.tg_id == uid:
+                # the one of the entry who is them, not just the first name
+                # on it: a pair can be registered by either partner
+                pids.add(next((q for q in e.player_ids if q in s.players and
+                               s.name_key(s.players[q].name) == s.name_key(r.name)),
+                              e.player_ids[0]))
+        for r in s.registrations.values():   # named as somebody's partner
+            e = s.entrants.get(r.entrant_id or "")
+            if r.partner_tg_id == uid and r.status == "confirmed" \
+                    and e and len(e.player_ids) == 2:
+                pids.add(e.player_ids[1])
         ents = [e for e in sorted(s.entrants.values(), key=lambda e: e.id)
                 if pids & set(e.player_ids)]
         return Me(person, regs, ents)
@@ -408,6 +417,16 @@ class Conversation:
                 return self.show_card(uid, f"{hello}\nDieser Link ist nicht mehr gültig.")
             return self.show_card(uid, f"{hello}\n✓ Verknüpft: <b>{esc(out['name'])}</b>, "
                                        f"{esc(out['cup'])}.\n\n{WELCOME}")
+        if arg.startswith("q_"):
+            # the link a partner was forwarded: they are the second name
+            out = self.bot.system("tg_attach", {"token": arg[2:], "tg_id": uid,
+                                                "partner": True,
+                                                "tg_name": self._handle(user)})
+            if out is None:
+                return self.show_card(uid, f"{hello}\nDieser Link ist nicht mehr gültig.")
+            return self.show_card(uid, f"{hello}\n✓ Verknüpft: <b>{esc(out['name'])}</b> "
+                                       f"mit {esc(out['partner'])}, {esc(out['cup'])}.\n"
+                                       f"Ab dem Turnier sagen wir dir Bescheid, wenn ihr dran seid.")
         if arg.startswith("p_"):
             pid = self.wire.take_token(arg[2:])
             if not pid or pid not in self.store.people:
@@ -442,7 +461,8 @@ class Conversation:
         if who.tg_id == uid:
             return self.show_card(uid, f"{hello}\n✓ Du bist schon <b>{esc(who.name)}</b>.")
         if who.tg_id:
-            return self.show_card(uid, f"{hello}\n<b>{esc(who.name)}</b> ist schon mit einem "
+            # somebody else's account: their label, never their surname
+            return self.show_card(uid, f"{hello}\n<b>{esc(pl.name)}</b> ist schon mit einem "
                                        "anderen Telegram verknüpft. Wenn das nicht stimmt, "
                                        "sag am Eingang Bescheid.")
         self.bot.system("tg_link", {"person_id": who.id, "tg_id": uid,
@@ -880,7 +900,9 @@ class Conversation:
         name = name or chat.get("name") or ""
         if not name:
             full = " ".join(x for x in (chat.get("first_name"), chat.get("last_name")) if x)
-            if not full:
+            # the account's name only when it has a surname: it is what
+            # tells two of a first name apart (docs/player-identity.md)
+            if len(full.split()) < 2:
                 return self.dispatch(uid, "n", f"{cup_id}:{kind}:e", mid, False)
             self.edit(uid, mid, "Unter welchem Namen sollen wir dich eintragen?",
                       [[button(f"✓ {full}", f"n:{cup_id}:{kind}:y")],
@@ -942,8 +964,8 @@ class Conversation:
     def on_answer(self, uid, pending, text):
         text = " ".join(text.split())[:60]
         cup, kind, mid = pending.get("cup"), pending.get("kind"), pending.get("mid")
-        if len(text) < 2:
-            # not a name: ask again, same place, same way out
+        if len(text) < 2 or len(text.split()) < 2:
+            # not a whole name: ask again, same place, same way out
             return self.ask(uid, mid, pending["ask"], cup, kind,
                             "Das sieht nicht nach einem Namen aus — schreib bitte "
                             "Vor- und Nachnamen.")
