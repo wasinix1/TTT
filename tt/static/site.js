@@ -233,8 +233,8 @@ function renderJoin() {
   box.innerHTML = joinShell(`<div class="jform">
     ${here.length ? `<div class="mine"><span>Auf diesem Handy angemeldet:</span>${here.map(x =>
       `<a href="/me/${esc(x.token)}">${esc(x.name)}${x.cup ? ` · ${esc(x.cup)}` : ''} →</a>`).join('')}</div>` : ''}
-    <label class="sr" for="j-name">Name</label>
-    <input id="j-name" value="${esc(draft.name)}" data-j="name" placeholder="Name"
+    <label class="sr" for="j-name">Vor- und Nachname</label>
+    <input id="j-name" value="${esc(draft.name)}" data-j="name" placeholder="Vor- und Nachname"
            autocomplete="name" autocapitalize="words" enterkeyhint="next">
 
     ${open.length > 1 ? `<label class="sr" for="j-cup">Kategorie</label>
@@ -250,9 +250,9 @@ function renderJoin() {
       </div>` : ''}
 
     ${pair && draft.kind === 'pair' ? `
-      <label class="sr" for="j-pname">Teampartner:in</label>
+      <label class="sr" for="j-pname">Partner:in, Vor- und Nachname</label>
       <input id="j-pname" class="partner" value="${esc(draft.partner_name)}" data-j="partner_name"
-             placeholder="Teampartner:in" autocomplete="off" autocapitalize="words">
+             placeholder="Partner:in, Vor- und Nachname" autocomplete="off" autocapitalize="words">
       <label class="sr" for="j-team">Teamname</label>
       <input id="j-team" class="partner" value="${esc(draft.team_name)}" data-j="team_name"
              placeholder="Teamname" autocomplete="off">
@@ -278,6 +278,13 @@ function renderJoin() {
 async function send(distinct) {
   if (sending) return;
   if (!draft.name.trim()) { error = 'Wir brauchen einen Namen.'; return renderJoin(); }
+  // the surname is how the evening tells two of the same name apart; it
+  // stays with the organisers, the wall shows the first name
+  const whole = n => n.trim().split(/\s+/).length > 1;
+  if (!whole(draft.name) || (draft.kind === 'pair' && draft.partner_name.trim() && !whole(draft.partner_name))) {
+    error = 'Bitte Vor- und Nachnamen — öffentlich zeigen wir nur den Vornamen.';
+    return renderJoin();
+  }
   sending = true; error = ''; renderJoin();
   const team = draft.kind === 'pair' && !!draft.partner_name.trim();
   const who = team ? `${draft.name.trim()} & ${draft.partner_name.trim()}` : draft.name.trim();

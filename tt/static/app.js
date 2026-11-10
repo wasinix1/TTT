@@ -2442,7 +2442,7 @@ function memberRows(e) {
   if (players.length < 2) return '';
   const cols = SHOW_STRENGTH ? '1fr 60px auto' : '1fr auto';
   return players.map(p => `<div class="drow member" style="--cols:${cols}">
-      ${auto('pn-' + p.id, 'update_player:' + p.id, 'name', p.name,
+      ${auto('pn-' + p.id, 'update_player:' + p.id, 'name', p.full || p.name,
              'aria-label="Player name"')}
       ${SHOW_STRENGTH ? auto('ps-' + p.id, 'update_player:' + p.id, 'strength',
              p.strength, 'inputmode="decimal" aria-label="Strength"') : ''}
@@ -2459,7 +2459,7 @@ function personRow(e) {
   const cols = (SHOW_STRENGTH ? '1fr 60px ' : '1fr ') + (many ? '112px 130px auto' : '112px auto');
   return `<div class="entry"><div class="drow" style="--cols:${cols}"${
       e.resting || out ? ' data-dim="1"' : ''}>
-    ${solo ? auto('pn-' + solo.id, 'update_player:' + solo.id, 'name', solo.name)
+    ${solo ? auto('pn-' + solo.id, 'update_player:' + solo.id, 'name', solo.full || solo.name)
            : auto('en-' + e.id, 'update_entrant:' + e.id, 'name', e.name,
                   'aria-label="Team name"')}
     ${!SHOW_STRENGTH ? '' : solo

@@ -10,6 +10,7 @@ import os
 import sqlite3
 import threading
 import time
+import unicodedata
 from collections import defaultdict
 from datetime import datetime
 
@@ -337,6 +338,7 @@ class Store:
             strength=float(p.get("strength", 5.0)),
             active=p.get("active", True),
             person_id=p.get("person_id"),
+            full=p.get("full", ""),
         )
 
     def _ev_player_update(self, p, seq):
@@ -360,6 +362,8 @@ class Store:
                 if e.name == " / ".join(nm(q) for q in e.player_ids):
                     e.name = " / ".join(self.players[q].name
                                         for q in e.player_ids if q in self.players)
+        if "full" in p:
+            pl.full = p["full"]
         if "strength" in p:
             pl.strength = float(p["strength"])
         if "person_id" in p:
@@ -896,7 +900,88 @@ class Store:
 
     @staticmethod
     def name_key(name: str) -> str:
-        return " ".join(str(name or "").split()).casefold()
+        """A name as it is compared: case, spacing and spelling of umlauts
+        aside, so "Müller", "Mueller" and "MÜLLER " are one name. Accents go
+        too ("José" is "Jose"): one person typed on two phones is the case
+        to catch, and nobody is told apart by an accent."""
+        k = " ".join(str(name or "").split()).casefold()
+        for a, b in (("ä", "ae"), ("ö", "oe"), ("ü", "ue"), ("ß", "ss")):
+            k = k.replace(a, b)
+        return "".join(c for c in unicodedata.normalize("NFKD", k)
+                       if not unicodedata.combining(c))
+
+    @staticmethod
+    def split_name(name):
+        """(first name, the rest): "Max Müller" is ("Max", "Müller")."""
+        first, _, rest = " ".join(str(name or "").split()).partition(" ")
+        return first, rest
+
+    @classmethod
+    def near_surname(cls, a, b):
+        """Whether two surnames could be one typed twice: "Müler" for
+        "Müller". Not the same — that is not a question — but close enough
+        that the door should be asked rather than guessing."""
+        a, b = cls.name_key(a), cls.name_key(b)
+        if not a or not b or a == b:
+            return False
+        if abs(len(a) - len(b)) > 2:
+            return False
+        prev = list(range(len(b) + 1))
+        for i, x in enumerate(a, 1):
+            cur = [i]
+            for j, y in enumerate(b, 1):
+                cur.append(min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (x != y)))
+            prev = cur
+        return prev[-1] <= (1 if min(len(a), len(b)) < 5 else 2)
+
+    def full_name(self, pl):
+        """A player's name as given, surname and all."""
+        return (pl.full or pl.name) if pl else ""
+
+    def labels(self):
+        """What each player is called where everybody can see it: their
+        first name — the surname stays with the desk and the console —
+        unless somebody else tonight has the same first name. Then each of
+        them gets just enough of their surname to tell them apart: "Max
+        Mü." and "Max Ma.". One label per person, so somebody in two cups
+        is called the same in both; worked out over the whole evening, not
+        per cup, because the wall lists every cup's tables together."""
+        by_who = {}
+        for pid, pl in self.players.items():
+            full = self.full_name(pl)
+            k = self.who(pid)
+            if len(full) > len(by_who.get(k, "")):
+                by_who[k] = full
+        groups = defaultdict(list)
+        for k, full in by_who.items():
+            groups[self.name_key(self.split_name(full)[0])].append(k)
+        label = {}
+        for ks in groups.values():
+            if len(ks) == 1:
+                label[ks[0]] = self.split_name(by_who[ks[0]])[0]
+                continue
+            for k in ks:
+                first, rest = self.split_name(by_who[k])
+                mine = self.name_key(rest)
+                others = [self.name_key(self.split_name(by_who[o])[1]) for o in ks if o != k]
+                if not mine:
+                    label[k] = first            # the others carry the difference
+                    continue
+                # the fewest letters of the surname that nobody else's starts with
+                n = next((n for n in range(1, len(rest) + 1)
+                          if all(self.name_key(rest[:n]) != o[:len(self.name_key(rest[:n]))]
+                                 for o in others)), len(rest))
+                if " " in rest[:n].strip():
+                    # the difference is in a later word ("Scholz (2)"): all of it
+                    n = len(rest) if " " not in rest[n:] else rest.index(" ", n)
+                label[k] = f"{first} {rest[:n].strip()}" + ("." if n < len(rest) else "")
+        out = {pid: label[self.who(pid)] for pid in self.players}
+        # two still the same (two people with one full name): the whole name
+        seen = defaultdict(set)
+        for pid, l in out.items():
+            seen[l].add(self.who(pid))
+        return {pid: (self.full_name(self.players[pid]) if len(seen[l]) > 1 else l)
+                for pid, l in out.items()}
 
     def person_by_name(self, name):
         """Whoever in the directory goes by that name, ignoring case and

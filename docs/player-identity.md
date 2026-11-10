@@ -29,9 +29,33 @@ Today both are handled wrongly, in opposite directions:
 
 ## The rule
 
-**Identity is decided by evidence or by the desk, never by a name alone.**
+**Identity is decided by evidence, by the surname, or by the desk — never by
+a first name alone.**
 
-A name match is a reason to ask, not an answer.
+A first name somebody here already has is a reason to ask for the surname,
+not an answer.
+
+## Names: full inside, first name outside
+
+- **Signing up from home** (web form, bot) asks for the whole name in one
+  line, "Vor- und Nachname". Typing is cheap there, and the surname is the
+  best evidence later on. A one-word name is turned back.
+- **The door** (walk-in, console add, rename) takes a first name as before,
+  and asks for the surname only when somebody playing tonight already has
+  that first name.
+- Each `Player` keeps the name as given in `full`. `name` is what everybody
+  else sees: the first name, and only as much of the surname as it takes to
+  tell two people with one first name apart: "Max Mü." and "Max Ma."
+  (`Store.labels`). It is worked out over the whole evening, not per cup,
+  because the wall lists every cup's tables together, and it is one label per
+  person, so somebody in two cups is called the same in both. A second Max
+  arriving relabels the first; `App._relabel` logs that as a `player_update`
+  marked `label`, which the desk's activity does not report as a rename.
+- The desk and the console show and edit full names. `full` is in the admin,
+  referee and door payloads only; the public side, the wall and the phones
+  only ever get labels.
+- Names are compared with case, spacing, umlauts and accents folded
+  (`name_key`): "Müller", "Mueller" and "MÜLLER " are one name.
 
 ## Model
 
@@ -47,10 +71,9 @@ Invariants, enforced at every way in:
 
 1. **One person, one entry per cup.** A person may not be in two active
    entrants of the same cup, whether singles or as either member of a pair.
-2. **One name, one person tonight.** Two different people playing tonight
-   never share a display name (`name_key`). This holds in doubles cups too,
-   which today skip the check. The wall, the scoresheet and the referee
-   phone can then never be ambiguous.
+2. **One full name, one person tonight.** The same first and last name is
+   the same person. Two people who really share one full name are told
+   apart by something added to it ("Max Müller (Jun.)").
 3. **The dispatcher holds back people, not entries.** `busy_players` returns
    the person ids on a table (player id for a player without a person), and
    `entrant_available` checks the same. One human is never on two tables.
@@ -65,56 +88,54 @@ already exists, and merge/split become an ordinary `player_update` of
 
 Each name slot of an admission is decided on its own: the single, or each of
 the two names of a pair. That covers the door (`admit`), console add player
-and add team, and add from directory. Take the first rung that applies.
+and add team, renames, and add from directory. Take the first rung that
+applies.
 
 | # | Evidence | Result |
 |---|---|---|
 | 1 | The request says so: `same_as: {"a": <player_id>}` (the desk answered "same") | Same person |
 | 2 | **Witnessed key matches.** The registration's `tg_id` is the Telegram account of a person already playing tonight, or its `person_id` is, or its `holder` (below) is shared with an already confirmed registration | **Same person**, automatically |
-| 3 | **Witnessed keys conflict.** Both sides carry a Telegram account and they differ | **Different person**. No question; they need a distinguishing name (invariant 2) |
-| 4 | Name matches a person already playing tonight, nothing else known | **Ask.** Nothing is written |
-| 5 | Name matches nobody tonight | New player. The person comes from the directory as now (`_person_for`) |
+| 3 | **The same full name** as somebody playing tonight | **Same person**, automatically — unless their Telegram accounts differ, which needs a distinguishing name |
+| 4 | `other: {"a": true}` (the desk answered "someone else") | New player |
+| 5 | Only a first name, and somebody tonight has it | **Ask for the surname** (`surname`). Nothing is written |
+| 6 | A surname a typo away from a namesake's ("Müler" for "Müller"), or a namesake who never gave a surname | **Ask** (`same_person`). Nothing is written |
+| 7 | Anything else | New player. The person comes from the directory as now (`_person_for`) |
 
-At rung 2 or 4, if the person is already in *this* cup, admission is refused:
-"Max is already in Open singles". Invariant 1.
+Rung 6 skips a namesake who is already in this cup (one entry per cup) or
+whose Telegram account differs: those cannot be the same person. If the
+person found at rung 1–3 is already in *this* cup, admission is refused:
+"Max Müller is already in Open singles". Invariant 1.
 
-Automatic answers (rung 2) are shown on the entry as "same person as in
-Open singles · via Telegram" and can be undone with Split. They are evidence,
-not a registrant's claim, but the desk still sees them.
+A same-person answer the server reached on its own (rungs 2 and 3) can be
+undone with Split on the desk.
 
-### The question
+### The questions
 
-On a rung-4 match, the server writes nothing and returns:
+Both come back instead of a result, with nothing written:
 
 ```json
-{"ask": "same_person",
- "slot": "a",                       // a = the name, b = the partner
- "name": "Max",
- "player_id": "P3",
- "cups": ["Open singles"]}
+{"ask": "surname", "slot": "a", "name": "Max", "cups": ["Open singles"]}
+{"ask": "same_person", "slot": "a", "name": "Max Müller", "new_name": "Max Müler",
+ "player_id": "P3", "cups": ["Open singles"]}
 ```
 
-The desk (and the console's add form) puts it to the organiser:
+> **Which Max?** A Max is already playing in Open singles. Their surname
+> tells the two apart; only the desk sees it. [ Max ▏ ] [ Continue ]
 
-> **Max is already playing in Open singles. Same person?**
-> [ Yes, same Max ]   [ No, someone else ]
+The desk resends with the full name, which then goes through the ladder
+again: the same surname is rung 3, a different one rung 7, a near one
+rung 6.
 
-- **Yes**: resend with `same_as: {"a": "P3"}`. The new player takes
-  `person_id` of P3.
-- **No**: the desk asks for a name that tells them apart, prefilled from
-  "Max (2)", and resends with that name. No flag is needed: a name nobody
-  has tonight is somebody new by rung 5, and the same name only asks again
-  (invariant 2).
+> **Is Max Müler the Max Müller already playing in Open singles?**
+> [ Yes, same person ] [ No, someone else ]
 
-A pair with both names known tonight asks once per name.
+- **Yes**: resend with `same_as: {"a": "P3"}`.
+- **No**: resend with `other: {"a": true}`. The labels tell them apart.
 
-The answer is symmetric: whichever cup Max is checked into first, the second
-check-in asks.
-
-Both the desk and the console handle every question in one place
-(`tt/static/ask.js`): their `api()` sees `ask` in a reply, puts the question,
-and sends the same op again with the answer. A question asked when somebody
-is renamed (below) works the same way.
+A pair with both first names known tonight asks once per name. The desk and
+the console handle every question in one place (`tt/static/ask.js`): their
+`api()` sees `ask` in a reply, puts the question, and sends the same op again
+with the answer. Enter takes the highlighted answer.
 
 ## The web form's identity key: `holder`
 
@@ -141,18 +162,15 @@ as well.
 The partner named in a pair entry starts with no key: only the registrant
 filled in the form. Three things close the gap, cheapest first.
 
-**1. Most of the time there is no question at all.** The ladder only asks
-when the name is already playing tonight. A partner who plays only in this
-doubles cup is rung 5, a new player, and nothing is asked.
+**1. Most of the time there is no question at all.** A partner who plays
+only in this doubles cup is rung 7, a new player. A partner named in full
+who also plays in another cup is rung 3, the same person. Both without a
+question; signing up from home asks for the partner's whole name too.
 
-**2. When it does ask, the partner is standing there.** A pair checks in
-together. The door has the person in front of it, which is better evidence
-than any key, so the question costs one tap. The likely answer is "same":
-somebody already in Open singles also playing doubles is exactly the case
-this event is for. So when the matched person is checked in tonight,
-"Yes, same" comes first and is highlighted. It is still a question, never
-assumed, because two people with one name is the case that must not be
-merged.
+**2. When it does ask, the partner is standing there.** A partner named by
+first name only (at the door), or with a surname a typo off, is asked
+about, and the pair checks in together, so the answer is in front of the
+desk.
 
 **3. The partner can pick up their own key, if they want to.** A pair
 entry gets a second secret, `partner_token`, next to `token`:
@@ -195,7 +213,7 @@ cup tonight the console asks:
   that person tonight. `person_id` stays the same, and the person's
   directory name is updated.
 - **Someone else**: this player only. The new name then goes through the
-  ladder like an admission, rungs 4 and 5.
+  ladder like an admission.
 
 A person playing in only one cup keeps today's behaviour.
 
@@ -284,7 +302,7 @@ name matches the registration's `name`, as `_carry_tg` already does.
 - Strength stays parked (CLAUDE.md). Each entry keeps its own stored number.
 - Across events the directory still links a returning name to its person
   by exact name (`person_by_name`). A wrongly shared person from the past
-  is caught tonight by rung 4 the moment a second same-named person turns
+  is caught tonight the moment a second person with that first name turns
   up, so it cannot block anybody.
 
 ## Deploying
@@ -297,10 +315,12 @@ make them block each other for the rest of that night.
 
 - `test_one_person_two_cups`: rewrite to assert the person is **never** on
   two tables at once, and that both cups still finish.
-- Two singles cups, one person: the second check-in asks. "Same" links them
-  and they are never seated twice.
-- Two different Maxes, one per cup: "different" forces a new name. Both are
-  seated at the same time; separate people, separate Telegram.
+- One person, two cups: a first name only is asked for the surname; the same
+  surname links them, and they are never seated twice.
+- Two different Maxes, one per cup: a different surname is somebody else
+  without a question, the wall shows "Max Mü." and "Max Ma.", and the
+  surnames never reach the public payload. A surname a letter off is asked
+  about; "someone else" keeps them apart. Both are seated at the same time.
 - Telegram: the same account in two cups links without a question. Two
   different accounts with the same name are refused the "same" answer.
 - Web `holder`: a second sign-up from the same browser, same name, links.
@@ -315,5 +335,7 @@ make them block each other for the rest of that night.
   but never leaves a table idle.
 - Partner link: opening `q_<partner_token>` in the bot links that partner
   without a question, and they get table calls. A partner with no link who
-  already plays tonight is asked at the door, with "same" highlighted. A
-  partner who plays nowhere else tonight is not asked.
+  already plays tonight is that person when named in full, and asked for a
+  surname when named by first name only. A partner who plays nowhere else
+  tonight is not asked.
+- Signing up from home with one word for a name is turned back.

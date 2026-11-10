@@ -143,7 +143,7 @@ const beforeDoors = () => D.phase === 'announced' || D.phase === 'registration';
 const noShow = () => beforeDoors() ? 'Remove' : 'No show';
 const personNamed = n => D.people.find(p => nk(p.name) === nk(n));
 // a team name somebody chose, as opposed to the two names joined up
-const teamName = e => e.players.length > 1 && ![label(e.players), e.players.join(' / ')]
+const teamName = e => e.players.length > 1 && ![label(e.players), e.players.join(' / '), (e.labels || []).join(' / ')]
   .some(n => nk(n) === nk(e.name)) ? e.name : '';
 
 const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
@@ -924,7 +924,7 @@ async function walkIn() {
       person_id: p0 ? p0.id : undefined, partner_person_id: p1 ? p1.id : undefined,
     });
     if (!out) return;
-    const who = names.length > 1 && (w.team || '').trim() ? (w.team || '').trim() : label(names);
+    const who = names.length > 1 && (w.team || '').trim() ? (w.team || '').trim() : label(out.names || names);
     toast(out.where === 'roster' ? `${who} added, but ${out.why}.` : `${who} added`,
       () => api('remove_entrant', { id: out.entrant_id }));
   }

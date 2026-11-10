@@ -24,7 +24,11 @@
             `<button data-i="${i}" class="${b.primary ? 'go' : ''}">${esc(b.label)}</button>`).join('')}</div>
         </div>`;
       const done = v => { el.remove(); document.removeEventListener('keydown', key); resolve(v); };
-      const key = e => { if (e.key === 'Escape') done(null); };
+      const key = e => {
+        if (e.key === 'Escape') done(null);
+        // Enter takes the highlighted answer, so a typed surname needs no mouse
+        if (e.key === 'Enter') { const go = el.querySelector('button.go'); if (go) { e.preventDefault(); go.click(); } }
+      };
       el.addEventListener('click', e => {
         if (e.target === el) return done(null);
         const b = e.target.closest('button[data-i]');
@@ -36,7 +40,12 @@
       document.addEventListener('keydown', key);
       document.body.appendChild(el);
       const first = el.querySelector('#ask-in') || el.querySelector('button.go');
-      if (first) { first.focus(); if (first.select) first.select(); }
+      if (first) {
+        first.focus();
+        // a name to finish ("Max ") keeps the cursor at its end
+        if (first.select && !/\s$/.test(first.value)) first.select();
+        else if (first.setSelectionRange) first.setSelectionRange(first.value.length, first.value.length);
+      }
     });
   }
 
@@ -51,24 +60,30 @@
   }
 
   async function answerAsk(op, data, reply) {
+    if (reply.ask === 'surname') {
+      // a first name somebody here already has: the surname says who it is
+      const where = list(reply.cups || []);
+      const n = await sheet(`Which ${reply.name}?`,
+        `A ${reply.name} is already playing${where ? ' in ' + where : ''}. Their surname tells the two apart; only the desk sees it.`,
+        [{ label: 'Continue', value: 'name', primary: true }, { label: 'Cancel', value: null }],
+        `${reply.name} `);
+      if (!n || !n.text || n.text.split(/\s+/).length < 2) return null;
+      return withName(op, data, reply.slot, n.text);
+    }
     if (reply.ask === 'same_person') {
       const where = list(reply.cups || []);
-      const a = await sheet(`${reply.name} is already playing${where ? ' in ' + where : ''}. Same person?`,
-        'If it is somebody else with the same name, they need a name that tells them apart.',
-        [{ label: `Yes, same ${reply.name}`, value: 'same', primary: true },
+      const asked = reply.new_name && reply.new_name !== reply.name ? reply.new_name : reply.name;
+      const a = await sheet(`Is ${asked} the ${reply.name} already playing${where ? ' in ' + where : ''}?`,
+        reply.new_name && reply.new_name !== reply.name
+          ? 'The names are close enough to be one name typed twice.'
+          : 'One of them has no surname here, so the name can’t tell.',
+        [{ label: `Yes, same person`, value: 'same', primary: true },
          { label: 'No, someone else', value: 'other' },
          { label: 'Cancel', value: null }]);
       if (!a) return null;
-      if (a.value === 'same') {
-        const same = (data.same_as && typeof data.same_as === 'object') ? data.same_as : {};
-        return { ...data, same_as: { ...same, [reply.slot]: reply.player_id } };
-      }
-      const n = await sheet('A name that tells them apart',
-        `So the wall, the scoresheet and the tables never mix up the two of them.`,
-        [{ label: 'Use this name', value: 'name', primary: true }, { label: 'Cancel', value: null }],
-        `${reply.name} (2)`);
-      if (!n || !n.text) return null;
-      return withName(op, data, reply.slot, n.text);
+      const key = a.value === 'same' ? 'same_as' : 'other';
+      const was = (data[key] && typeof data[key] === 'object') ? data[key] : {};
+      return { ...data, [key]: { ...was, [reply.slot]: a.value === 'same' ? reply.player_id : true } };
     }
     if (reply.ask === 'rename_scope') {
       const where = list(reply.cups || []);

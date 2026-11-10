@@ -59,6 +59,11 @@ class Player:
     strength: float = 5.0          # 1..10, organiser estimate
     active: bool = True
     person_id: Optional[str] = None   # who they are in the club directory
+    # the name as given, surname and all. `name` is what everybody else
+    # sees: the first name, and only as much of the surname as it takes to
+    # tell two of them apart (Store.labels). Empty in older logs, where the
+    # name was all there was
+    full: str = ""
 
     def to_dict(self):
         return asdict(self)

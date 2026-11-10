@@ -588,7 +588,7 @@ def test_talking_to_the_room():
     app, fake, d = fresh()
     s = app.store
     cup = event(app)
-    fans = [fake.user(n) for n in ("Una", "Vic", "Wes")]
+    fans = [fake.user(n, "Lind") for n in ("Una", "Vic", "Wes")]
     for u in fans:
         fake.say(u, "/start")
     app.telegram.pump()
@@ -602,7 +602,7 @@ def test_talking_to_the_room():
           "an announcement is the event card itself")
     fake.tap(fans[0], "Ich bin dabei")
     app.telegram.pump()
-    fake.tap(fans[0], "✓ Una")
+    fake.tap(fans[0], "✓ Una Lind")
     app.telegram.pump()
     check(len(s.pending_regs()) == 1, "and its button enters them")
 
@@ -617,7 +617,7 @@ def test_talking_to_the_room():
     app.telegram.pump()
     tg = app.state("admin")["telegram"]
     th = next(t for t in tg["threads"] if t["chat_id"] == fans[0]["id"])
-    check(th["unread"] == 1 and th["name"] == "Una", "a player's message reaches the Chat tab")
+    check(th["unread"] == 1 and th["name"] == "Una Lind", "a player's message reaches the Chat tab")
     check(tg["unread"] >= 1, "with an unread count for the tab")
     check(fake.seen(fans[0], "bei der Orga angekommen"), "and they know it arrived")
     app.act("admin", "tg_send", {"audience": "chat", "chat_id": fans[0]["id"],
@@ -676,7 +676,7 @@ def test_the_round_message():
     print("\nthe round message: optional, once, and never at the event's expense")
     app, fake, d = fresh()
     event(app)
-    fans = [fake.user(n) for n in ("Una", "Vic", "Wes")]
+    fans = [fake.user(n, "Lind") for n in ("Una", "Vic", "Wes")]
     for u in fans:
         fake.say(u, "/start")
     app.telegram.pump()
@@ -704,7 +704,7 @@ def test_the_round_message():
     check("🌐 Alle Infos" in labels, "with the way to the page")
     fake.tap(fans[0], "Ich bin dabei")
     app.telegram.pump()
-    fake.tap(fans[0], "✓ Una")
+    fake.tap(fans[0], "✓ Una Lind")
     app.telegram.pump()
     check(len(app.store.pending_regs()) == 1, "and its button enters them")
     n = len([c for c in fake.calls if c[0] == "sendMessage" and "Neuer Termin" in c[1]["text"]])
@@ -1061,7 +1061,7 @@ def test_players_claim_themselves_from_the_live_page():
     cup = event(app, tables=1, phase="doors")
     for n in ("Jana Berger", "Tom Frei"):
         app.act("admin", "admit", {"cup_id": cup, "name": n})
-    jana_p = next(p for p in s.players.values() if p.name == "Jana Berger")
+    jana_p = next(p for p in s.players.values() if s.full_name(p) == "Jana Berger")
     ev = s.event.get("id") or ""
     st = app.state("public")
     check(st["telegram"]["on"] and any(p["id"] == jana_p.id for p in st["players"]),
@@ -1081,7 +1081,7 @@ def test_players_claim_themselves_from_the_live_page():
           "a name already linked to another phone is not taken over")
     check(fake.seen(other, "schon mit einem anderen Telegram"), "the second phone is told why")
 
-    tom_p = next(p for p in s.players.values() if p.name == "Tom Frei")
+    tom_p = next(p for p in s.players.values() if s.full_name(p) == "Tom Frei")
     fake.say(jana, f"/start c_{ev}_{tom_p.id}")
     app.telegram.pump()
     check(s.people[tom_p.person_id].tg_id == jana["id"]

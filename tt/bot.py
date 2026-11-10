@@ -461,7 +461,8 @@ class Conversation:
         if who.tg_id == uid:
             return self.show_card(uid, f"{hello}\n✓ Du bist schon <b>{esc(who.name)}</b>.")
         if who.tg_id:
-            return self.show_card(uid, f"{hello}\n<b>{esc(who.name)}</b> ist schon mit einem "
+            # somebody else's account: their label, never their surname
+            return self.show_card(uid, f"{hello}\n<b>{esc(pl.name)}</b> ist schon mit einem "
                                        "anderen Telegram verknüpft. Wenn das nicht stimmt, "
                                        "sag am Eingang Bescheid.")
         self.bot.system("tg_link", {"person_id": who.id, "tg_id": uid,
@@ -899,7 +900,9 @@ class Conversation:
         name = name or chat.get("name") or ""
         if not name:
             full = " ".join(x for x in (chat.get("first_name"), chat.get("last_name")) if x)
-            if not full:
+            # the account's name only when it has a surname: it is what
+            # tells two of a first name apart (docs/player-identity.md)
+            if len(full.split()) < 2:
                 return self.dispatch(uid, "n", f"{cup_id}:{kind}:e", mid, False)
             self.edit(uid, mid, "Unter welchem Namen sollen wir dich eintragen?",
                       [[button(f"✓ {full}", f"n:{cup_id}:{kind}:y")],
@@ -961,8 +964,8 @@ class Conversation:
     def on_answer(self, uid, pending, text):
         text = " ".join(text.split())[:60]
         cup, kind, mid = pending.get("cup"), pending.get("kind"), pending.get("mid")
-        if len(text) < 2:
-            # not a name: ask again, same place, same way out
+        if len(text) < 2 or len(text.split()) < 2:
+            # not a whole name: ask again, same place, same way out
             return self.ask(uid, mid, pending["ask"], cup, kind,
                             "Das sieht nicht nach einem Namen aus — schreib bitte "
                             "Vor- und Nachnamen.")
