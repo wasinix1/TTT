@@ -138,6 +138,30 @@ class App:
                 return "entered" if f.status == "setup" else "drawn"
         return "outside"
 
+    def elsewhere(self, eid):
+        """Who of this entry is on a table for another entry right now —
+        somebody in two cups — and where: what the desk, Up next and the
+        wall say instead of a bare "blocked" (docs/player-identity.md)."""
+        s = self.store
+        e = s.entrants.get(eid or "")
+        if not e:
+            return []
+        out = []
+        for pid in e.player_ids:
+            if pid not in s.players:
+                continue
+            k = s.who(pid)
+            for n, t in sorted(s.tables.items()):
+                m = s.matches.get(t.match_id) if t.match_id else None
+                if not m or eid in (m.entrant_a, m.entrant_b):
+                    continue
+                if any(s.who(q) == k for q in m.players()):
+                    cup = s.cup_of_format(s.formats.get(m.format_id))
+                    out.append({"name": s.players[pid].name, "table": n,
+                                "table_name": t.name or f"Table {n}",
+                                "cup": s.cups[cup].name if cup else ""})
+        return out
+
     def side_name(self, m, which):
         """What to call one side of a match: the pair's name, the entrant's,
         or the players drawn into it for a scramble."""
@@ -311,6 +335,10 @@ class App:
                     "id": e.id, "name": e.name, "cup_id": e.cup_id,
                     "players": [s.players[p].name for p in e.player_ids if p in s.players],
                     "player_ids": [p for p in e.player_ids if p in s.players],
+                    # who each player is: two entries with one person id are
+                    # one human in two cups (docs/player-identity.md)
+                    "persons": [s.players[p].person_id for p in e.player_ids if p in s.players],
+                    "elsewhere": self.elsewhere(e.id),
                     "status": self.entrant_status(e),
                     "table": t[0] if t else None, "vs": t[1] if t else "",
                     "removable": not self._why_not_removable(e),
@@ -462,6 +490,7 @@ class App:
                 "entrants": [{**e.to_dict(),
                               "strength": round(s.entrant_strength(e.id), 1),
                               "status": self.entrant_status(e),
+                              "elsewhere": self.elsewhere(e.id),
                               # which way out applies: delete them outright
                               # while nothing depends on them, or withdraw
                               # them and settle what they owe once something

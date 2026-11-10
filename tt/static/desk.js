@@ -204,6 +204,14 @@ function alsoIn(names, cup) {
    says no. Nobody plays one cup twice. The same name in another cup is not
    a clash: the server asks whether it is the same person
    (docs/player-identity.md). */
+/* "playing in Open singles · T3": somebody of this entry is on a table for
+   another of their cups. Named for a pair, where it is only one of them. */
+function elsewhereText(e) {
+  const x = (e.elsewhere || [])[0];
+  if (!x || e.status === 'playing') return '';
+  return `${e.players.length > 1 ? x.name + ' ' : ''}playing in ${x.cup || 'another cup'} · T${x.table}`;
+}
+
 /* The people of this entry who are also in another cup tonight, and in how
    many: what "gone home from all cups" can reach. */
 function elsewhere(e) {
@@ -396,7 +404,8 @@ function hereRow(e) {
         e.status === 'playing' && e.vs ? `<i>·</i>vs ${esc(e.vs)}` : ''}${
         (e.people || []).some(p => p.tg) ? '<i>·</i>table calls on Telegram' : ''}${alsoIn(entNames(e), e.cup_id)}</div></div>
     <span class="cupn">${showCupName() ? esc(cupName(e.cup_id)) : ''}</span>
-    <span class="go"><span class="chip ${cls}">${esc(lab)}${e.status === 'playing' && e.table ? ' · T' + e.table : ''}</span></span>
+    <span class="go"><span class="chip ${elsewhereText(e) ? 'hot' : cls}">${elsewhereText(e) ? esc(elsewhereText(e))
+      : esc(lab) + (e.status === 'playing' && e.table ? ' · T' + e.table : '')}</span></span>
   </div>`;
 }
 
@@ -572,6 +581,66 @@ function renderSide() {
   return `<aside class="side2">${walkForm()}${attnHTML}${justIn}${looking}${off}${act}${keys}</aside>`;
 }
 
+/* -------------------------------------------------------- Same person?
+
+   The fix for a wrong answer at the door (docs/player-identity.md). Merge:
+   this player is the same human as somebody in another cup. Split: the
+   other cup's namesake is somebody else, under a name that tells them
+   apart. Both are ordinary logged changes, so the toast can undo them. */
+
+function personOf(e, i) { return (e.persons || [])[i] || ''; }
+
+function identityBlock(e) {
+  const open = V.ident === e.id;
+  const rows = e.player_ids.map((pid, i) => {
+    const me = personOf(e, i), nm = e.players[i];
+    const theirs = D.entrants.filter(x => x.id !== e.id && x.status !== 'withdrawn'
+      && (x.persons || []).includes(me));
+    // who else tonight could be this person: in another cup, not already one of us
+    const mine = new Set(D.entrants.filter(x => x.cup_id === e.cup_id).flatMap(x => x.persons || []));
+    const seen = new Set([me]);
+    const could = [];
+    for (const x of D.entrants) {
+      if (x.status === 'withdrawn' || x.cup_id === e.cup_id) continue;
+      (x.persons || []).forEach((p, j) => {
+        if (!p || seen.has(p) || mine.has(p)) return;
+        seen.add(p);
+        could.push({ pid: x.player_ids[j], name: x.players[j], cup: cupName(x.cup_id) });
+      });
+    }
+    could.sort((a, b) => (nk(b.name).startsWith(nk(nm).slice(0, 3)) - nk(a.name).startsWith(nk(nm).slice(0, 3)))
+      || a.name.localeCompare(b.name));
+    const split = theirs.length ? `<div class="identrow">
+        <span class="small">${esc(nm)} is the same person in ${esc(theirs.map(x => cupName(x.cup_id)).join(', '))}.
+          Not the same? Give this one a name that tells them apart:</span>
+        <div class="actions"><input type="text" id="split-${pid}" value="${esc(nm)} (2)" aria-label="New name">
+          <button class="btn tiny" data-act="split" data-p="${pid}" data-e="${e.id}">Split</button></div></div>` : '';
+    const merge = could.length ? `<div class="identrow">
+        <label class="small" for="merge-${pid}">${esc(nm)} is the same person as</label>
+        <div class="actions"><select id="merge-${pid}">${could.map(c =>
+          `<option value="${c.pid}">${esc(c.name)} · ${esc(c.cup)}</option>`).join('')}</select>
+          <button class="btn tiny" data-act="merge" data-p="${pid}" data-e="${e.id}">Merge</button></div></div>` : '';
+    return split + merge;
+  }).join('');
+  if (!rows) return '';
+  return `<details class="ident" ${open ? 'open' : ''} data-ident="${e.id}">
+      <summary class="small">Same person in another cup?</summary>${rows}</details>`;
+}
+
+// keep "Same person in another cup?" open across the refresh that redraws it
+document.addEventListener('toggle', ev => {
+  const el = ev.target;
+  if (el && el.dataset && el.dataset.ident) V.ident = el.open ? el.dataset.ident : (V.ident === el.dataset.ident ? '' : V.ident);
+}, true);
+
+function playerById(pid) {
+  for (const x of D.entrants) {
+    const i = x.player_ids.indexOf(pid);
+    if (i >= 0) return x.players[i];
+  }
+  return '';
+}
+
 /* --------------------------------------------------------------- Detail */
 
 function field(id, lab, value, attrs = '') {
@@ -589,7 +658,9 @@ function entrantDetail(e, close) {
   const asking = V.confirm === 'gone:' + e.id;
   return `<div class="top"><h3>${esc(label(entNames(e)))}</h3>${close}</div>
     <div><span class="chip ${chip}">${esc(lab)}${e.status === 'playing' && e.table ? ' · table ' + e.table : ''}</span>
-      <span class="small muted"> ${esc(tip)}${e.status === 'playing' && e.vs ? ' Against ' + esc(e.vs) + '.' : ''}</span></div>
+      <span class="small muted"> ${esc(tip)}${e.status === 'playing' && e.vs ? ' Against ' + esc(e.vs) + '.' : ''}</span>
+      ${elsewhereText(e) ? `<span class="chip hot">${esc(elsewhereText(e))}</span>
+        <span class="small muted"> Called here once that match is over.</span>` : ''}</div>
     <div class="fields">
       ${e.player_ids.map((pid, i) => field(`e-p-${pid}`, pair ? `Player ${i + 1}` : 'Name', e.players[i],
         `data-edit="player" data-e="${e.id}" data-p="${pid}"`)).join('')}
@@ -618,6 +689,7 @@ function entrantDetail(e, close) {
           : `<button class="btn ghost tiny" data-act="gone-ask" data-e="${e.id}">Gone home…</button>`}
       </div>`}
     ${gone ? '' : tgBlock(e)}
+    ${gone ? '' : identityBlock(e)}
     <dl class="facts">
       <dt>In</dt><dd>${e.added_ts ? 'at ' + esc(clock(e.added_ts)) + ' · ' : ''}${r
         ? 'registered ' + esc(when(r.created_ts)) : 'walk-in'}</dd>
@@ -974,6 +1046,26 @@ document.addEventListener('click', async ev => {
       V.confirm = '';
       const out = await api('withdraw', { entrant_id: e.id, withdrawn: true, everywhere: true, person_id: d.p });
       if (out) toast(`Gone home from ${out.entrant_ids.length} cups${out.walkovers ? ` · ${out.walkovers} match${out.walkovers === 1 ? '' : 'es'} given to the opponent` : ''}`);
+      return;
+    }
+    if (act === 'merge' && e) {
+      const into = ($('merge-' + d.p) || {}).value;
+      if (!into) return;
+      const was = e.players[e.player_ids.indexOf(d.p)];
+      V.ident = e.id;
+      if (await api('merge_players', { id: d.p, into }))
+        toast(`${was} is now the same person as ${playerById(into)}`,
+              () => api('split_player', { id: d.p, name: was }));
+      return;
+    }
+    if (act === 'split' && e) {
+      const name = (($('split-' + d.p) || {}).value || '').trim();
+      if (!name) return;
+      const twin = D.entrants.find(x => x.id !== e.id && (x.persons || []).includes(personOf(e, e.player_ids.indexOf(d.p))));
+      const was = twin && twin.player_ids[(twin.persons || []).indexOf(personOf(e, e.player_ids.indexOf(d.p)))];
+      V.ident = e.id;
+      if (await api('split_player', { id: d.p, name }))
+        toast(`${name} is somebody else now`, was ? () => api('merge_players', { id: d.p, into: was }) : null);
       return;
     }
     if (act === 'back' && e) {

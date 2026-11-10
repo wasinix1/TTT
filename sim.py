@@ -2588,6 +2588,32 @@ def test_a_breather_between_cups():
     check(not s.breathing_players(), "a breather of 0 turns it off")
     shutil.rmtree(d)
 
+def test_playing_elsewhere_is_said():
+    print("\n[somebody on a table for their other cup: the desk, Up next and the wall say where]")
+    app, d, c1, c2 = two_cup_night(tables=2)
+    s = app.store
+    app.act("admin", "admit", {"cup_id": c1, "name": "Max"})
+    ask = app.act("admin", "admit", {"cup_id": c2, "name": "Max"})
+    app.act("admin", "admit", {"cup_id": c2, "name": "Max", "same_as": ask["player_id"]})
+    for n in ("A",):
+        app.act("admin", "admit", {"cup_id": c1, "name": n})
+    for n in ("B", "C"):
+        app.act("admin", "admit", {"cup_id": c2, "name": n})
+    start_cups(app, c1)
+    dispatch.tick(s)
+    start_cups(app, c2)
+    dispatch.tick(s)
+    mine = [e for e in s.entrants.values() if e.cup_id == c2 and e.name == "Max"][0]
+    where = app.elsewhere(mine.id)
+    check(where and where[0]["cup"] == "Open singles" and where[0]["table"],
+          "his Second entry knows he is on a table for Open singles")
+    row = next(e for e in app.desk_state("door")["entrants"] if e["id"] == mine.id)
+    check(row["elsewhere"] and row["elsewhere"][0]["cup"] == "Open singles",
+          "the door sees it on his row")
+    up = [r for b in app.state("admin")["board"] for r in b["up"] if mine.id in r.get("entrants", [])]
+    check(up and up[0]["elsewhere"], "and Up next says it on his match")
+    shutil.rmtree(d)
+
 
 # ---------------------------------------- Best of changed after the draw
 def test_best_of_change_mid_event():
@@ -3242,6 +3268,7 @@ if __name__ == "__main__":
     test_renames_and_gone_home_across_cups()
     test_merge_and_split()
     test_a_breather_between_cups()
+    test_playing_elsewhere_is_said()
     test_best_of_change_mid_event()
     test_a_correction_redraws_an_unplayed_bracket()
     test_a_late_correction_is_reported_not_forced()

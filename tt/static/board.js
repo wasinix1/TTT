@@ -17,6 +17,8 @@ function colsFor(n, multi) {
 }
 
 function when(r) {
+  const x = (r.elsewhere || [])[0];
+  if (x) return `${x.name} playing in ${x.cup || 'another cup'}`;
   if (r.blocked) return 'still playing';
   if (r.on_deck) return 'get ready';
   if (r.eta_min == null) return '';

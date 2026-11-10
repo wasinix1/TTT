@@ -232,10 +232,12 @@ immediately called to the next:
 
 What everyone sees:
 
-- Up next and the desk show "playing in Open singles, T3" instead of a
-  plain blocked row.
-- His opponent's waiting time takes Max's current match into account.
-- Telegram tells Max "Doubles next, after your singles match".
+- Up next, the desk and the wall show "playing in Open singles · T3"
+  instead of a plain blocked row (`App.elsewhere`, carried on desk and
+  console entrants and on board rows as `elsewhere`).
+- Not built yet: his opponent's waiting time taking Max's current match
+  into account, and Telegram telling Max "Doubles next, after your singles
+  match".
 
 ## Gone home and sitting out
 
@@ -249,7 +251,8 @@ What everyone sees:
 ## Fixing a wrong answer
 
 Two desk actions, both plain `player_update` events, so Undo and the log
-cover them:
+cover them. On the desk they sit in an entry's detail under "Same person in
+another cup?", and the toast after either one undoes it with the other:
 
 - **Merge** "these two are the same person": set the second player's
   `person_id` to the first's. Refused if both are on a table right now, or

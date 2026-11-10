@@ -726,6 +726,13 @@ function cupName(id) {
    marked Next in red; on any other, hovering shows what can be done with it
    — Seat now (to the front of the line) and Sit out. Whoever only watches
    sees Get ready, the players' word, and no actions. */
+/* Somebody in two cups who is on a table for the other one right now: said
+   on the row, rather than leaving it looking stuck (docs/player-identity.md). */
+function elsewhereChip(r) {
+  const x = (r.elsewhere || [])[0];
+  return x ? `<span class="chip" title="Called here once that match is over">${esc(nice(x.name))} playing in ${
+    esc(x.cup || 'another cup')} · T${x.table}</span>` : '';
+}
 function upTail(r) {
   // the front of the line is Next, as are any that will go on as soon as a
   // table frees (the board's on_deck); a pair still playing elsewhere is not
@@ -743,6 +750,7 @@ function upTail(r) {
   return `<span class="tail">
       ${r.kind === 'pairing' && !(canScore() && next) ? `<span class="chip" title="Worked out by the same rule that will seat them">next</span>` : ''}
       ${r.deferred > 0 ? `<span class="chip">put back</span>` : ''}
+      ${elsewhereChip(r)}
       ${canScore() ? (next ? '<span class="tag-next">Next</span>' : '') : r.on_deck ? '<span class="ready">Get ready</span>' : ''}
       ${acts ? `<span class="ac">${acts}</span>` : ''}
     </span>`;

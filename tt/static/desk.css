@@ -269,3 +269,10 @@ details.blk2 summary h3 span{margin-left:auto}
 
 /* the header carries the mark alone; the evening's name stays for screen readers */
 .bar .ev{position:absolute!important;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);clip-path:inset(50%);white-space:nowrap}
+
+/* Same person in another cup? — merge and split (docs/player-identity.md) */
+.ident{margin:12px 0;font-size:13.5px}
+.ident summary{cursor:pointer;color:var(--ink-2)}
+.identrow{display:flex;flex-direction:column;gap:6px;background:var(--sheet);border-radius:12px;padding:10px 12px;margin-top:8px;box-shadow:0 0 0 1px rgba(27,27,27,.06)}
+.identrow .actions{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.identrow input,.identrow select{font:inherit;font-size:14px;padding:6px 10px;border-radius:8px;border:1px solid var(--rule);background:var(--field);color:var(--ink);min-width:0;flex:1 1 160px}
