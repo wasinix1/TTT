@@ -134,6 +134,14 @@ button.mark:focus-visible{outline:2px solid var(--red);outline-offset:4px}
 .how ol{display:flex;gap:2.2vw;margin:0;padding:0;list-style:none;flex:1;min-width:0}
 .how li{flex:1;min-width:0;font:600 1.9vh/1.25 var(--grot)}
 .how li b{display:block;font-weight:700;font-size:1.45vh;letter-spacing:.12em;text-transform:uppercase;opacity:.7;margin-bottom:.4vh}
+/* a tall screen sizes by its short side, like the rest of the wall: in vh the
+   strip would read bigger than the names on the tables */
+@media (orientation:portrait){
+  .how{gap:2.4vmin;margin-top:1.6vmin;padding:1.4vmin 1.4vw;border-radius:1.8vmin}
+  .how img{height:9vmin;width:9vmin;border-radius:.8vmin}
+  .how li{font-size:1.9vmin}
+  .how li b{font-size:1.45vmin;margin-bottom:.4vmin}
+}
 </style>
 <script>
 /* dark is opt-in: ?dark, ?light, or a tap on the mark (remembered) */
