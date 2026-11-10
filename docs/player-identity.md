@@ -130,8 +130,50 @@ From Telegram the account is the key already (`tg_id`), so no `holder` is
 needed. A web entry later opened in the bot (`tg_attach`) gets the account
 as well.
 
-The partner named in a pair entry has no key at all. Only the registrant
-does. Partners always go through the ladder by name.
+### Partners
+
+The partner named in a pair entry starts with no key: only the registrant
+filled in the form. Three things close the gap, cheapest first.
+
+**1. Most of the time there is no question at all.** The ladder only asks
+when the name is already playing tonight. A partner who plays only in this
+doubles cup is rung 5, a new player, and nothing is asked.
+
+**2. When it does ask, the partner is standing there.** A pair checks in
+together. The door has the person in front of it, which is better evidence
+than any key, so the question costs one tap. The likely answer is "same":
+somebody already in Open singles also playing doubles is exactly the case
+this event is for. So when the matched person is checked in tonight,
+"Yes, same" comes first and is highlighted. It is still a question, never
+assumed, because two people with one name is the case that must not be
+merged.
+
+**3. The partner can pick up their own key, if they want to.** A pair
+entry gets a second secret, `partner_token`, next to `token`:
+
+- The confirmation (web and bot) offers "Send this to Tom", a link the
+  registrant forwards: `/me/<partner_token>` on the web, `p2_<partner_token>`
+  in the bot.
+- Opening it in the bot sets `partner_tg_id`. Opening it in the browser
+  stores the token in that browser's `tt_regs`, so Tom's own later sign-ups
+  carry it as `prev` and give him a `partner_holder` key.
+- Tom's view of the entry is read-only, apart from the Telegram link and
+  "I'm not playing": that writes a note for the desk and cancels nothing.
+  The entry still belongs to the registrant.
+- At the door, `partner_tg_id` and `partner_holder` are rung-2 evidence for
+  the partner slot, the same as the registrant's keys are for theirs.
+- Side benefit: Tom gets table calls on Telegram from the first match,
+  rather than only once the door has linked him.
+
+It is opt-in. Nothing breaks if the link is never forwarded; the door asks,
+as above.
+
+**When the partner registered too.** If Tom also signed up himself in
+another cup, his own registration has a key, but the pair entry only has
+his name. A name pointing at a keyed registration is still only a name, so
+the door asks (case 2). If Tom signed up for the *same* doubles team, the
+existing duplicate handling (`_team_entered`, `_carry_tg`) already folds
+the two together and carries his Telegram account across.
 
 ## Renames
 
@@ -262,3 +304,7 @@ make them block each other for the rest of that night.
 - Wanted by two cups: the second match keeps its place and is seated as soon
   as he is free. He alternates cups. The breather yields to anyone else ready,
   but never leaves a table idle.
+- Partner link: opening `p2_<partner_token>` in the bot links that partner
+  without a question, and they get table calls. A partner with no link who
+  already plays tonight is asked at the door, with "same" highlighted. A
+  partner who plays nowhere else tonight is not asked.
