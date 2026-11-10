@@ -72,6 +72,11 @@ async function api(op, data) {
   });
   const j = await r.json().catch(() => ({ error: 'bad response' }));
   if (!r.ok) { toast(j.error || 'That did not work'); return null; }
+  if (j.ask) {
+    // nothing was written: a question only the organiser can answer
+    const again = await answerAsk(op, data || {}, j);
+    return again ? api(op, again) : null;
+  }
   await poll(true);
   return j;
 }
@@ -2151,29 +2156,26 @@ const playerName = id => (S.players.find(p => p.id === id) || {}).name || '';
 const cupById = id => S.cups.find(c => c.id === id);
 const regById = id => (S.registrations || []).find(r => r.id === id);
 
-/* The mirror of the server's check (App._refuse_duplicate), so the door can
-   say so while you type instead of after you press the button. The server
-   is still the one that refuses.
+/* The mirror of the server's refusal, so the door can say so while you type
+   instead of after you press the button. The server is still the one that
+   refuses.
 
-   Singles: the name must be new tonight. Doubles: only the same two people
-   together are a duplicate — somebody can be in a singles cup and a doubles
-   cup, and can change partners. Pre-registrations are not checked; they
-   are allowed to overlap, and this is where the overlap is sorted out. */
+   Nobody plays one cup twice, so a name already in this cup has to be told
+   apart. The same name in another cup is not a clash: the server asks
+   whether it is the same person (docs/player-identity.md). Pre-registrations
+   are not checked; they are allowed to overlap, and this is where the
+   overlap is sorted out. */
 function dupMsg(cupId, kind, name, partner) {
   const cup = cupById(cupId);
-  if (!nameKey(name)) return '';
-  if (kind === 'pair') {
-    if (!nameKey(partner)) return '';
-    const want = [nameKey(name), nameKey(partner)].sort().join('|');
-    const hit = S.entrants.some(e => e.player_ids.length === 2 &&
-      e.player_ids.map(i => nameKey(playerName(i))).sort().join('|') === want);
-    return hit ? `${name.trim()} & ${partner.trim()} are already a team tonight.` : '';
+  const names = [name].concat(kind === 'pair' ? [partner] : []).filter(n => nameKey(n));
+  const where = cup ? cup.name : 'tonight';
+  for (const n of names) {
+    const hit = S.entrants.some(e => (e.cup_id || '') === (cupId || '') && e.status !== 'withdrawn'
+      && e.player_ids.some(i => nameKey(playerName(i)) === nameKey(n)));
+    if (hit) return `There is already a “${n.trim()}” in ${where} — add something to tell them ` +
+      `apart, like “${n.trim()} (blue shirt)”.`;
   }
-  if (cup && cup.entry === 'pair') return '';
-  const hit = S.entrants.some(e => e.player_ids.length === 1 &&
-    nameKey(playerName(e.player_ids[0])) === nameKey(name));
-  return hit ? `There is already a “${name.trim()}” tonight — add something to tell them ` +
-    `apart, like “${name.trim()} (blue shirt)”.` : '';
+  return '';
 }
 
 /* What the door will actually use, before anyone touches the box. Rendering

@@ -193,6 +193,35 @@ def _rank(store, running):
     return key
 
 
+def _proposal_players(store, p):
+    if p.match_id:
+        m = store.matches.get(p.match_id)
+        return m.players() if m else []
+    c = p.create or {}
+    return list(c.get("side_a") or []) + list(c.get("side_b") or [])
+
+
+def _rebounds(store, offers, last):
+    """Cups whose offer would call somebody straight back to the cup they
+    just played in while another cup is also asking for them. Those offers
+    go behind the rest, so a person in two cups alternates rather than
+    playing one cup's whole evening first (docs/player-identity.md)."""
+    if not last:
+        return set()
+    wanted = {}
+    for cup, p in offers.items():
+        for pid in _proposal_players(store, p):
+            pl = store.players.get(pid)
+            if pl and pl.person_id in last:
+                wanted.setdefault(pl.person_id, set()).add(cup)
+    out = set()
+    for person, cups in wanted.items():
+        just = last[person][1]
+        if len(cups) > 1 and just in cups:
+            out.add(just)
+    return out
+
+
 def tick(store):
     """Advance phases, then fill every free table. Safe to call on any request."""
     with store.lock:
@@ -213,19 +242,24 @@ def tick(store):
             if not free:
                 return
             busy = store.busy_players()
+            breathing = store.breathing_players()
+            last = store.last_played()
             running = [store.formats[i] for i in store.format_order
                        if i in store.formats
                        and store.formats[i].status == "running"]
 
-            # first pass respects each format's strength tolerance; if that
-            # leaves a table empty, go round again ignoring it, because an
-            # idle table is worse than an imperfect pairing
+            # first pass respects each format's strength tolerance and gives
+            # somebody who plays in two cups a breather after a match; if
+            # that leaves a table empty, go round again ignoring both,
+            # because an idle table is worse than an imperfect pairing
             seated = None
             for force in (False, True):
-                offers = _offers(store, busy, force)
+                offers = _offers(store, busy if force else busy | breathing, force)
                 if not offers:
                     continue
-                key = _rank(store, running)
+                rank = _rank(store, running)
+                again = _rebounds(store, offers, last)
+                key = lambda c: (c in again, rank(c))
                 # reservations first; only then lend. Otherwise a lent table
                 # could be used while a shared one stands free.
                 for lend in (False, True):

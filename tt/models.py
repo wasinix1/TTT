@@ -181,10 +181,21 @@ class Registration:
     # in any payload or log view.
     token: str = ""
     rsvp: str = ""                 # "yes" once they answered the reminder
+    # Who is behind the entry, across entries (docs/player-identity.md).
+    # `holder` is shared by sign-ups from one browser under one name, so
+    # the door knows two cups' entries are one person without asking. The
+    # partner of a pair gets the same three things: a link of their own
+    # (`partner_token`, forwarded by whoever registered), the Telegram
+    # account that opened it, and a holder their own later sign-ups share.
+    holder: str = ""
+    partner_token: str = ""
+    partner_tg_id: Optional[int] = None
+    partner_holder: str = ""
 
     def to_dict(self):
         d = asdict(self)
-        d.pop("token", None)
+        for k in ("token", "partner_token", "holder", "partner_holder"):
+            d.pop(k, None)
         return d
 
 

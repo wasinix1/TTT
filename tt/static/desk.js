@@ -102,6 +102,11 @@ async function api(op, data) {
     });
     const j = await r.json().catch(() => ({}));
     if (!r.ok) { toast(j.error ? cap(j.error) + '.' : 'That did not go through. Try again.'); return null; }
+    if (j.ask) {
+      // nothing was written: a question only the desk can answer
+      const again = await answerAsk(op, data, j);
+      return again ? api(op, again) : null;
+    }
     return j;
   } catch (e) {
     toast('No connection to the server just now. Try again.');
@@ -194,18 +199,22 @@ function alsoIn(names, cup) {
   return other.map(c => `<span class="chip dim">also in ${esc(c.name)}</span>`).join('');
 }
 
-/* Who is already here under these names — the mirror of the server's
-   _refuse_duplicate, so the desk can offer the way round before the server
-   says no. Singles: the same name anywhere tonight. Doubles: the same two
-   people together. Somebody in a singles and a doubles cup is fine. */
+/* Who is already in this cup under one of these names — the mirror of the
+   server's refusal, so the desk can offer the way round before the server
+   says no. Nobody plays one cup twice. The same name in another cup is not
+   a clash: the server asks whether it is the same person
+   (docs/player-identity.md). */
+/* The people of this entry who are also in another cup tonight, and in how
+   many: what "gone home from all cups" can reach. */
+function elsewhere(e) {
+  return (e.people || []).map(p => ({ id: p.id, name: p.name,
+    n: D.entrants.filter(x => x.id !== e.id && x.status !== 'withdrawn'
+      && (x.people || []).some(q => q.id === p.id)).length })).filter(x => x.n);
+}
 function clashFor(cup, names) {
-  names = names.filter(Boolean);
-  if (names.length === 2) {
-    const want = names.map(nk).sort().join('|');
-    return D.entrants.find(e => e.players.length === 2 && e.players.map(nk).sort().join('|') === want);
-  }
-  if ((cupById(cup) || {}).entry === 'pair') return null;
-  return D.entrants.find(e => e.players.length === 1 && nk(e.players[0]) === nk(names[0]));
+  const keys = names.filter(Boolean).map(nk);
+  return D.entrants.find(e => e.cup_id === cup && e.status !== 'withdrawn'
+    && entNames(e).some(n => keys.includes(nk(n))));
 }
 function freeName(n) {
   const taken = new Set(D.entrants.flatMap(e => e.players.map(nk)));
@@ -596,7 +605,9 @@ function entrantDetail(e, close) {
     ${asking ? `<div class="confirm"><b>${esc(label(entNames(e)))} ${pair ? 'have' : 'has'} gone home?</b>
         <span>Every match they still owe goes to their opponent${e.status === 'playing' && e.table
           ? `, and table ${e.table} is freed` : ''}. Bring back puts them in the pool again.</span>
-        <div class="actions"><button class="btn primary tiny" data-act="gone" data-e="${e.id}">Yes, gone home</button>
+        <div class="actions"><button class="btn primary tiny" data-act="gone" data-e="${e.id}">Yes, gone home${elsewhere(e).length ? ' from this cup' : ''}</button>
+          ${elsewhere(e).map(x => `<button class="btn tiny" data-act="gone-all" data-e="${e.id}" data-p="${esc(x.id)}">${
+            pair ? esc(x.name) + ' gone' : 'Gone'} home from all ${x.n + 1} cups</button>`).join('')}
           <button class="btn ghost tiny" data-act="unconfirm">Cancel</button></div></div>`
       : `<div class="actions">
         ${gone ? `<button class="btn tiny" data-act="back" data-e="${e.id}">Bring back</button>`
@@ -957,6 +968,12 @@ document.addEventListener('click', async ev => {
       V.confirm = '';
       const out = await api('withdraw', { entrant_id: e.id, withdrawn: true });
       if (out) toast(`${label(entNames(e))} gone home${out.walkovers ? ` · ${out.walkovers} match${out.walkovers === 1 ? '' : 'es'} given to the opponent` : ''}`);
+      return;
+    }
+    if (act === 'gone-all' && e) {
+      V.confirm = '';
+      const out = await api('withdraw', { entrant_id: e.id, withdrawn: true, everywhere: true, person_id: d.p });
+      if (out) toast(`Gone home from ${out.entrant_ids.length} cups${out.walkovers ? ` · ${out.walkovers} match${out.walkovers === 1 ? '' : 'es'} given to the opponent` : ''}`);
       return;
     }
     if (act === 'back' && e) {

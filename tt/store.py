@@ -551,7 +551,8 @@ class Store:
 
     REG_FIELDS = ("cup_id", "kind", "name", "strength", "partner_name",
                   "partner_strength", "team_name", "note", "status", "entrant_id",
-                  "matched_with", "distinct", "tg_id", "person_id", "token", "rsvp")
+                  "matched_with", "distinct", "tg_id", "person_id", "token", "rsvp",
+                  "holder", "partner_token", "partner_tg_id", "partner_holder")
 
     def _ev_registration_add(self, p, seq):
         r = Registration(id=p["id"], cup_id=p.get("cup_id", ""),
@@ -585,8 +586,10 @@ class Store:
         e = self.entrants.pop(p["id"], None)
         if not e:
             return
+        still = {q for o in self.entrants.values() for q in o.player_ids}
         for pid in e.player_ids:
-            self.players.pop(pid, None)
+            if pid not in still:
+                self.players.pop(pid, None)
         self.queue = [q for q in self.queue if q.entrant_id != e.id]
         self.opted_out.discard(e.id)
         for f in self.formats.values():
@@ -909,29 +912,6 @@ class Store:
                 return who
         return None
 
-    def solo_named(self, name):
-        """The single-player entrant in tonight's pool who goes by this name,
-        if there is one. Pairs are not looked at: a team is identified by its
-        two names together, and one person can sit in a singles cup and a
-        doubles cup at once."""
-        k = self.name_key(name)
-        for e in self.entrants.values():
-            if len(e.player_ids) == 1 and k and self.name_key(
-                    self.players[e.player_ids[0]].name if e.player_ids[0] in self.players
-                    else e.name) == k:
-                return e
-        return None
-
-    def pair_named(self, name_a, name_b):
-        """A team in the pool made of exactly these two people."""
-        want = sorted((self.name_key(name_a), self.name_key(name_b)))
-        for e in self.entrants.values():
-            if len(e.player_ids) == 2 and sorted(
-                    self.name_key(self.players[i].name) for i in e.player_ids
-                    if i in self.players) == want:
-                return e
-        return None
-
     def person_by_tg(self, tg_id):
         """The person this Telegram account was linked to at the door."""
         if not tg_id:
@@ -1054,20 +1034,82 @@ class Store:
         durs.sort()
         return durs[len(durs) // 2]
 
-    def busy_players(self) -> set[str]:
-        """Who cannot be called to a table: the player ids already on one.
+    def who(self, pid):
+        """The human behind a player: their person, which is the identity
+        for tonight (docs/player-identity.md). A player with no person —
+        only in logs older than the directory — is only themselves."""
+        pl = self.players.get(pid)
+        return ("N:" + pl.person_id) if pl and pl.person_id else ("P:" + pid)
 
-        This used to add the person id too, so somebody in the singles and
-        a doubles cup was never called to two tables at once. But people are
-        linked by name, so two different players who share a name across
-        cups blocked each other all evening. Only the entrant actually on a
-        table is held back now; an organiser can "Put back" the rare real
-        double-booking by hand."""
-        out = set()
+    def players_of(self, person_id):
+        """Every player tonight who is this person: one per entry."""
+        return [pl for pl in self.players.values()
+                if person_id and pl.person_id == person_id]
+
+    def entries_of(self, person_id, active=True):
+        """Every entrant tonight this person is part of, in any cup."""
+        mine = {pl.id for pl in self.players_of(person_id)}
+        return [e for e in self.entrants.values()
+                if mine & set(e.player_ids) and (e.active or not active)]
+
+    def multi_cup(self, person_id):
+        """Whether this person is entered in more than one cup tonight."""
+        return len({e.cup_id for e in self.entries_of(person_id)}) > 1
+
+    def busy_players(self) -> set[str]:
+        """Who cannot be called to a table: every player whose person is
+        already on one.
+
+        People, not players, because one person in two cups is two players
+        and must still never be called to two tables. This was once tried
+        with the person id and given up, because people were then linked by
+        name and two namesakes blocked each other all evening; identity is
+        now decided at the door, by evidence or by asking, never by name
+        alone (docs/player-identity.md), so the person id can be trusted."""
+        on = set()
         for t in self.tables.values():
             if t.match_id and t.match_id in self.matches:
-                out.update(self.matches[t.match_id].players())
-        return out
+                on.update(self.matches[t.match_id].players())
+        held = {self.who(p) for p in on}
+        return on | {p for p in self.players if self.who(p) in held}
+
+    BREATHER = 120
+
+    def breather(self):
+        """Seconds after a match during which somebody playing in two cups
+        is only called if nothing else can use the table. 0 turns it off."""
+        try:
+            return max(0, int(self.event.get("breather", self.BREATHER)))
+        except (TypeError, ValueError):
+            return self.BREATHER
+
+    def last_played(self):
+        """Per person: (when their last match finished, which cup it was
+        in). Only for people in more than one cup — nobody else is affected
+        by the breather or by alternating."""
+        out = {}
+        for m in self.matches.values():
+            if m.status != "done" or not m.done_ts:
+                continue
+            cup = self.cup_key(self.formats.get(m.format_id)) \
+                if m.format_id in self.formats else None
+            for pid in m.players():
+                pl = self.players.get(pid)
+                if not pl or not pl.person_id:
+                    continue
+                k = pl.person_id
+                if k not in out or out[k][0] < m.done_ts:
+                    out[k] = (m.done_ts, cup)
+        return {k: v for k, v in out.items() if self.multi_cup(k)}
+
+    def breathing_players(self, now=None):
+        """Players who just finished a match and are in another cup too."""
+        gap = self.breather()
+        if not gap:
+            return set()
+        now = time.time() if now is None else now
+        fresh = {k for k, (ts, _) in self.last_played().items() if now - ts < gap}
+        return {pl.id for pl in self.players.values() if pl.person_id in fresh}
 
     def entrant_available(self, eid: str, busy: set[str]) -> bool:
         """Whether this entrant can be put on a table right now.

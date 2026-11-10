@@ -58,6 +58,16 @@ function remember(v) {
       allSaved().filter(x => x.token !== v.token).concat([v]).slice(-8)));
   } catch (e) { }
 }
+/* A link this phone opened rather than made — a partner's — joins the list
+   of links it knows, so its own sign-ups later carry it (prev), without
+   becoming "the entry this phone made". */
+function keep(v) {
+  v = { ...v, event: P && P.event_id || '' };
+  try {
+    localStorage.setItem('tt_regs', JSON.stringify(
+      allSaved().filter(x => x.token !== v.token).concat([v]).slice(-8)));
+  } catch (e) { }
+}
 function allSaved() {
   try { return (JSON.parse(localStorage.getItem('tt_regs') || '[]') || []).filter(x => x && x.token); }
   catch (e) { return []; }
@@ -205,6 +215,11 @@ function renderJoin() {
       ${draft.done.token ? `<a class="cta" href="/me/${esc(draft.done.token)}">Anmeldung ansehen</a>` : ''}
       ${tg ? `<a class="cta tg" href="${esc(tg)}" target="_blank" rel="noopener">Per Telegram Bescheid bekommen</a>
         <p class="tg-note">Wir schreiben dir, wenn du gleich dran bist und wenn dein Tisch frei ist.</p>` : ''}
+      ${draft.done.partner_token ? `<div class="linkbox">
+        <p>${esc(`Schick diesen Link an ${draft.done.partner}: dann wissen wir am Abend gleich, wer ${draft.done.partner} ist, und ${draft.done.partner} bekommt auch Bescheid, wenn ihr dran seid.`)}</p>
+        <div class="linkrow"><input readonly value="${esc(linkFor(draft.done.partner_token))}" aria-label="Link für deine:n Partner:in"></div>
+        ${draft.done.partner_telegram ? `<p><a href="${esc(draft.done.partner_telegram)}" target="_blank" rel="noopener">Oder als Telegram-Link →</a></p>` : ''}
+      </div>` : ''}
       <button class="cta ghost" data-act="again">Noch jemanden anmelden</button>
       ${backLink()}`, open);
     return;
@@ -269,14 +284,19 @@ async function send(distinct) {
   try {
     const r = await fetch('/api/action', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ op: 'register', data: { ...draft, distinct: !!distinct } }),
+      // the links this phone already has: one under the same name is the same
+      // person, so the door does not have to ask (docs/player-identity.md)
+      body: JSON.stringify({ op: 'register', data: { ...draft, distinct: !!distinct,
+                                                     prev: saved().map(x => x.token) } }),
     });
     const j = await r.json().catch(() => ({ error: 'Da ist etwas schiefgegangen.' }));
     if (!r.ok) { error = j.error || 'Da ist etwas schiefgegangen.'; }
     else if (j.possible_duplicate) { twice = { names: who, cup: j.cup }; }
     else {
       twice = null;
-      draft.done = { name: who, cup: j.cup, team, token: j.token, telegram: j.telegram || '' };
+      draft.done = { name: who, cup: j.cup, team, token: j.token, telegram: j.telegram || '',
+                     partner: team ? draft.partner_name.trim() : '',
+                     partner_token: j.partner_token || '', partner_telegram: j.partner_telegram || '' };
       remember({ id: j.registration_id, name: who, cup: j.cup, token: j.token, telegram: j.telegram || '' });
     }
   } catch (e) {
@@ -309,7 +329,10 @@ async function meCall(op, extra) {
 }
 
 async function meLoad() {
-  try { me = await meCall('reg_view'); meError = ''; }
+  try {
+    me = await meCall('reg_view'); meError = '';
+    if (me.role === 'partner') keep({ token: ME, name: me.name, cup: me.cup });
+  }
   catch (e) { meError = e.message; }
   renderJoin();
 }

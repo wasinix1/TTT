@@ -69,7 +69,7 @@ and add team, and add from directory. Take the first rung that applies.
 
 | # | Evidence | Result |
 |---|---|---|
-| 1 | The request says so: `same_as: <player_id>` (the desk answered "same"), or a new name with `distinct: true` | Do what it says |
+| 1 | The request says so: `same_as: {"a": <player_id>}` (the desk answered "same") | Same person |
 | 2 | **Witnessed key matches.** The registration's `tg_id` is the Telegram account of a person already playing tonight, or its `person_id` is, or its `holder` (below) is shared with an already confirmed registration | **Same person**, automatically |
 | 3 | **Witnessed keys conflict.** Both sides carry a Telegram account and they differ | **Different person**. No question; they need a distinguishing name (invariant 2) |
 | 4 | Name matches a person already playing tonight, nothing else known | **Ask.** Nothing is written |
@@ -102,13 +102,19 @@ The desk (and the console's add form) puts it to the organiser:
 - **Yes**: resend with `same_as: {"a": "P3"}`. The new player takes
   `person_id` of P3.
 - **No**: the desk asks for a name that tells them apart, prefilled from
-  `freeName` ("Max (2)"), and resends with that name and `distinct: {"a":
-  true}`. Resending the *same* name with `distinct` is refused (invariant 2).
+  "Max (2)", and resends with that name. No flag is needed: a name nobody
+  has tonight is somebody new by rung 5, and the same name only asks again
+  (invariant 2).
 
 A pair with both names known tonight asks once per name.
 
 The answer is symmetric: whichever cup Max is checked into first, the second
 check-in asks.
+
+Both the desk and the console handle every question in one place
+(`tt/static/ask.js`): their `api()` sees `ask` in a reply, puts the question,
+and sends the same op again with the answer. A question asked when somebody
+is renamed (below) works the same way.
 
 ## The web form's identity key: `holder`
 
@@ -152,7 +158,7 @@ merged.
 entry gets a second secret, `partner_token`, next to `token`:
 
 - The confirmation (web and bot) offers "Send this to Tom", a link the
-  registrant forwards: `/me/<partner_token>` on the web, `p2_<partner_token>`
+  registrant forwards: `/me/<partner_token>` on the web, `q_<partner_token>`
   in the bot.
 - Opening it in the bot sets `partner_tg_id`. Opening it in the browser
   stores the token in that browser's `tt_regs`, so Tom's own later sign-ups
@@ -304,7 +310,7 @@ make them block each other for the rest of that night.
 - Wanted by two cups: the second match keeps its place and is seated as soon
   as he is free. He alternates cups. The breather yields to anyone else ready,
   but never leaves a table idle.
-- Partner link: opening `p2_<partner_token>` in the bot links that partner
+- Partner link: opening `q_<partner_token>` in the bot links that partner
   without a question, and they get table calls. A partner with no link who
   already plays tonight is asked at the door, with "same" highlighted. A
   partner who plays nowhere else tonight is not asked.
