@@ -707,6 +707,17 @@ def test_the_round_message():
     fake.tap(fans[0], "✓ Una")
     app.telegram.pump()
     check(len(app.store.pending_regs()) == 1, "and its button enters them")
+    check(fake.seen(fans[0], "Angemeldet für") and fake.seen(fans[0], "<blockquote expandable>"),
+          "and says so without losing the event's text")
+    fake.tap(fans[1], "Ich bin dabei")
+    app.telegram.pump()
+    fake.tap(fans[1], "Zurück")
+    app.telegram.pump()
+    box = fake.chats[fans[1]["id"]]
+    ann = next((m for m in box.values() if "Neuer Termin" in m["text"]), {"text": "", "kb": []})
+    check( "<blockquote expandable>" in ann["text"]
+          and any(b["text"] == "🌐 Alle Infos" for row in ann["kb"] for b in row),
+          "backing out of a question asked on it leaves the round message whole")
     n = len([c for c in fake.calls if c[0] == "sendMessage" and "Neuer Termin" in c[1]["text"]])
     app.telegram.pump()
     check(n == len([c for c in fake.calls if c[0] == "sendMessage" and "Neuer Termin" in c[1]["text"]]),

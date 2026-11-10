@@ -32,7 +32,7 @@ from collections import deque
 from concurrent.futures import ThreadPoolExecutor
 
 from . import notify, programme
-from .bot import ALL_INFO, ANNOUNCE_HEAD, Conversation, esc
+from .bot import ANNOUNCE_HEAD, Conversation, esc
 
 API = "https://api.telegram.org"
 RATE = 25                  # messages a second, well under Telegram's 30
@@ -317,6 +317,13 @@ class Wire:
         return [{"id": r["id"], "key": r["key"], "chat": r["chat_id"],
                  "message_id": r["message_id"], "ref": json.loads(r["ref"] or "{}")}
                 for r in rows]
+
+    def is_announcement(self, chat_id, message_id):
+        """Whether this message in this chat went out as a round message."""
+        rows = self._all("SELECT payload FROM outbox WHERE chat_id=? AND message_id=?"
+                         " AND key LIKE 'bc:%'", (chat_id, message_id))
+        return any(json.loads(r["payload"]).get("text", "").startswith(ANNOUNCE_HEAD)
+                   for r in rows)
 
     def close(self, row_id):
         self._q("UPDATE outbox SET closed=1 WHERE id=?", (row_id,))
@@ -917,17 +924,12 @@ class Bot:
             raise ValueError("nobody to send that to yet")
         batch = secrets.token_hex(4)
         head = "💬 <b>Orga:</b> " if kind == "chat" else "📣 "
-        details = (programme.telegram(programme.parse(self.app.store.event.get("blurb")))
-                   if announce else "")
+        details = self.convo.details() if announce else ""
         note = "\n\n".join(x for x in (esc(text), details) if x)
-        url = self.public_url()
         ready = []
         for c in chats:
             if announce:
-                card, kb = self.convo.card(c, note)
-                if url:
-                    kb.insert(-1, [{"text": ALL_INFO, "url": url}])
-                message = ANNOUNCE_HEAD + card
+                message, kb = self.convo.announcement(c, note)
                 if programme.visible_length(message) > 4096:
                     raise ValueError("that is too long for one message")
                 params = {"chat_id": c, "text": message,

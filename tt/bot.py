@@ -17,6 +17,7 @@ import threading
 import time
 from datetime import datetime
 
+from . import programme
 from .models import decide_winner
 
 esc = lambda s: html.escape(str(s if s is not None else ""), quote=False)
@@ -702,10 +703,29 @@ class Conversation:
         for method, params in later:
             self.bot.api(method, params, quiet=True)
 
+    def announcement(self, uid, note=""):
+        """The round message for one follower: their card, headed as news,
+        with the event's text and the way to the page. Also how it is drawn
+        again after a tap on it, so backing out of a question asked there
+        does not leave a bare card where the event's details were."""
+        card, kb = self.card(uid, note)
+        url = self.bot.public_url()
+        if url:
+            kb.insert(-1, [{"text": ALL_INFO, "url": url}])
+        return ANNOUNCE_HEAD + card, kb
+
+    def details(self):
+        return programme.telegram(programme.parse(self.store.event.get("blurb")))
+
     def refresh(self, uid, mid, notice=""):
         if mid == (self.wire.chat(uid) or {}).get("card_msg"):
             # noted first, so the card-keeper does not queue the same edit
             self.wire.set_chat(uid, card_hash=self.card_hash(uid))
+        elif mid and self.wire.is_announcement(uid, mid):
+            note = "\n\n".join(x for x in (notice, self.details()) if x)
+            text, kb = self.announcement(uid, note)
+            self.edit(uid, mid, text, kb)
+            return
         text, kb = self.card(uid, notice)
         self.edit(uid, mid, text, kb)
 
