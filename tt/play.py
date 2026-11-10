@@ -113,15 +113,18 @@ def reachable(app, m, side):
 
 def rules_for(store, person_id):
     """What this person's cups let them do, for the phone's own words: one
-    cup taking scores is enough to explain scores."""
-    cups = {e.cup_id for e in entrants_of(store, person_id) if e.active}
+    cup taking scores is enough to explain scores. `breaks` lists the
+    entries they may take a break from or go home from themselves — only
+    in cups where they check themselves in."""
+    ents = [e for e in entrants_of(store, person_id) if e.active]
+    cups = {e.cup_id for e in ents}
     fmts = [store.formats.get(store.cups[c].format_id or "") for c in cups if c in store.cups]
     return {"balanced": any(f is not None and f.kind == "open_play" and f.by_results()
-                            for f in fmts),"scores": any(store.cup_rule(c, "player_scores") for c in cups),
+                            for f in fmts),
+            "scores": any(store.cup_rule(c, "player_scores") for c in cups),
+            "breaks": [e.id for e in ents if store.cup_rule(e.cup_id, "self_checkin")],
             "auto_min": max([int(store.cup_rule(c, "score_auto_min") or 0) for c in cups] or [0]),
-            "queue": any((store.formats.get(store.cups[c].format_id or "") or None) is not None
-                         and store.formats[store.cups[c].format_id].uses_queue()
-                         for c in cups if c in store.cups)}
+            "queue": any(f is not None and f.uses_queue() for f in fmts)}
 
 
 def side_in(store, m, person_id):
@@ -389,6 +392,9 @@ def no_show(app, p):
     m, side = live_match(s, p["person_id"])
     if not m:
         raise ValueError("you are not on a table")
+    if not s.match_rule(m, "player_scores"):
+        # scrapping a match is for a night the players run themselves
+        raise ValueError("Sag das hier bitte am Eingang.")
     if m.started_ts and s.clock() - m.started_ts < NO_SHOW_AFTER:
         raise ValueError("give them a couple of minutes to get to the table")
     other = "b" if side == "a" else "a"

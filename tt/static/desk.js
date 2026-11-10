@@ -839,7 +839,9 @@ function render() {
       <label class="find"><input type="search" id="q" value="${esc(V.q)}" placeholder="Type a name…" autocomplete="off"
         aria-label="Find who is at the door"><span class="kbd">/</span></label>
       ${strip}
-      <div class="dirl"><button class="link${V.view === 'dir' ? ' on' : ''}" data-dir="1">Club directory · ${D.people.length}</button></div>
+      <div class="dirl"><button class="link${V.view === 'dir' ? ' on' : ''}" data-dir="1">Club directory · ${D.people.length}</button>${
+        D.self_checkin && !SIMQ ? ` <a class="link" target="_blank" title="Players scan it to check in, take breaks and enter results"
+          href="/print?mode=checkin&token=${encodeURIComponent(TOKEN)}&base=${encodeURIComponent(location.origin + '/')}">Poster for the hall ↗</a>` : ''}</div>
     </div>`;
   let body;
   if (!n) body = `<p class="fatal">No cups yet. Set the event up in the console first.</p>`;

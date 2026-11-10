@@ -5,6 +5,9 @@ laptop in a sports hall, and every dependency is one more thing that can fail
 on the night.
 """
 
+import base64
+import hashlib
+import hmac
 import json
 import mimetypes
 import os
@@ -16,7 +19,7 @@ import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 
-from .store import Store
+from .store import Store, CONSOLE_PHASES
 from .models import Scoring, decide_winner
 from . import dispatch, board, programme, simulate, play
 from .bot import announce_preview
@@ -73,6 +76,24 @@ class App:
         if not self.store.tables:
             for n in (1, 2, 3):
                 self.store.append("table_set", {"number": n, "name": f"Table {n}"})
+        self._rules_onto_cups()
+
+    def _rules_onto_cups(self):
+        """Players' own results were once one switch for the whole event.
+        Each cup says for itself now, so an event from before gets that
+        switch copied onto every cup that never said, once, and the event's
+        own goes back to off: the console then shows what is true per cup,
+        and a cup added later starts off like any other."""
+        s = self.store
+        old = {k: s.event.get(k) for k in ("player_scores", "score_auto_min") if s.event.get(k)}
+        if not old or not s.cup_order:
+            return                  # a draw outside any cup still goes by the event's
+        for cid in s.cup_order:
+            c = s.cups.get(cid)
+            todo = {k: v for k, v in old.items() if c and getattr(c, k, None) is None}
+            if todo:
+                s.append("cup_update", {"id": cid, **todo})
+        s.append("event_meta", {"player_scores": False, "score_auto_min": 0})
 
     def _load_keys(self):
         path = os.path.join(self.data_dir, "keys.json")
@@ -446,6 +467,9 @@ class App:
                 "people": [{"id": p.id, "name": p.name, "playing": bool(s.person_playing(p.id))}
                            for p in (s.people[i] for i in s.people_order if i in s.people)],
                 "activity": self.activity(40),
+                # the poster for the hall is there while players act at all
+                "self_checkin": bool(self.self_run_cups()),
+                "checkin_code": self.checkin_code(),
             }
 
     def activity(self, limit):
@@ -510,7 +534,8 @@ class App:
                     and reg(p["matched_with"]) and p["id"] < p["matched_with"]:
                 line = f"{reg(p['id']).name} and {reg(p['matched_with']).name} matched as partners"
             elif ty == "entrant_add":
-                line = f"In: {ents.get(p.get('id')) or p.get('name', '')}" + (
+                line = ("Checked in themselves: " if h["by"] in ("public", "phone") else "In: ") \
+                    + (ents.get(p.get("id")) or p.get("name", "")) + (
                     f" · {cup_name(p.get('cup_id'))}" if cup_name(p.get("cup_id")) else "")
             elif ty == "entrant_remove":
                 line = f"Removed: {ent_name(p.get('id'))}"
@@ -599,6 +624,7 @@ class App:
                 # the player secret signs phone keys; it is no URL to hand out
                 "keys": {k: v for k, v in self.keys.items() if k != "player"}
                         if role == "admin" else {},
+                "checkin_code": self.checkin_code() if role in ("admin", "door") else "",
                 "telegram": (self.telegram.admin_state()
                              if role == "admin" and self.telegram
                              else {"on": bool(self._tg_name()),
@@ -983,6 +1009,8 @@ class App:
             f" Andere Cups: {', '.join(others)}." if others else "")
 
     def op_update_cup(self, p):
+        if "self_checkin" in p:
+            p = dict(p, self_checkin=p["self_checkin"] in (True, 1, "on", "true"))
         if "max_entrants" in p:
             p = dict(p, max_entrants=self._max_entrants(p["max_entrants"]))
         self.store.append("cup_update", self._rules(p))
@@ -1207,7 +1235,7 @@ class App:
             p["score_auto_min"] = max(0, min(60, int(p["score_auto_min"] or 0)))
         for k in ("self_checkin", "player_scores"):
             if p.get(k) is not None:
-                p[k] = bool(p[k])
+                p[k] = p[k] in (True, 1, "on", "true", "1")
         return p
 
     def op_event_meta(self, p):
@@ -1233,45 +1261,6 @@ class App:
 
     def op_claim_dismiss(self, p):
         return play.dismiss(self, p)
-
-    def self_checkin_cups(self):
-        """Where a phone may check itself in: the cups that say so, while
-        the doors are open and their draw is not over."""
-        s = self.store
-        if not s.shows_console():
-            return []
-        out = []
-        for cid in s.cup_order:
-            cup = s.cups.get(cid)
-            f = s.formats.get(cup.format_id or "") if cup else None
-            if f and f.status != "done" and s.cup_rule(cid, "self_checkin"):
-                out.append(cup)
-        return out
-
-    def op_checkin(self, p):
-        """Somebody checking themselves in from their phone: their own
-        registration, or a walk-in. The door's own op_admit does the work,
-        so it is the same entry the desk would have made; this only decides
-        whether a phone may ask for it."""
-        s = self.store
-        cups = {c.id: c for c in self.self_checkin_cups()}
-        reg = s.registrations.get(p.get("registration_id") or "")
-        cup = cups.get(reg.cup_id if reg else (p.get("cup_id") or ""))
-        if not cup:
-            raise ValueError("checking yourself in is not open for that")
-        if reg:
-            if reg.status != "pending":
-                raise ValueError("that entry is not waiting to be checked in")
-            out = self.op_admit({"registration_id": reg.id})
-        else:
-            if cup.entry == "pair" and not (p.get("partner_name") or "").strip():
-                raise ValueError("a pair needs both names")
-            out = self.op_admit({"cup_id": cup.id, "name": p.get("name"),
-                                 "kind": "pair" if cup.entry == "pair" else "single",
-                                 "partner_name": p.get("partner_name") or ""})
-        e = s.entrants[out["entrant_id"]]
-        out["person_id"] = s.players[e.player_ids[0]].person_id
-        return out
 
     def op_event_text_preview(self, p):
         """What a text will look like, for the editor. Changes nothing, and
@@ -1788,6 +1777,209 @@ class App:
                 "cup": cup.name if cup else "",
                 # as they went in, a surname the desk was asked for included
                 "names": [s.full_name(s.players[i]) for i in ids]}
+
+    # ------------------------------------------------------- self check-in
+    #
+    # An opt-in exception to "nothing public writes to live state": for the
+    # cups that have self_checkin switched on, a QR code in the hall lets players check
+    # themselves in, pre-registered or walking in. What stands in for the door
+    # seeing them is the venue code on that poster — fixed for the event,
+    # different for every event, so last month's photo of it lets nobody in.
+    # Every check-in still goes through op_admit, with its duplicate refusal
+    # and its room check, and the desk sees who did it themselves.
+    #
+    # Off unless a cup asks for it. A cup that does takes self check-ins
+    # until its draw starts. Open play is the
+    # exception: it is the format meant to run without anyone watching, and
+    # people come and go all night.
+
+    SELF_CHECKIN_ALL_NIGHT = ("open_play",)
+
+    def checkin_code(self):
+        ev = (self.store.event.get("id") or "").encode()
+        mac = hmac.new(self.keys["admin"].encode(), b"checkin:" + ev, hashlib.sha256)
+        return base64.urlsafe_b64encode(mac.digest())[:10].decode()
+
+    def venue_ok(self, code):
+        """Whether a phone holds tonight's code from the poster in the hall.
+        It is what lets a phone act at all: check in, and take the key that
+        lets it take breaks and enter results (tt/play.py). Without it a
+        phone can only look."""
+        return bool(code) and secrets.compare_digest(str(code), self.checkin_code()) \
+            and self.store.phase() in CONSOLE_PHASES
+
+    def _checkin_gate(self, p):
+        s = self.store
+        if not self.checkin_cups():
+            raise ValueError("Selbst einchecken ist gerade aus — melde dich bitte am Eingang.")
+        if not secrets.compare_digest(str(p.get("code") or ""), self.checkin_code()):
+            raise ValueError("Dieser Code gilt nicht für heute — scanne den Code im Saal.")
+        if s.phase() not in CONSOLE_PHASES:
+            raise ValueError("Einchecken geht erst, wenn die Türen offen sind.")
+
+    def checkin_cups(self):
+        """The cups that take self check-ins at all, in their order."""
+        s = self.store
+        return [s.cups[i] for i in s.cup_order if i in s.cups and s.cup_rule(i, "self_checkin")]
+
+    def self_run_cups(self):
+        """The cups where players do anything for themselves: check in, or
+        enter their own results. While there are any, the poster is up."""
+        s = self.store
+        return [s.cups[i] for i in s.cup_order if i in s.cups
+                and (s.cup_rule(i, "self_checkin") or s.cup_rule(i, "player_scores"))]
+
+    def _checkin_closed(self, cup):
+        """Why nobody can check themselves into this cup right now, or ""."""
+        f = self.store.formats.get(cup.format_id) if cup else None
+        if not cup:
+            return "Melde dich bitte am Eingang."
+        if not self.store.cup_rule(cup.id, "self_checkin"):
+            return f"Für {cup.name} checkst du bitte am Eingang ein."
+        if not f or f.status == "setup":
+            return ""
+        if f.kind in self.SELF_CHECKIN_ALL_NIGHT and f.takes_new_entrants():
+            return ""
+        return "Hier läuft die Auslosung schon — melde dich bitte am Eingang."
+
+    def op_checkin_info(self, p):
+        self._checkin_gate(p)
+        s = self.store
+        # the entries this phone made: which of them are still to check in
+        mine = {}
+        for t in (p.get("tokens") or [])[:8]:
+            try:
+                mine[t] = self._reg_by_token({"token": t}).status
+            except ValueError:
+                pass
+        return {
+            "mine": mine,
+            "event": s.event.get("name") or "",
+            "event_id": s.event.get("id") or "",
+            "telegram": self._tg_name(),
+            "cups": [{"id": c.id, "name": c.name, "entry": c.entry,
+                      "closed": self._checkin_closed(c),
+                      "full": not s.cup_has_room(c)}
+                     for c in self.checkin_cups()],
+        }
+
+    def op_checkin_find(self, p):
+        """Names still expected that start with what was typed — the
+        trust-by-name way in for a phone that did not register. Only for
+        somebody holding the code, and only names, never notes or links."""
+        self._checkin_gate(p)
+        s = self.store
+        q = s.name_key(str(p.get("q") or ""))
+        if len(q) < 2:
+            return {"found": []}
+        hit = lambda n: any(w.startswith(q) for w in [s.name_key(n)] + s.name_key(n).split())
+        out = []
+        for r in (s.registrations[i] for i in s.registration_order if i in s.registrations):
+            cup = s.cups.get(r.cup_id)
+            if r.status != "pending" or not (cup and s.cup_rule(cup.id, "self_checkin")) \
+                    or not (hit(r.name) or (r.partner_name and hit(r.partner_name))):
+                continue
+            out.append({"id": r.id, "name": r.name + (f" & {r.partner_name}" if r.partner_name else ""),
+                        "cup": cup.name if cup else ""})
+            if len(out) >= 8:
+                break
+        return {"found": out}
+
+    def op_checkin(self, p):
+        """Check somebody in from their own phone: by the entry this phone
+        made (its token), by a name picked from the list, or as a walk-in."""
+        self._checkin_gate(p)
+        s = self.store
+        if p.get("token"):
+            reg = self._reg_by_token(p)
+        elif p.get("registration_id"):
+            reg = s.registrations.get(p["registration_id"])
+            if not reg:
+                raise ValueError("Diese Anmeldung finden wir nicht mehr.")
+        else:
+            reg = self._walk_in(p)
+            if isinstance(reg, dict):
+                return reg
+
+        cup = s.cups.get(reg.cup_id)
+        who = reg.name + (f" & {reg.partner_name}" if reg.partner_name else "")
+        if reg.status == "confirmed":
+            e = s.entrants.get(reg.entrant_id or "")
+            out = {"already": True, "name": e.name if e else who,
+                   "cup": cup.name if cup else ""}
+            if p.get("token") and e and e.player_ids and e.player_ids[0] in s.players:
+                # this phone's own entry, checked in at the desk: its key
+                pl = s.players[e.player_ids[0]]
+                out.update(player_id=pl.id, person_id=pl.person_id, entrant_id=e.id)
+            return out
+        if reg.status != "pending":
+            raise ValueError("Diese Anmeldung ist nicht mehr offen — melde dich bitte am Eingang.")
+        why = self._checkin_closed(cup)
+        if why:
+            raise ValueError(why)
+        mate = s.registrations.get(reg.matched_with or "")
+        if reg.kind == "seeking" and not (mate and mate.status == "pending"):
+            return {"waiting": True, "name": reg.name, "cup": cup.name if cup else "",
+                    **self._checkin_links(reg)}
+        try:
+            out = self.op_admit({"registration_id": reg.id})
+        except ValueError:
+            if not s.cup_has_room(cup):
+                raise
+            out = {}
+        if "entrant_id" not in out:
+            # the same name as somebody here, and only the desk can say
+            # whether it is them (an "ask"), or it is them already
+            raise ValueError(f"Bei {who} müssen wir kurz am Eingang schauen, wer wer ist "
+                             "— melde dich bitte dort.")
+        e = s.entrants[out["entrant_id"]]
+        pl = s.players[e.player_ids[0]]
+        return {"name": e.name, "cup": out["cup"], "drawn": out["where"] == "entered",
+                "entrant_id": e.id, "player_id": pl.id, "person_id": pl.person_id,
+                **self._checkin_links(reg)}
+
+    def _checkin_links(self, reg):
+        tg = self.telegram
+        return {"token": reg.token,
+                "telegram": tg.link("r_" + reg.token) if tg and tg.on and reg.token else ""}
+
+    def _walk_in(self, p):
+        """Somebody who did not register: write the entry they would have
+        made at home, then check it in. Somebody who did register and typed
+        their name instead of finding it gets their own entry, not a second."""
+        s = self.store
+        cup = s.cups.get(p.get("cup_id") or "")
+        if not cup:
+            raise ValueError("Such dir aus, wo du mitspielst.")
+        why = self._checkin_closed(cup)
+        if why:
+            raise ValueError(why)
+        text = lambda v: " ".join(str(v or "").split())[:60]
+        name, partner = text(p.get("name")), text(p.get("partner_name"))
+        if not name:
+            raise ValueError("Wir brauchen einen Namen.")
+        kind = "single" if cup.entry != "pair" else (
+            "pair" if p.get("kind") == "pair" else "seeking")
+        if kind == "pair" and not partner:
+            raise ValueError("Für ein Team brauchen wir beide Namen — oder wähle "
+                             "„Partner:in gesucht“.")
+        k = s.name_key
+        for r in s.regs_for_cup(cup.id, status=None):
+            if r.status not in ("pending", "confirmed"):
+                continue
+            if kind == "pair" and r.kind == "pair" and \
+                    sorted((k(r.name), k(r.partner_name))) == sorted((k(name), k(partner))):
+                return r
+            if kind != "pair" and r.kind != "pair" and k(r.name) == k(name):
+                return r
+        # the whole name, as from home: the surname is what tells two of a
+        # first name apart, and a phone cannot be asked for it later
+        self._whole_names({"name": name, "partner_name": partner if kind == "pair" else ""},
+                          "Bitte Vor- und Nachnamen — öffentlich zeigen wir nur den Vornamen.")
+        out = self._take_registration(cup, dict(
+            kind=kind, name=name, partner_name=partner,
+            team_name=p.get("team_name"), distinct=True))
+        return s.registrations[out["registration_id"]]
 
     def _link_tg(self, person_id, tg_id, tg_name=None):
         s = self.store
@@ -2367,6 +2559,8 @@ OP_LEVEL = {
     "new_event": 2, "create_event": 2, "set_phase": 2, "past_events": 2,
     "register": 0, "update_registration": 2,
     "reg_view": 0, "reg_note": 0, "reg_cancel": 0, "reg_restore": 0,
+    # only through the phone page's own door (/api/player), which counts them
+    "checkin_info": 3, "checkin_find": 3,
     "sim_start": 2, "sim_stop": 2,
     "merge_players": 2, "split_player": 2,
     "admit": 2, "add_registration": 2, "remove_entrant": 2, "remove_entrants": 2, "update_person": 2, "remove_person": 2, "add_from_directory": 2,
@@ -2512,6 +2706,15 @@ class Handler(BaseHTTPRequestHandler):
             return self._static("sw.js")
         if path == "/manifest.webmanifest":
             return self._static("manifest.webmanifest")
+        # the poster's QR code: the phone page, which keeps the venue code
+        # for the evening (tt/static/mobile.js)
+        if path == "/checkin":
+            v = re.sub(r"[^A-Za-z0-9_-]", "", q.get("v", [""])[0])[:20]
+            self.send_response(302)
+            self.send_header("Location", "/?v=" + v if v else "/")
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return
 
         if path == "/print":
             return self._print_page(q)
@@ -2634,7 +2837,9 @@ class Handler(BaseHTTPRequestHandler):
             host = self.headers.get("Host") or ""
             proto = self.headers.get("X-Forwarded-Proto") or ""
             origin = f"{proto}://{host}" if proto and host else ""
-            out = phone(app, key, body.get("op") or "", body.get("data") or {}, post, origin)
+            code = body.get("code") or q.get("v", [""])[0]
+            out = phone(app, key, body.get("op") or "", body.get("data") or {}, post, origin,
+                        str(code or "")[:20])
         except PermissionError as e:
             return self._send(403, {"error": str(e)})
         except (ValueError, KeyError) as e:
@@ -2732,10 +2937,22 @@ class Handler(BaseHTTPRequestHandler):
         # two posters, one page: the live link for the wall during the
         # evening, and the event itself for the noticeboard beforehand
         announce = q.get("mode", [""])[0] == "event"
+        # the self check-in poster carries the venue code, so it is only
+        # printed for somebody holding the admin or door key
+        checkin = q.get("mode", [""])[0] == "checkin"
+        if checkin:
+            if self.app.role_for(self._token(q)) not in ("admin", "door"):
+                return self._send(403, "the check-in poster needs the admin or door link",
+                                  "text/plain")
+            base = base.rstrip("/") + "/checkin?v=" + self.app.checkin_code() if base else ""
         ts = self.app.store.starts_at_ts()
         when = time.strftime("%A %d %B · %H:%M", time.localtime(ts)) if ts else ""
         lead = ("Scan to see what is on and enter your name"
                 if announce else
+                ("Hier scannen und selbst einchecken · Scan to check yourself in"
+                 if self.app.checkin_cups() else
+                 "Hier scannen: Pause, Ergebnisse, Tischaufrufe · Scan for breaks, results and calls")
+                if checkin else
                 "Scan for live tables, the queue and results")
         detail = ""
         if announce:
@@ -2768,7 +2985,7 @@ class Handler(BaseHTTPRequestHandler):
 <div class="sheet"><h1>{name}</h1>
 <p>{lead}</p>
 {detail}
-{qr}<div class="url">{base.replace('https://','')}</div></div>"""
+{qr}<div class="url">{"" if (checkin and qr) else base.replace('https://','')}</div></div>"""
         self._send(200, html, "text/html; charset=utf-8")
 
     def _static(self, rel):
@@ -2787,16 +3004,23 @@ mimetypes.add_type("font/woff2", ".woff2")       # self-hosted fonts (tt/static/
 mimetypes.add_type("application/manifest+json", ".webmanifest")
 
 
-def phone_view(app, pid):
+def phone_view(app, pid, code=""):
     """What a phone needs on top of the public state: who it is, which of
     the entries are theirs, the scores waiting on them, and what the
-    evening lets players do for themselves."""
+    evening lets players do for themselves. Checking in is only offered to
+    a phone holding tonight's code from the poster (App.venue_ok)."""
     s = app.store
     m, _ = play.live_match(s, pid) if pid else (None, None)
+    venue = app.venue_ok(code)
     out = {"scores": bool(m and s.match_rule(m, "player_scores")),
            "auto_min": int(s.match_rule(m, "score_auto_min") or 0) if m else 0,
-           "checkin": [{"id": c.id, "name": c.name, "entry": c.entry}
-                       for c in app.self_checkin_cups()],
+           # whether this phone can act, and whether tonight lets it at all:
+           # with self_run and no venue, the page says to scan the poster
+           "venue": venue, "self_run": bool(app.self_run_cups()),
+           "checkin": [{"id": c.id, "name": c.name, "entry": c.entry,
+                        "full": not s.cup_has_room(c)}
+                       for c in app.checkin_cups() if not app._checkin_closed(c)]
+                      if venue else [],
            "me": None, "confirm": [], "reported": [], "no_show_after": play.NO_SHOW_AFTER,
            # the key a browser subscribes with, when this server sends pushes
            "push_key": app.push.public if app.push else ""}
@@ -2807,16 +3031,10 @@ def phone_view(app, pid):
         out["confirm"], out["reported"] = play.pending(app, pid)
         out["fixable"] = play.fix_view(app, pid)
         out["rules"] = play.rules_for(s, pid)
-    if out["checkin"]:
-        # entries made ahead for these cups, so somebody can find their own
-        cups = {c["id"] for c in out["checkin"]}
-        out["registered"] = [
-            {"id": r.id, "name": r.name, "partner": r.partner_name, "cup_id": r.cup_id}
-            for r in s.pending_regs() if r.cup_id in cups]
     return out
 
 
-def phone(app, key, op, d, post, origin=""):
+def phone(app, key, op, d, post, origin="", code=""):
     """One request from a phone page. Without a key it can only look and
     say who it is; with one it acts as that person (tt/play.py)."""
     s = app.store
@@ -2827,11 +3045,18 @@ def phone(app, key, op, d, post, origin=""):
         app._phones[pid] = time.time()
     if not post:
         with s.lock:
-            return phone_view(app, pid)
+            return phone_view(app, pid, code)
     toast = ""
     out = {}
+    with s.lock:
+        venue = app.venue_ok(code)
+    d = dict(d, code=code)
     if op == "claim_name":
-        # trust, as at the desk: a phone says whose it is
+        # trust, as at the desk: a phone says whose it is — but only in the
+        # hall, on a night that lets players act (the poster's code)
+        if not venue or not app.self_run_cups():
+            raise PermissionError("Scanne den Code im Saal — dann kannst du hier Pause machen "
+                                  "und Ergebnisse eintragen.")
         with s.lock:
             p = s.players.get(d.get("player_id") or "")
             if not p or not p.person_id or p.person_id not in s.people:
@@ -2839,22 +3064,37 @@ def phone(app, key, op, d, post, origin=""):
             pid = p.person_id
         app._phones[pid] = time.time()
         out["key"] = app.player_key(pid)
+    elif op == "find":
+        # the names still expected that start with what was typed — never
+        # the whole list (op_checkin_find)
+        out["found"] = app.act("system", "checkin_find", d)["found"]
+    elif op == "mine":
+        # which of the entries this phone made are still to check in
+        out["mine"] = app.act("system", "checkin_info", d)["mine"]
     elif op == "checkin":
         r = app.act("system", "checkin", d, actor="phone")
-        pid = r["person_id"]
-        app._phones[pid] = time.time()
-        out["key"] = app.player_key(pid)
-        out["entrant_id"] = r["entrant_id"]
-        with s.lock:
-            out["player_id"] = s.entrants[r["entrant_id"]].player_ids[0]
-        toast = "in"
+        out["checkin"] = {k: r.get(k) for k in ("name", "cup", "drawn", "already", "waiting",
+                                                "token", "telegram")}
+        if r.get("person_id"):
+            pid = r["person_id"]
+            app._phones[pid] = time.time()
+            out["key"] = app.player_key(pid)
+            out["player_id"] = r["player_id"]
+            out["entrant_id"] = r.get("entrant_id")
+        toast = "in" if r.get("person_id") and not r.get("already") else ""
     elif not pid:
         raise PermissionError("pick your name first")
     elif op in ("rest", "leave"):
         with s.lock:
-            mine = {e.id for e in play.entrants_of(s, pid)}
-        if d.get("eid") not in mine:
+            mine = {e.id: e for e in play.entrants_of(s, pid)}
+            e = mine.get(d.get("eid"))
+            # coming and going is the players' own only where they check
+            # themselves in; anywhere else it is the desk's
+            ours = bool(e) and s.cup_rule(e.cup_id, "self_checkin")
+        if not e:
             raise PermissionError("only they can change that")
+        if not ours:
+            raise PermissionError("Pause und Gehen sagst du hier bitte am Eingang.")
         if op == "rest":
             app.act("system", "set_resting", {"entrant_id": d["eid"], "resting": bool(d.get("on"))}, actor="phone")
         else:
@@ -2902,7 +3142,7 @@ def phone(app, key, op, d, post, origin=""):
     else:
         raise ValueError("unknown action")
     with s.lock:
-        out["view"] = phone_view(app, pid)
+        out["view"] = phone_view(app, pid, code)
     out["toast"] = toast
     return out
 

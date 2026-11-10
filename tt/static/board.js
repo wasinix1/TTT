@@ -106,14 +106,17 @@ function howTo(S, bs) {
   const checkin = cups.some(c => rule(c, 'self_checkin'));
   const scores = cups.some(c => rule(c, 'player_scores'));
   if (!checkin && !scores) { el.hidden = true; return; }
-  const host = location.host;
+  // tonight's code only reaches a wall opened from the console (?d=);
+  // without it, the QR would open a page that can only look
+  const code = S.checkin_code || '';
   const steps = [
-    ['Handy', checkin ? `${host} öffnen — Namen tippen oder einchecken` : `${host} öffnen — Namen tippen`],
-    ['Kurz weg?', 'Pause tippen, damit niemand auf dich wartet'],
+    ['Handy', code ? (checkin ? 'Code scannen — einchecken oder Namen tippen' : 'Code scannen — Namen tippen')
+      : 'Code am Eingang scannen — Namen tippen'],
+    checkin ? ['Kurz weg?', 'Pause tippen, damit niemand auf dich wartet'] : null,
     scores ? ['Nach dem Spiel', 'Ergebnis eintragen — die andere Seite bestätigt'] : null,
   ].filter(Boolean);
-  const qr = `/api/qr.svg?u=${encodeURIComponent(location.origin + '/')}`;
-  const html = `<img src="${qr}" alt="" onerror="this.remove()">
+  const qr = code ? `/api/qr.svg?u=${encodeURIComponent(location.origin + '/checkin?v=' + code)}` : '';
+  const html = `${qr ? `<img src="${qr}" alt="" onerror="this.remove()">` : ''}
     <ol>${steps.map(([h, t]) => `<li><b>${esc(h)}</b>${esc(t)}</li>`).join('')}</ol>`;
   if (el.dataset.html !== html) { el.innerHTML = html; el.dataset.html = html; }
   el.hidden = false;
@@ -122,6 +125,9 @@ function howTo(S, bs) {
 /* The wall display can be pointed at the sandbox too — see tt/simulate.py.
    Same flag on every request, for the same reason. */
 const SIM = new URLSearchParams(location.search).get('sim') === '1';
+// the door key, when the console opened this wall: it carries tonight's
+// code for the poster strip, and nothing else here uses it
+const DOOR = new URLSearchParams(location.search).get('d') || '';
 const simq = sep => (SIM ? sep + 'sim=1' : '');
 
 let last = -1, etag = null, shown = null;
@@ -129,6 +135,7 @@ async function poll() {
   try {
     const h = {};
     if (etag && last >= 0) h['If-None-Match'] = etag;
+    if (DOOR) h['X-Key'] = DOOR;
     const r = await fetch('/api/state' + simq('?'), { headers: h });
     if (r.status === 304) return;
     etag = r.headers.get('ETag');

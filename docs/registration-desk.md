@@ -241,3 +241,18 @@ absent from every payload but their owner's.
 Parked, as everywhere (see `CLAUDE.md`). The desk neither shows nor asks for
 it; `admit` keeps sending the directory's or the default number so the
 plumbing stays whole.
+
+## Self check-in
+
+An opt-in exception to rule 2 of `docs/events-and-registration.md` ("nothing
+public ever writes to live state"), for cups that should run without somebody
+at the door. It is a setting of the cup (Setup → Event → Players on their
+own), and off unless a cup asks for it. How it works — the poster's venue
+code, the three ways in, and when it stops — is in `docs/self-run.md`.
+
+**What the desk sees.** The log already records who wrote what, so the
+activity list says "Checked in themselves: …", and Undo check-in works as for
+anything else. The desk's directory link has the poster next to it while any
+cup lets players act. No IP rate limit is what keeps a hall out: every phone
+there is behind one address. The code is the gate, and the phone page's own
+door counts check-ins per address only against a roomful arriving at once.

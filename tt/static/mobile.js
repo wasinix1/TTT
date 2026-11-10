@@ -123,8 +123,13 @@ const STR = {
     pauseFweb: 'Tap “I’m back” when you are', noShow: 'Opponent not here?', noShowQ: o => `${o} never came to the table? They go on a break and the table goes to the next match — you’re back in the line.`,
     reportedAuto: (s, t) => `Reported ${s} — counts at ${t} unless they object`, reportedWait: s => `Reported ${s} — waiting for the other side`,
     padNoteAuto: (o, m) => `${o} confirms, or it counts after ${m} min.`,
-    ciH: 'Not on the list?', ciP: 'Check yourself in and you’re in the line.', ciName: 'Your name', ciPartner: 'Your partner', ciGo: 'Check me in',
+    ciH: 'Not on the list?', ciP: 'Check yourself in and you’re in the line.', ciName: 'First and last name', ciPartner: 'Partner, first and last name', ciGo: 'Check me in',
     ciReg: 'Signed up already? Search your name.', ciRegRow: c => 'signed up · ' + c, ciTap: 'check in',
+    ciPairK: 'With a partner', ciSeekK: 'Looking for one',
+    ciWhole: 'First and last name, please — the wall only shows the first name.',
+    ciWaiting: 'You’re on the list — you’ll play with the next one who checks in alone.',
+    ciAlready: 'Already checked in — nothing more to do.',
+    scanHint: 'To check in, take breaks and enter results: scan the code in the hall.',
     // calls on this phone (Web Push)
     callH: 'Get called on this phone', callP: 'A buzz when you’re next and when your table is free — even with the screen locked.',
     callGo: 'Turn on calls', callOn: 'Calls come to this phone', callOff: 'Turn off', orTg: 'or on Telegram',
@@ -136,6 +141,8 @@ const STR = {
     hPlay: a => 'After the match, one of you enters the result here and the other confirms it' + (a ? `, or it counts after ${a} min.` : '.'),
     hPlayDesk: 'After the match, the organisers enter the result.',
     hRest: 'You won’t be called. Tap I’m back and you join the end of the line.',
+    hWaitDesk: 'You’re in the line — this page and the wall show when you’re up. Stepping away? Tell the desk.',
+    hRestDesk: 'You won’t be called. Tell the desk when you’re back.',
     // the evening in a few lines
     howLink: 'How tonight works', guideH: 'How tonight works', gotIt: 'Got it',
     g1: 'You’re in the line as soon as you’re checked in. Nobody keeps a list.',
@@ -219,8 +226,13 @@ const STR = {
     pauseFweb: 'Tipp „Ich bin wieder da“, wenn du zurück bist', noShow: 'Gegenseite nicht da?', noShowQ: o => `${o} ist nicht an den Tisch gekommen? Dann gehen sie in Pause und der Tisch an das nächste Spiel — du bist wieder in der Reihe.`,
     reportedAuto: (s, t) => `Gemeldet: ${s} — zählt um ${t}, wenn niemand widerspricht`, reportedWait: s => `Gemeldet: ${s} — wartet auf die andere Seite`,
     padNoteAuto: (o, m) => `${o} bestätigt, sonst zählt es nach ${m} Min.`,
-    ciH: 'Nicht auf der Liste?', ciP: 'Trag dich selbst ein und du bist in der Reihe.', ciName: 'Dein Name', ciPartner: 'Partner:in', ciGo: 'Ich bin da',
+    ciH: 'Nicht auf der Liste?', ciP: 'Trag dich selbst ein und du bist in der Reihe.', ciName: 'Vor- und Nachname', ciPartner: 'Partner:in, Vor- und Nachname', ciGo: 'Ich bin da',
     ciReg: 'Schon angemeldet? Such deinen Namen.', ciRegRow: c => 'angemeldet · ' + c, ciTap: 'einchecken',
+    ciPairK: 'Mit Partner:in', ciSeekK: 'Partner:in gesucht',
+    ciWhole: 'Bitte Vor- und Nachnamen — öffentlich zeigen wir nur den Vornamen.',
+    ciWaiting: 'Du stehst auf der Liste — du spielst mit der nächsten Person, die allein eincheckt.',
+    ciAlready: 'Ist schon eingecheckt — du musst nichts mehr tun.',
+    scanHint: 'Zum Einchecken, für Pause und Ergebnisse: den Code im Saal scannen.',
     callH: 'Aufrufe aufs Handy', callP: 'Es summt, wenn du gleich dran bist und wenn dein Tisch frei ist — auch bei gesperrtem Bildschirm.',
     callGo: 'Aufrufe einschalten', callOn: 'Aufrufe kommen auf dieses Handy', callOff: 'Ausschalten', orTg: 'oder über Telegram',
     iosAdd: 'Auf dem iPhone: Teilen → Zum Home-Bildschirm, TTT von dort öffnen und Aufrufe einschalten.',
@@ -230,6 +242,8 @@ const STR = {
     hPlay: a => 'Nach dem Spiel trägt eine Seite das Ergebnis hier ein, die andere bestätigt' + (a ? ` — sonst zählt es nach ${a} Min.` : '.'),
     hPlayDesk: 'Nach dem Spiel trägt die Orga das Ergebnis ein.',
     hRest: 'Du wirst nicht aufgerufen. Tipp „Ich bin wieder da“ und du stellst dich hinten an.',
+    hWaitDesk: 'Du bist in der Reihe — diese Seite und die Wand zeigen, wann du dran bist. Kurz weg? Sag am Eingang Bescheid.',
+    hRestDesk: 'Du wirst nicht aufgerufen. Sag am Eingang Bescheid, wenn du wieder da bist.',
     howLink: 'So läuft der Abend', guideH: 'So läuft der Abend', gotIt: 'Alles klar',
     g1: 'Sobald du eingecheckt bist, bist du in der Reihe. Niemand führt eine Liste.',
     g2: p => 'Diese Seite und der Bildschirm an der Wand zeigen, wann du dran bist: „Gleich“, dann dein Tisch.' + (p ? ' Mit Aufrufen summt dein Handy, auch gesperrt.' : ''),
@@ -310,6 +324,10 @@ const ui = {
   playingKey: '',
 };
 const CUP_KEY = 'ttt_cup';
+// tonight's code from the poster in the hall (/checkin?v=…): what lets this
+// phone check in and act, not only look (App.venue_ok). Kept for the evening,
+// and taken out of the address so a shared link does not carry it
+const VENUE_KEY = 'ttt_venue';
 const store = {
   get(k) { try { return JSON.parse(localStorage.getItem(k) || 'null'); } catch (e) { return null; } },
   set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) { } },
@@ -321,6 +339,17 @@ const store = {
    The real thing talks to the server. A mockup or a test hands in its own
    object with the same four calls as window.TTT_IO. */
 
+let venue = '';
+try {
+  const u = new URL(location.href), v = u.searchParams.get('v');
+  if (v) {
+    localStorage.setItem(VENUE_KEY, JSON.stringify(v));
+    u.searchParams.delete('v');
+    history.replaceState(null, '', u.pathname + u.search + u.hash);
+  }
+  venue = JSON.parse(localStorage.getItem(VENUE_KEY) || '""') || '';
+} catch (e) { }
+
 const IO = window.TTT_IO || {
   state: () => fetch('/api/state').then(r => r.ok ? r.json() : null),
   me: () => INIT ? fetch('/api/me', { headers: { 'X-Tg-Init': INIT }, cache: 'no-store' })
@@ -331,12 +360,13 @@ const IO = window.TTT_IO || {
     body: JSON.stringify({ op, data: data || {} }),
   }).then(async r => ({ ok: r.ok, body: await r.json().catch(() => ({})) })),
   // the web page's own door (tt/server.py phone): who this phone says it is
-  player: key => fetch('/api/player', { headers: key ? { 'X-Player': key } : {}, cache: 'no-store' })
+  player: key => fetch('/api/player' + (venue ? '?v=' + encodeURIComponent(venue) : ''),
+    { headers: key ? { 'X-Player': key } : {}, cache: 'no-store' })
     .then(async r => ({ ok: r.ok, status: r.status, body: await r.json().catch(() => ({})) })),
   playerAct: (key, op, data) => fetch('/api/player', {
     method: 'POST', cache: 'no-store',
     headers: { 'Content-Type': 'application/json', ...(key ? { 'X-Player': key } : {}) },
-    body: JSON.stringify({ op, data: data || {} }),
+    body: JSON.stringify({ op, data: data || {}, code: venue }),
   }).then(async r => ({ ok: r.ok, body: await r.json().catch(() => ({})) })),
   listen: cb => {
     let es = null, soon = null;
@@ -748,7 +778,7 @@ function also(H) {
   if (!H || !H.also || !H.also.length) return '';
   // an entry on a break or gone home can be brought back from here too,
   // not only when it happens to be the most urgent one
-  const back = o => !PV() ? ''
+  const back = o => !PV() || !ownBreaks(PV(), o.eid) ? ''
     : o.state === 'resting' ? ` <button class="link" data-act="rest" data-eid="${esc(o.eid)}" data-on="">${esc(L.back)}</button>`
     : o.state === 'withdrawn' ? ` <button class="link" data-act="leave" data-eid="${esc(o.eid)}" data-on="">${esc(L.stay)}</button>` : '';
   return `<div class="also">${H.also.map(o => `<div><b>${esc(o.cup || cupName(o.cup_id))}</b><span class="st2">${shortState(o)}${back(o)}</span></div>`).join('')}</div>`;
@@ -845,7 +875,8 @@ function guide() {
   const push = SHELL === 'web' && P && P.push_key;
   const steps = [r.queue ? L.g1 : '', r.balanced ? L.gBal : '', L.g2(push),
                  r.scores ? L.g3(r.auto_min) : L.g3desk, r.scores ? L.g6 : '',
-                 r.queue ? L.g4 : '', r.queue && r.scores ? L.g5 : ''].filter(Boolean);
+                 // breaks are theirs only where they check themselves in
+                 r.queue && (!r.breaks || r.breaks.length) ? L.g4 : '', r.queue && r.scores ? L.g5 : ''].filter(Boolean);
   return `<div class="card2 guide" id="guide"><h4>${esc(L.guideH)}</h4><ol>${steps.map(x => `<li>${esc(x)}</li>`).join('')}</ol>
     <div class="acts flush"><button class="btn ghost small" data-act="guide-ok">${esc(L.gotIt)}</button></div></div>`;
 }
@@ -863,8 +894,9 @@ function howNow(x, v) {
     return v.scores ? L.hPlay(v.auto_min) : L.hPlayDesk;
   }
   if (!r.queue) return '';
-  if (x.state === 'resting') return L.hRest;
-  if (x.state === 'waiting' || x.state === 'drawn') return x.on_deck ? L.hNext : L.hWait;
+  const own = ownBreaks(v, x.eid);
+  if (x.state === 'resting') return own ? L.hRest : L.hRestDesk;
+  if (x.state === 'waiting' || x.state === 'drawn') return x.on_deck ? L.hNext : own ? L.hWait : L.hWaitDesk;
   return '';
 }
 
@@ -888,6 +920,11 @@ function fixLine(v) {
   return `<div class="acts"><button class="link" data-act="fix-pad">${esc(L.fixLink(nice(f.opponent)))}</button></div>`;
 }
 
+/* Whether this entry's breaks and going home are the player's own: on the
+   web page only in cups where players check themselves in (rules.breaks);
+   the Mini App has always had them. */
+const ownBreaks = (v, eid) => !(v && v.rules && v.rules.breaks) || v.rules.breaks.includes(eid);
+
 function actionButtons(v, x, offer) {
   if (x.state === 'playing') {
     // the other side never came: offered once they have had time to
@@ -903,6 +940,7 @@ function actionButtons(v, x, offer) {
           <button class="btn ghost small" data-act="withdraw" data-id="${esc(mine.id)}">${esc(L.withdraw)}</button></div>`
       : `<div class="acts"><button class="btn red wide" data-act="pad">${esc(L.report)}</button>${noShow}</div>`) + offer;
   }
+  if (!ownBreaks(v, x.eid)) return offer;
   if (x.state === 'waiting' || x.state === 'drawn' || x.state === 'entered')
     return `<div class="acts"><button class="btn ghost small" data-act="rest" data-eid="${esc(x.eid)}" data-on="1">${esc(L.pause)}</button></div>` + offer;
   if (x.state === 'resting') return `<div class="acts">
@@ -1443,28 +1481,64 @@ function pickerRows(q) {
   }).join('') + ci.form;
 }
 
-/* Checking yourself in (when the evening lets players, tt/server.py
-   op_checkin): an entry made ahead turns up once you search for it — a
-   list of everyone who signed up is nobody's business — and a walk-in
-   types their name. */
+/* Checking yourself in (tt/server.py op_checkin), on a phone holding
+   tonight's code: the entries this phone made, one tap each; an entry made
+   ahead, found once you type the start of a name — a list of everyone who
+   signed up is nobody's business; or a walk-in, with their whole name. */
 function checkinBlock(qq) {
   const cups = (P && P.checkin) || [];
-  if (!cups.length || sim()) return { regs: '', form: '' };
-  const regs = qq.length >= 2 ? (P.registered || []).filter(r =>
-    r.name.toLowerCase().includes(qq) || (r.partner || '').toLowerCase().includes(qq)) : [];
+  if (sim()) return { regs: '', form: '' };
+  if (!cups.length) return { regs: '', form: P && P.self_run && !P.venue ? `<p class="note">${esc(L.scanHint)}</p>` : '' };
+  const mine = savedRegs().filter(x => (ui.ciMine || {})[x.token] === 'pending');
+  const found = qq.length >= 2 && ui.ciQ === qq ? (ui.ciFound || []) : [];
   const cupSel = ui.ciCup && cups.find(c => c.id === ui.ciCup) ? ui.ciCup : cups[0].id;
   const pair = (cups.find(c => c.id === cupSel) || {}).entry === 'pair';
+  const kind = ui.ciKind === 'seeking' ? 'seeking' : 'pair';
   return {
-    regs: regs.map(r => `<button class="nm-row" type="button" data-act="checkin-reg" data-id="${esc(r.id)}">
-      <b>${esc(r.name)}<small>${esc([r.partner ? L.pairWith(first(r.partner)) : '', L.ciRegRow(cupName(r.cup_id))].filter(Boolean).join(' · '))}</small></b>
+    regs: mine.map(x => `<button class="nm-row" type="button" data-act="checkin-mine" data-token="${esc(x.token)}">
+      <b>${esc(x.name)}<small>${esc(L.ciRegRow(x.cup || ''))}</small></b>
+      <span class="s micro red">${esc(L.ciTap)}</span></button>`).join('') +
+      found.map(r => `<button class="nm-row" type="button" data-act="checkin-reg" data-id="${esc(r.id)}">
+      <b>${esc(r.name)}<small>${esc(L.ciRegRow(r.cup))}</small></b>
       <span class="s micro red">${esc(L.ciTap)}</span></button>`).join(''),
-    form: `<div class="ci"><h4>${esc(L.ciH)}</h4><p class="note">${esc(L.ciP)} ${esc((P.registered || []).length ? L.ciReg : '')}</p>
+    form: `<div class="ci"><h4>${esc(L.ciH)}</h4><p class="note">${esc(L.ciP)} ${esc(L.ciReg)}</p>
       ${cups.length > 1 ? `<div class="seg" style="grid-template-columns:repeat(${cups.length},1fr)">${cups.map(c =>
         `<button type="button" class="${c.id === cupSel ? 'on' : ''}" data-act="ci-cup" data-cup="${esc(c.id)}">${esc(c.name)}</button>`).join('')}</div>` : ''}
       <input class="in1" id="ci-name" data-ui="ci-name" value="${esc(ui.ciName || '')}" placeholder="${esc(L.ciName)}" autocomplete="name" autocapitalize="words">
-      ${pair ? `<input class="in1" id="ci-partner" data-ui="ci-partner" value="${esc(ui.ciPartner || '')}" placeholder="${esc(L.ciPartner)}" autocapitalize="words">` : ''}
-      <div class="acts flush"><button class="btn red wide" type="button" data-act="checkin" data-cup="${esc(cupSel)}">${esc(L.ciGo)}</button></div></div>`,
+      ${pair ? `<div class="seg"><button type="button" class="${kind === 'pair' ? 'on' : ''}" data-act="ci-kind" data-kind="pair">${esc(L.ciPairK)}</button>
+        <button type="button" class="${kind === 'seeking' ? 'on' : ''}" data-act="ci-kind" data-kind="seeking">${esc(L.ciSeekK)}</button></div>
+        ${kind === 'pair' ? `<input class="in1" id="ci-partner" data-ui="ci-partner" value="${esc(ui.ciPartner || '')}" placeholder="${esc(L.ciPartner)}" autocapitalize="words">` : ''}` : ''}
+      <div class="acts flush"><button class="btn red wide" type="button" data-act="checkin" data-cup="${esc(cupSel)}" data-pair="${pair ? 1 : ''}">${esc(L.ciGo)}</button></div></div>`,
   };
+}
+
+/* What the landing page saved on this phone for tonight (site.js tt_regs). */
+function savedRegs() {
+  try {
+    const ev = (S && S.event && S.event.id) || '';
+    return (JSON.parse(localStorage.getItem('tt_regs') || '[]') || [])
+      .filter(x => x && x.token && (!x.event || x.event === ev)).slice(-8);
+  } catch (e) { return []; }
+}
+
+/* Asked once the picker opens: which of this phone's entries are still to
+   check in. And, as a name is typed, who is expected under it. */
+async function ciLookup(qq) {
+  if (!IO.playerAct || !P || !(P.checkin || []).length) return;
+  const repaint = () => { if ($('picker').classList.contains('on')) $('names').innerHTML = pickerRows($('find').value); };
+  if (qq == null) {
+    const tokens = savedRegs().map(x => x.token);
+    if (!tokens.length) return;
+    const r = await IO.playerAct(null, 'mine', { tokens }).catch(() => null);
+    if (r && r.ok) { ui.ciMine = r.body.mine || {}; repaint(); }
+    return;
+  }
+  clearTimeout(ciLookup.t);
+  if (qq.length < 2) return;
+  ciLookup.t = setTimeout(async () => {
+    const r = await IO.playerAct(null, 'find', { q: qq }).catch(() => null);
+    if (r && r.ok && $('find').value.trim().toLowerCase() === qq) { ui.ciQ = qq; ui.ciFound = r.body.found || []; repaint(); }
+  }, 200);
 }
 
 /* The key that lets this phone act for the name it picked. Asked for
@@ -1485,13 +1559,21 @@ async function checkin(data) {
   busy = true;
   try {
     const r = await IO.playerAct(null, 'checkin', data);
-    if (!r.ok) { toast(r.body.error || 'That didn’t work.', true); buzz('bad'); return; }
+    if (!r.ok) { toast(r.body.error || (LANG === 'de' ? 'Das hat nicht geklappt.' : 'That didn’t work.'), true); buzz('bad'); return; }
     ui.ciName = ui.ciPartner = '';
+    P = r.body.view || P;
+    const c = r.body.checkin || {};
+    if (!r.body.key) {
+      // on the list, waiting for a partner, or in already from the desk
+      toast(c.waiting ? L.ciWaiting : L.ciAlready);
+      ui.ciMine = { ...(ui.ciMine || {}), [data.token || '']: 'confirmed' };
+      $('names').innerHTML = pickerRows($('find').value);
+      return;
+    }
     me = { event: (S.event || {}).id || '', player: r.body.player_id, key: r.body.key };
     store.set(ME_KEY, me);
-    P = r.body.view || P;
     closePicker();
-    toast(toastText('in'));
+    toast(c.already ? L.ciAlready : toastText('in'));
     buzz('ok');
     await load();
     scrollTo({ top: 0 });
@@ -1506,6 +1588,7 @@ function openPicker() {
   $('names').innerHTML = pickerRows('');
   $('scrim').classList.add('on');
   $('picker').classList.add('on');
+  ciLookup();
 }
 function closePicker() { $('scrim').classList.remove('on'); $('picker').classList.remove('on'); }
 
@@ -1622,7 +1705,7 @@ function toast(msg, bad) {
 document.addEventListener('input', e => {
   const k = e.target.dataset.ui;
   if (e.target.id === 'res-q') { ui.q = e.target.value; return renderRoom(); }
-  if (e.target.id === 'find') { $('names').innerHTML = pickerRows(e.target.value); return; }
+  if (e.target.id === 'find') { $('names').innerHTML = pickerRows(e.target.value); ciLookup(e.target.value.trim().toLowerCase()); return; }
   if (k === 'ci-name') { ui.ciName = e.target.value; return; }
   if (k === 'ci-partner') { ui.ciPartner = e.target.value; return; }
   if (k === 'name') ui.name = e.target.value;
@@ -1664,10 +1747,17 @@ document.addEventListener('click', async e => {
   if (a === 'not-me') return forget();
   if (a === 'ci-cup') { ui.ciCup = d.cup; $('names').innerHTML = pickerRows($('find').value); return; }
   if (a === 'checkin-reg') return void checkin({ registration_id: d.id });
+  if (a === 'checkin-mine') return void checkin({ token: d.token });
+  if (a === 'ci-kind') { ui.ciKind = d.kind; $('names').innerHTML = pickerRows($('find').value); return; }
   if (a === 'checkin') {
-    const name = (ui.ciName || '').trim();
+    const name = (ui.ciName || '').trim(), partner = (ui.ciPartner || '').trim();
+    const kind = d.pair ? (ui.ciKind === 'seeking' ? 'seeking' : 'pair') : 'single';
+    const whole = n => n.split(/\s+/).length > 1;
     if (!name) { toast(L.needName, true); const n = $('ci-name'); if (n) n.focus(); return; }
-    return void checkin({ cup_id: d.cup, name, partner_name: (ui.ciPartner || '').trim() });
+    if (!whole(name) || (kind === 'pair' && partner && !whole(partner))) {
+      toast(L.ciWhole, true); const n = $(whole(name) ? 'ci-partner' : 'ci-name'); if (n) n.focus(); return;
+    }
+    return void checkin({ cup_id: d.cup, kind, name, partner_name: kind === 'pair' ? partner : '' });
   }
   if (a === 'guide-ok') { ui.guide = false; store.set(GUIDE_KEY(), 1); return render(); }
   if (a === 'guide-open') { ui.guide = true; render(); const g = $('guide'); if (g) g.scrollIntoView({ behavior: reduced() ? 'auto' : 'smooth', block: 'center' }); return; }

@@ -6,8 +6,8 @@ the wall and on their phone when they are on, enter the result themselves,
 and take a break or go home without asking anyone. The organiser is playing
 too.
 
-Everything here is open play. Groups, knockouts and Swiss still run as they
-always did, and a phone can only check itself in to an open-play cup.
+It is made for open play, but each part is a cup setting, so a group stage
+can let its players enter results while the desk still checks them in.
 
 ## Switching it on
 
@@ -19,8 +19,11 @@ doubles can run themselves while the singles have a desk:
 | Open play | ✓ | ✓ | after 3 min |
 | Singles cup | | | waits |
 
-- **Check in.** While the doors are open, the phone page offers *Check in*
-  next to *Tap your name* for this cup.
+- **Check in.** While the doors are open, a phone holding tonight's code
+  (below) is offered *Check in* next to *Tap your name* for this cup, until
+  its draw starts. Open play takes people all night. It is also what makes
+  *Break* and *Going home* the players' own: in a cup the desk checks in,
+  those stay with the desk.
 - **Own results.** Players enter their own scores, from the web page or
   Telegram.
 - **Unanswered.** *Waits* means one side's word waits for the other side,
@@ -30,14 +33,34 @@ doubles can run themselves while the singles have a desk:
 
 The settings live on the cup (`Cup.self_checkin`, `player_scores`,
 `score_auto_min`), so they carry over with the cup to the next event, and
-the new-event wizard keeps them. A cup that never set one falls back on the
-old event-wide setting. That is also what a draw outside any cup uses.
+the new-event wizard keeps them. This table is the only place they are set.
+An event from before had one switch for the whole evening: on the first
+start it is copied onto every cup that never said, and the event's own goes
+back to off (`App._rules_onto_cups`). A draw outside any cup still goes by
+the event's.
+
+## The poster in the hall
+
+What stands in for the door seeing somebody is a code: Links → **Poster for
+the hall** prints a QR code to `/checkin?v=<code>`, and the desk has the same
+poster under the directory link. The code is an HMAC of the event id under
+the admin key, so it is fixed for the evening, never stored, and different
+for every event; it is only in the admin's and the door's payloads.
+
+`/checkin` forwards to the phone page, which keeps the code for the evening
+and takes it out of the address. With it, a phone can check in and pick a
+name to act as. Without it, the page only shows the tables, and on a night
+players run themselves it says to scan the code in the hall. The wall shows
+the same QR code when it was opened from Links (the console adds the door
+key, `/board?d=…`); opened bare, its strip says to scan the code at the
+entrance.
 
 ## Who a phone is
 
-Trust, the same as the desk. A phone either picks a name off tonight's list
-or checks itself in with a name, and the server hands it a key for that
-person. The key is the person's id plus an HMAC signed with the `player`
+Trust, the same as the desk, but only in the hall: a phone holding tonight's
+code either picks a name off tonight's list or checks itself in, and the
+server hands it a key for that person. No key is handed out on a night where
+no cup lets players act. The key is the person's id plus an HMAC signed with the `player`
 secret in `keys.json`. Nothing is stored. The same person always gets the
 same key, on any phone, and it survives a restart and the next event. A key
 that wasn't signed here is turned away.
@@ -49,10 +72,19 @@ sides of the table. Every change a phone makes is logged as `phone`.
 
 ## The line
 
-- **Checking in.** A walk-in types a name (two names for a doubles cup). The
-  door's own `admit` makes the entry, so it is exactly what the desk would
-  have made. An entry made ahead turns up once you search for your name. The
-  list of who signed up is never shown whole.
+- **Checking in.** Three ways in, all through the door's own `admit`, so it
+  is exactly what the desk would have made:
+  - an entry this phone made at home: one tap (the landing page saved it);
+  - an entry made ahead elsewhere: it turns up once you type the first two
+    letters of the name (`checkin_find`). The list of who signed up is never
+    sent whole;
+  - a walk-in: first and last name, as on the form at home, and for a
+    doubles cup the partner's too, or *looking for a partner*, who waits on
+    the list until the next one checks in alone.
+
+  Who somebody is follows `docs/player-identity.md`. When only the desk can
+  tell — a surname a typo away from somebody's here — the phone is sent to
+  the desk, where their entry is waiting.
 - **Break / I'm back.** A break takes you out of the line, and coming back
   puts you at the end of it. The button is there straight after a result as
   well, which is when most people want it.
@@ -150,9 +182,10 @@ A newer call replaces the older one on the lock screen.
 - **How tonight works:** five lines, shown once per evening when someone
   first opens the page, and any time from the link at the bottom.
 - **The wall** shows a dark strip along the bottom whenever a cup on it lets
-  players check in or enter results. It has three steps — open the page,
-  tap Break when you step away, enter your result after the match — and a
-  QR code for the page if `segno` is installed.
+  players check in or enter results: scan the code, tap Break when you step
+  away (where players check themselves in), enter your result after the
+  match (where they enter results). The QR code (if `segno` is installed) is
+  the poster's, when the wall was opened from Links.
 
 ## What it does not do
 

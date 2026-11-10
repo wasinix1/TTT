@@ -2000,10 +2000,14 @@ const tablesAreSplit = () => S.tables.some(t => t.cup_id);
    own scores from their phones (tt/play.py, docs/self-run.md). One row per
    cup, so the doubles can run themselves while the singles have a desk. A
    cup that never said shows what it falls back on, dimmed. */
+/* What a cup lets its players do (Store.cup_rule): its own setting, or
+   for a draw outside any cup, the event's. */
+const cupRule = (c, k) => c && c[k] != null ? c[k]
+  : k === 'player_scores' ? !!S.event.player_scores : k === 'score_auto_min' ? (+S.event.score_auto_min || 0) : false;
+const selfRun = () => S.cups.some(c => cupRule(c, 'self_checkin') || cupRule(c, 'player_scores'));
+
 function selfRunSection() {
-  const ev = S.event;
-  const rule = (c, k) => c && c[k] != null ? c[k]
-    : k === 'player_scores' ? !!ev.player_scores : k === 'score_auto_min' ? (+ev.score_auto_min || 0) : false;
+  const rule = cupRule;
   const row = c => {
     const id = c ? c.id : '', sc = rule(c, 'player_scores'), auto = +rule(c, 'score_auto_min') || 0;
     const box = (k, on) => `<label class="pick"${c && c[k] == null ? ' title="Not set for this cup — the default"' : ''}>
@@ -2017,8 +2021,9 @@ function selfRunSection() {
   };
   return sblock('Players on their own',
     'Per cup: whether people check themselves in from their phone, enter their own results, and how long a result nobody answers waits.',
-    why('Checking in works from the phone page while the doors are open; somebody already on the ' +
-        'list just picks their name. That is trust, the same as telling the desk. A result from ' +
+    why('Players start from the poster in the hall (Links → Poster for the hall): its code lets a ' +
+        'phone check in, pick its name, take breaks and enter results, each only where the cup ' +
+        'says so. Picking a name is trust, the same as telling the desk. A result from ' +
         'one side waits for the other side to confirm it, on their phone or in Telegram. With a ' +
         'time set, a result nobody contradicts counts once it is up, so a table is never blocked ' +
         'by somebody without a phone.',
@@ -2694,7 +2699,7 @@ function tabLinks() {
         ><button>Poster for this event</button></a>
       <a href="/print?base=${encodeURIComponent(base + '/')}" target="_blank"
         ><button>Poster for the live link</button></a>
-      <a href="/board" target="_blank"><button>Open the wall display</button></a>
+      <a href="/board${S.keys.door ? '?d=' + encodeURIComponent(S.keys.door) : ''}" target="_blank"><button>Open the wall display</button></a>
     </div>
     ${why('The event poster carries the name, the date, the venue and a QR code — that is ' +
           'the one for the noticeboard beforehand. The live-link poster is the plain one for ' +
@@ -2702,6 +2707,22 @@ function tabLinks() {
           'landing page before the event and the console once it starts.',
           'Pasting that URL into a chat shows the event name, date and blurb as a card, so ' +
           'the link does the advertising on its own.')}
+
+    ${sec('Players on their own')}
+    ${selfRun() ? `<p class="sub">On for ${esc(S.cups.filter(c => cupRule(c, 'self_checkin') || cupRule(c, 'player_scores')).map(c => c.name).join(', '))}.</p>
+    <div class="inline">
+      <a href="/print?mode=checkin&token=${encodeURIComponent(S.keys.admin || '')}&base=${encodeURIComponent(base + '/')}" target="_blank"
+        ><button>Poster for the hall</button></a>
+      <span class="key">${base}/checkin?v=${esc(S.checkin_code || '')}</span>
+    </div>` : `<p class="sub">Off for every cup. Switch it on per cup under Event → Players on their own.</p>`}
+    ${why('Once the doors open, scanning the poster opens the phone page with tonight’s code. ' +
+          'Where a cup allows it, players check themselves in — one tap for an entry made on ' +
+          'that phone, a name found among who is expected, or a walk-in — and pick their name ' +
+          'to take breaks and enter results. Without the code the page only shows the tables.',
+          'Checking in goes through the same checks as the desk, and the desk shows who checked ' +
+          'in themselves. A cup stops taking self check-ins once its draw starts, except open ' +
+          'play, which takes people all night. The code changes with the next event, so keep ' +
+          'it on the wall, not in a chat. The wall display shows it too when opened from here.')}
   </div>`;
 }
 
