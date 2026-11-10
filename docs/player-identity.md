@@ -151,6 +151,44 @@ cup tonight the console asks:
 
 A person playing in only one cup keeps today's behaviour.
 
+## Wanted by two cups at once
+
+A true double call cannot happen: the dispatcher seats one table per pass
+and recomputes who is busy each time, so once the first match takes Max,
+the second simply cannot. The real question is what happens to the second.
+
+**It keeps its place and is skipped while he plays. It does not go to the
+back.**
+
+- Sending it to the back would punish everyone who plays in two cups, and
+  their opponents as well. Over an evening it costs them matches in the
+  second cup every single time.
+- In a fixed draw (groups, Swiss, knockout) the back of the line helps
+  nobody. The round still cannot close without that match, so pushing it
+  back only makes the cup finish later. Meanwhile the dispatcher already
+  seats whatever else in that cup is ready, so the table is not wasted.
+- The existing Put back (`match_defer`) stays for the organiser to use by
+  hand.
+
+Two soft rules stop the rebound, where Max finishes one match and is
+immediately called to the next:
+
+1. **Alternate.** When a free person is wanted by more than one cup, prefer
+   the cup he did not just play in. Otherwise cup ranking decides, as
+   now: scheduled draws before open play, and the cup furthest from
+   finishing first.
+2. **Breather.** For a short time after a match (setting, default 2
+   minutes), a person is only called if nothing else can use the table.
+   An idle table is still worse than a tired player, which is the same
+   trade the strength tolerance already makes (`force` in `dispatch.tick`).
+
+What everyone sees:
+
+- Up next and the desk show "playing in Open singles, T3" instead of a
+  plain blocked row.
+- His opponent's waiting time takes Max's current match into account.
+- Telegram tells Max "Doubles next, after your singles match".
+
 ## Gone home and sitting out
 
 - **Gone home** (`op_withdraw`) gains `everywhere: true`. The desk and
@@ -221,3 +259,6 @@ make them block each other for the rest of that night.
 - Rename everywhere vs substitution. Gone home everywhere. Merge, Split,
   and Undo of each.
 - Removing one of a person's entries leaves the other intact.
+- Wanted by two cups: the second match keeps its place and is seated as soon
+  as he is free. He alternates cups. The breather yields to anyone else ready,
+  but never leaves a table idle.
