@@ -17,7 +17,7 @@ import time
 from tt.server import App
 from tt.telegram import Bot, TgError
 from tt.simulate import play_one
-from tt import simulate
+from tt import programme, simulate
 
 
 def check(cond, msg):
@@ -631,6 +631,108 @@ def test_talking_to_the_room():
     shutil.rmtree(d)
 
 
+EVENT_TEXT = """*Spielmodus und Anmeldung 13.11.*
+
+Es gibt 2 Bewerbe. <script>
+
+*Einzelcup (20 Plätze)*
+Voranmeldung + Restplätze
+
+Gruppenphase:
+2 Gruppen
+
+*Timetable*
+
+17:00-19:30\tGruppenphase
+21.00–22.00 Finale
+"""
+
+
+def test_the_event_text_is_read_for_its_structure():
+    print("\nthe event text: its layout comes from what the lines look like")
+    d = programme.parse(EVENT_TEXT)
+    check(d["title"].startswith("Spielmodus"), "a bold first line set apart is the title")
+    check([s["heading"] for s in d["sections"]] == ["Einzelcup", "Timetable"]
+          and d["sections"][0]["chip"] == "20 Plätze", "bold lines are sections, a bracket a chip")
+    check(d["sections"][0]["blocks"][1] == {"t": "label", "text": "Gruppenphase"},
+          "a short line ending in a colon is a small heading")
+    check(d["sections"][1]["timetable"]
+          and [r["time"] for r in d["sections"][1]["blocks"][0]["rows"]] == ["17:00–19:30", "21:00–22:00"],
+          "lines starting with a time are a timetable, however they were typed")
+    check("<script>" not in programme.web(d) and "<script>" not in programme.telegram(d),
+          "nothing typed reaches a page or a message as markup")
+    first = programme.parse("*Einzelcup*\nVoranmeldung\n\n*CCL*\nvor Ort")
+    check(not first["title"] and len(first["sections"]) == 2,
+          "a section with its text right under it is not mistaken for the title")
+    one = programme.parse("Open to everyone, 2*3 tables.")
+    check(not one["sections"] and "*" in one["lead"][0]["lines"][0], "a plain line stays a plain line")
+    check(programme.teaser(EVENT_TEXT) == "Es gibt 2 Bewerbe. <script>", "link cards get the first paragraph")
+    check(programme.date_mismatch(EVENT_TEXT, "2099-12-11T17:00") == {"says": "13.11.", "starts": "11.12."}
+          and programme.date_mismatch(EVENT_TEXT, "2099-11-13T17:00") is None,
+          "last month's date is noticed, and this month's is not")
+
+
+def test_the_round_message():
+    print("\nthe round message: optional, once, and never at the event's expense")
+    app, fake, d = fresh()
+    event(app)
+    fans = [fake.user(n) for n in ("Una", "Vic", "Wes")]
+    for u in fans:
+        fake.say(u, "/start")
+    app.telegram.pump()
+    fake.say(fans[2], "/stop")
+    app.telegram.pump()
+    spec = {"name": "November Open", "starts_at": "2099-11-13T17:00", "venue": "TÜWI, Dänenstraße 4",
+            "blurb": EVENT_TEXT,
+            "cups": [{"name": "Einzelcup", "entry": "single", "registration": "open",
+                      "kind": "open_play", "config": {"mode": "singles"}}],
+            "tables": [{"name": "Table 1", "cup": -1}]}
+
+    out = app.act("admin", "create_event", dict(spec))
+    app.telegram.pump()
+    check("announced" not in out and not fake.seen(fans[0], "Neuer Termin!"), "not ticked, nothing is sent")
+
+    out = app.act("admin", "create_event", dict(spec, announce=True, url="https://tt.example/"))
+    check(out.get("announced") == 2, "ticked, it goes to the followers who did not opt out")
+    app.telegram.pump()
+    check(fake.seen(fans[0], "Neuer Termin!") and fake.seen(fans[0], "November Open")
+          and fake.seen(fans[0], "<blockquote expandable>") and not fake.seen(fans[2], "November Open"),
+          "the event card with the programme folded")
+    check(not fake.seen(fans[0], "*Einzelcup"), "no markup left showing")
+    sent = next(c[1] for c in reversed(fake.calls) if c[0] == "sendMessage" and "Neuer Termin" in c[1]["text"])
+    labels = [b["text"] for row in sent["reply_markup"]["inline_keyboard"] for b in row]
+    check("🌐 Alle Infos" in labels, "with the way to the page")
+    fake.tap(fans[0], "Ich bin dabei")
+    app.telegram.pump()
+    fake.tap(fans[0], "✓ Una")
+    app.telegram.pump()
+    check(len(app.store.pending_regs()) == 1, "and its button enters them")
+    n = len([c for c in fake.calls if c[0] == "sendMessage" and "Neuer Termin" in c[1]["text"]])
+    app.telegram.pump()
+    check(n == len([c for c in fake.calls if c[0] == "sendMessage" and "Neuer Termin" in c[1]["text"]]),
+          "said once")
+
+    out = app.act("admin", "create_event", dict(spec, starts_at="", announce=True))
+    check(out.get("announce_error") and app.store.event["name"] == "November Open",
+          "no time to sign up in: the event stands and says why nothing went")
+
+    try:
+        app.act("admin", "create_event", dict(spec, name="Too long", blurb="x" * 3001))
+        check(False, "an over-long text is refused")
+    except ValueError:
+        check(app.store.event["name"] != "Too long", "an over-long text is refused before anything is written")
+
+    app.act("admin", "create_event", dict(spec))
+    pub = app.public_state()
+    check("pg-tile" in pub["programme"], "the landing page gets the programme while it is upcoming")
+    app.act("admin", "set_phase", {"phase": "done"})
+    check(app.public_state()["programme"] == "", "and not once it is over")
+    prev = app.act("admin", "event_text_preview", dict(spec, text=EVENT_TEXT))
+    check(prev["parts"] == ["Title", "Lead", "1 section", "Timetable, 2 rows"]
+          and "Neuer Termin!" in prev["telegram"]["text"], "the editor is shown what was understood")
+    shutil.rmtree(d, ignore_errors=True)
+
+
 def test_the_reminder():
     print("\n[the day before]")
     app, fake, d = fresh()
@@ -1114,6 +1216,8 @@ def run():
     test_players_enter_scores()
     test_disagreement_goes_to_the_organisers()
     test_talking_to_the_room()
+    test_the_event_text_is_read_for_its_structure()
+    test_the_round_message()
     test_the_reminder()
     test_network_trouble_loses_nothing()
     test_the_mini_app_knows_who_is_asking()

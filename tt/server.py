@@ -18,7 +18,8 @@ from urllib.parse import urlparse, parse_qs
 
 from .store import Store
 from .models import Scoring, decide_winner
-from . import dispatch, board, simulate, play
+from . import dispatch, board, programme, simulate, play
+from .bot import announce_preview
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 STATIC = os.path.join(HERE, "static")
@@ -248,6 +249,9 @@ class App:
                 "starts_ts": s.starts_at_ts(),
                 "open": phase == "registration",
                 "telegram": self._tg_name(),
+                # the event's text, laid out: only while it is still upcoming
+                "programme": (programme.web(programme.parse(s.event.get("blurb")))
+                              if phase in ("announced", "registration") else ""),
                 "cups": [self._public_cup(c, phase)
                          for c in (s.cups[i] for i in s.cup_order if i in s.cups)],
             }
@@ -568,7 +572,10 @@ class App:
                 dispatch.tick(s)
             finally:
                 s.actor = "system"
-            return out or {}
+        # after the lock: the tables must not wait while it is written out
+        if op == "create_event" and p.get("announce"):
+            out.update(self._announce_created(p))
+        return out or {}
 
     # players & entrants
     def _resolve_cup(self, cup_id):
@@ -1066,6 +1073,7 @@ class App:
         return p
 
     def op_event_meta(self, p):
+        programme.check(p.get("blurb"))
         self.store.append("event_meta", self._rules(p))
 
     # a player, for themselves (tt/play.py). Only the bot and /api/player
@@ -1127,10 +1135,24 @@ class App:
         out["person_id"] = s.players[e.player_ids[0]].person_id
         return out
 
+    def op_event_text_preview(self, p):
+        """What a text will look like, for the editor. Changes nothing, and
+        the event it describes may not exist yet."""
+        text = p.get("text") or ""
+        doc = programme.parse(text)
+        tg = self.telegram
+        return {
+            "parts": programme.parts(doc), "web": programme.web(doc),
+            "mismatch": programme.date_mismatch(text, p.get("starts_at")),
+            "telegram": (announce_preview(p, programme.telegram(doc), bool(tg.public_url()))
+                         if tg and tg.on else None),
+        }
+
     def op_new_event(self, p):
         """Start a new event. Players, teams, matches and formats go; tables,
         cups and your access keys carry forward. This is what the old
         danger-zone resets were reaching for."""
+        programme.check(p.get("blurb"))
         s = self.store
         s.append("event_new", {
             "name": (p.get("name") or "").strip() or "Table tennis evening",
@@ -1152,6 +1174,7 @@ class App:
         cups = p.get("cups") or []
         tables = p.get("tables") or []
         limits = [self._max_entrants(c.get("max_entrants")) for c in cups]   # before anything is written
+        programme.check(p.get("blurb"))
 
         # the wizard is authoritative over cups: it clears them and writes
         # the ones it was given, rather than merging into whatever was there
@@ -1207,6 +1230,23 @@ class App:
                 s.append("table_set", spec)
 
         return {"event_id": s.event["id"], "cup_ids": cup_ids}
+
+    def _announce_created(self, p):
+        """The round message the wizard was asked to send. The event exists
+        by now, so whatever goes wrong here is reported, never raised."""
+        s, tg = self.store, self.telegram
+        if not (tg and tg.on):
+            return {"announce_error": "no Telegram bot is connected"}
+        with s.lock:
+            ok = (s.phase() in ("announced", "registration")
+                  and any(c.registration == "open" for c in s.cups.values()))
+        if not ok:
+            return {"announce_error": "nothing is taking entries before the start time"}
+        try:
+            tg.remember_url(p.get("url", ""))
+            return {"announced": tg.broadcast("followers", "", announce=True)}
+        except Exception as e:
+            return {"announce_error": str(e)}
 
     # registration — the one thing the public side of the wall can write
     MAX_PER_CUP = 300
@@ -1859,7 +1899,7 @@ OP_LEVEL = {
     "add_cup": 2, "update_cup": 2, "remove_cup": 2, "merge_cups": 2,
     "join_queue": 1, "leave_queue": 1,
     "report": 1, "void_match": 1, "reopen_match": 1, "put_back": 2, "assign": 2, "queue_front": 2,
-    "manual_match": 2, "manual_result": 1, "event_meta": 2, "rewind": 2,
+    "manual_match": 2, "manual_result": 1, "event_meta": 2, "event_text_preview": 2, "rewind": 2,
     "new_event": 2, "create_event": 2, "set_phase": 2, "past_events": 2,
     "register": 0, "update_registration": 2,
     "reg_view": 0, "reg_note": 0, "reg_cancel": 0, "reg_restore": 0,
@@ -1889,8 +1929,10 @@ DOOR_OPS = frozenset({
 # door cleared, or one cancelled with its link. The bot counts it as gone.
 OFF_THE_LIST = ("dropped", "duplicate", "cancelled")
 
-# Ops that talk to Telegram and so must not hold the store lock while they wait.
-UNLOCKED = {"tg_connect", "tg_disconnect", "tg_send", "tg_door_link", "tg_read"}
+# Ops that talk to Telegram and so must not hold the store lock while they
+# wait, and the editor's preview, which never touches the store at all.
+UNLOCKED = {"tg_connect", "tg_disconnect", "tg_send", "tg_door_link", "tg_read",
+            "event_text_preview"}
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -2195,8 +2237,9 @@ class Handler(BaseHTTPRequestHandler):
             bits.append(time.strftime("%A %d %B, %H:%M", time.localtime(ts)))
         if ev.get("venue"):
             bits.append(ev["venue"])
-        desc = ev.get("blurb") or " · ".join(bits) or "Table tennis"
-        if bits and ev.get("blurb"):
+        short = programme.teaser(ev.get("blurb"))
+        desc = short or " · ".join(bits) or "Table tennis"
+        if bits and short:
             desc = " · ".join(bits) + " — " + desc
         esc = lambda t: (str(t).replace("&", "&amp;").replace("<", "&lt;")
                          .replace(">", "&gt;").replace('"', "&quot;"))
@@ -2233,7 +2276,7 @@ class Handler(BaseHTTPRequestHandler):
         if announce:
             detail = "".join(
                 f'<div class="detail">{x}</div>'
-                for x in (when, ev.get("venue") or "", ev.get("blurb") or "") if x)
+                for x in (when, ev.get("venue") or "", programme.teaser(ev.get("blurb"))) if x)
         has_qr = True
         try:
             import segno  # noqa

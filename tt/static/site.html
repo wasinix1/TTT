@@ -9,7 +9,9 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Syne:wght@400..800&display=swap" rel="stylesheet" media="print" onload="this.media='all'">
 <noscript><link href="https://fonts.googleapis.com/css2?family=Syne:wght@400..800&display=swap" rel="stylesheet"></noscript>
+<link rel="stylesheet" href="/static/fonts.css">
 <link rel="stylesheet" href="/static/style.css">
+<link rel="stylesheet" href="/static/programme.css">
 <style>
 /* The public face of the club. Same language as the console — white paper,
    black ink, one red — but where the console packs data tight, this spreads
@@ -19,7 +21,7 @@
    both long strings), a countdown, a CTA link to /join, and cup cards. The
    entry form is its own page at /join — not on this one. */
 
-/* site.js toggles the hidden attribute on #blurb #count #join #cups-section
+/* site.js toggles the hidden attribute on #programme #count #join #cups-section
    #cups-note, so nothing below may set display on them unconditionally */
 [hidden]{display:none!important}
 
@@ -51,8 +53,6 @@ body{padding-bottom:0}
         font-size:13px;font-weight:700;letter-spacing:.1em;text-transform:uppercase}
 .hero h1{font-size:clamp(30px,4.6vw,58px);font-weight:800;letter-spacing:-.03em;
          line-height:1.02;margin:0;max-width:20ch;text-wrap:pretty}
-.blurb{color:var(--muted);font-size:17px;font-weight:400;line-height:1.5;
-       margin:0;max-width:52ch}
 
 /* The agreed look: date and venue as one display-scale stack, venue in red,
    labels hidden — at this size "When" over a date is noise. site.js formats
@@ -242,8 +242,9 @@ body{padding-bottom:0}
 /* ==========================================================================
    The landing as designed (TTT Landing.dc.html / TTT Landing Mobile.dc.html).
    Full bleed, white, 2px seams. While entries are open the hero is only the
-   lockup, the date stack and one button; the name, blurb and countdown come
-   back once the event is announced-only, running or over. */
+   lockup, the date stack and one button; the name and countdown come back
+   once the event is announced-only, running or over. The event's own text
+   is never in the hero: it has a section of its own, #programme. */
 .site{max-width:none;margin:0;padding:0}
 .hero{min-height:88vh;gap:2px}
 .hero-panel{gap:40px}
@@ -252,7 +253,7 @@ body{padding-bottom:0}
 .hero-text{display:flex;flex-direction:column;gap:clamp(14px,2vw,22px);min-width:0}
 .facts{font-size:clamp(26px,3.2vw,42px);font-weight:800;letter-spacing:-.03em;line-height:1.04}
 .fact .v{font-size:inherit;font-weight:inherit;line-height:inherit;max-width:none;text-wrap:balance}
-body.pre .kicker,body.pre .hero h1,body.pre .blurb,body.pre .count,body.pre #foot-note{display:none}
+body.pre .kicker,body.pre .hero h1,body.pre .count,body.pre #foot-note{display:none}
 #cta-slot .cta{flex:none;margin:0}
 
 #join{padding:0;margin-top:2px}
@@ -325,7 +326,6 @@ body.pre .kicker,body.pre .hero h1,body.pre .blurb,body.pre .count,body.pre #foo
         <div class="hero-text">
           <div class="kicker"><span id="kicker">Demnächst</span></div>
           <h1 id="name">…</h1>
-          <p class="blurb" id="blurb" hidden></p>
           <div class="facts" id="facts"></div>
         </div>
         <div id="cta-slot"></div>
@@ -337,6 +337,8 @@ body.pre .kicker,body.pre .hero h1,body.pre .blurb,body.pre .count,body.pre #foo
   </header>
 
   <div class="count" id="count" hidden></div>
+
+  <div class="programme" id="programme" hidden></div>
 
   <section class="section" id="join" hidden></section>
 

@@ -164,6 +164,18 @@ list and everything else works as before.
 entry button per open cup — the one-tap registration arrives in the message
 that advertises the night.
 
+The event's text comes with it (`tt/programme.py`): the lead in the open and
+the rest in an expandable quote, so a long programme does not push the entry
+buttons off the screen. *Alle Infos* links to the page when there is a public
+`https://` address. The same message can go out on its own: tick *Send a round
+message* on the wizard's review step and it is queued once, straight after the
+event is written. The tick is off by default and unavailable without a bot, a
+future start time, a cup taking entries or a follower. The event never depends
+on it: if sending fails, the event stands and the console says why. It is sent
+from the op, not derived in `notify.plan`, because a derived notice would keep
+reaching whoever follows the bot later. Editing the text afterwards does not
+change what was sent; *Announce* sends it again.
+
 **Live.** Tonight's players, one cup, or the pre-registered, from the Chat
 tab. One person, from their row at the door.
 
