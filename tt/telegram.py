@@ -318,12 +318,19 @@ class Wire:
                  "message_id": r["message_id"], "ref": json.loads(r["ref"] or "{}")}
                 for r in rows]
 
-    def is_announcement(self, chat_id, message_id):
-        """Whether this message in this chat went out as a round message."""
-        rows = self._all("SELECT payload FROM outbox WHERE chat_id=? AND message_id=?"
+    def announcement(self, chat_id, message_id):
+        """What the organisers wrote on a round message in this chat, so it
+        can be drawn again with their words: "" for one that carried only
+        the event's text, None for a message that was not a round message."""
+        rows = self._all("SELECT payload, ref FROM outbox WHERE chat_id=? AND message_id=?"
                          " AND key LIKE 'bc:%'", (chat_id, message_id))
-        return any(json.loads(r["payload"]).get("text", "").startswith(ANNOUNCE_HEAD)
-                   for r in rows)
+        for r in rows:
+            ref = json.loads(r["ref"] or "{}")
+            if "announce" in ref:
+                return ref["announce"]
+            if json.loads(r["payload"]).get("text", "").startswith(ANNOUNCE_HEAD):
+                return ""                  # sent before the words were kept
+        return None
 
     def close(self, row_id):
         self._q("UPDATE outbox SET closed=1 WHERE id=?", (row_id,))
@@ -943,7 +950,9 @@ class Bot:
         # followers told
         for c, params in ready:
             self.wire.enqueue(f"bc:{batch}:{c}", c, "sendMessage", params,
-                              prio=1 if kind in ("chat", "tonight", "cup") else 2)
+                              prio=1 if kind in ("chat", "tonight", "cup") else 2,
+                              # the organisers' own words, for redrawing it later
+                              ref={"announce": text} if announce else None)
         if kind == "chat":
             # the thread shows what was written, not how it was dressed up
             self.wire.note(chat_id, "out", text)

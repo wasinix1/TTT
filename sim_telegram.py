@@ -605,6 +605,9 @@ def test_talking_to_the_room():
     fake.tap(fans[0], "✓ Una")
     app.telegram.pump()
     check(len(s.pending_regs()) == 1, "and its button enters them")
+    ann = next((m for m in fake.chats[fans[0]["id"]].values() if "Neuer Termin" in m["text"]), {"text": ""})
+    check("Angemeldet für" in ann["text"] and "Freitag geht" in ann["text"],
+          "and the message, drawn again, keeps what the organisers wrote on it")
 
     fake.blocked.add(fans[1]["id"])
     app.act("admin", "tg_send", {"audience": "followers", "text": "Noch Plätze frei"})

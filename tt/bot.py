@@ -721,9 +721,15 @@ class Conversation:
         if mid == (self.wire.chat(uid) or {}).get("card_msg"):
             # noted first, so the card-keeper does not queue the same edit
             self.wire.set_chat(uid, card_hash=self.card_hash(uid))
-        elif mid and self.wire.is_announcement(uid, mid):
-            note = "\n\n".join(x for x in (notice, self.details()) if x)
+        elif mid and (said := self.wire.announcement(uid, mid)) is not None:
+            # drawn again as it went out: the organisers' words and the
+            # event's text, under whatever the tap has to say
+            note = "\n\n".join(x for x in (notice, esc(said), self.details()) if x)
             text, kb = self.announcement(uid, note)
+            if programme.visible_length(text) > 4096:
+                # the tap's notice pushed it over: the event's text gives way,
+                # the button to the page still has all of it
+                text, kb = self.announcement(uid, "\n\n".join(x for x in (notice, esc(said)) if x))
             self.edit(uid, mid, text, kb)
             return
         text, kb = self.card(uid, notice)
