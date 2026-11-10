@@ -124,6 +124,11 @@ def rules_for(store, person_id):
             "scores": any(store.cup_rule(c, "player_scores") for c in cups),
             "breaks": [e.id for e in ents if store.cup_rule(e.cup_id, "self_checkin")],
             "auto_min": max([int(store.cup_rule(c, "score_auto_min") or 0) for c in cups] or [0]),
+            # open play drops a match nobody entered anything for
+            "drop": any(f is not None and f.kind == "open_play"
+                        and store.cup_rule(store.cup_of_format(f), "player_scores")
+                        and store.cup_rule(store.cup_of_format(f), "void_after_min")
+                        for f in fmts),
             "queue": any(f is not None and f.uses_queue() for f in fmts)}
 
 
@@ -404,6 +409,38 @@ def no_show(app, p):
         if eid in s.entrants:
             s.append("rest_set", {"entrant_id": eid, "resting": True})
     return {"rested": [s.entrant_name(e) for e in gone]}
+
+
+def drop_unentered(app, now):
+    """Open play's backup for a result nobody entered at all: a match still
+    on its table `void_after_min` minutes after it started running long
+    (board.overdue_after) is dropped, as if put back. Nothing counts, the
+    table is free, and both sides are back in the line. Only where players
+    enter their own results, and never over somebody's word: a report
+    waiting for an answer is the wait's to settle, and a disagreement is
+    the organisers'. A table tennis match has no draw to record instead."""
+    from . import board
+    s = app.store
+    dropped = False
+    for t in list(s.tables.values()):
+        m = s.matches.get(t.match_id) if t.match_id else None
+        if not m or m.status != "live" or not m.started_ts:
+            continue
+        f = s.formats.get(m.format_id)
+        if not f or f.kind != "open_play":
+            continue
+        cup = s.cup_of_format(f)
+        wait = int(s.cup_rule(cup, "void_after_min") or 0)
+        if not wait or not s.cup_rule(cup, "player_scores"):
+            continue
+        if any(c["match_id"] == m.id and c["qseq"] == m.queued_seq
+               and c["state"] in ("open", "disputed") for c in s.claims.values()):
+            continue
+        if now - m.started_ts < board.overdue_after(s, s.cup_key(f)) + wait * 60:
+            continue
+        s.append("match_void", {"match_id": m.id, "why": "nothing entered"})
+        dropped = True
+    return dropped
 
 
 def sweep(app, now):

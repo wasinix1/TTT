@@ -152,6 +152,7 @@ const STR = {
     g4: 'Stepping away? Tap Break so nobody waits for you, and I’m back when you return. Leaving? Tap I’m going home.',
     g5: 'Called, and the other side isn’t there after three minutes? Tap “Opponent not here?” — you go back in the line.',
     g6: 'Entered a result wrong? You can correct it for half an hour after the match; the other side confirms.',
+    gDrop: 'Nobody enters a result at all? Once the match has run far too long it’s dropped: it doesn’t count, and you’re both back in the line.',
     gBal: 'Matches are balanced: as the evening goes on, you mostly play people at your level tonight.',
     // correcting your last result
     fixLink: o => `Wrong result against ${o}?`, fixH: 'Correct the result', fixNote: o => `${o} confirms the correction — then it’s changed.`,
@@ -252,6 +253,7 @@ const STR = {
     g4: 'Kurz weg? Tipp Pause, damit niemand auf dich wartet, und „Ich bin wieder da“, wenn du zurück bist. Gehst du? Tipp „Ich gehe heim“.',
     g5: 'Aufgerufen, und die andere Seite ist nach drei Minuten nicht da? Tipp „Gegenseite nicht da?“ — du bist wieder in der Reihe.',
     g6: 'Ergebnis falsch eingetragen? Eine halbe Stunde nach dem Spiel kannst du es korrigieren; die andere Seite bestätigt.',
+    gDrop: 'Niemand trägt ein Ergebnis ein? Läuft das Spiel viel zu lange, wird es gestrichen: Es zählt nicht, und ihr seid beide wieder in der Reihe.',
     gBal: 'Ausgeglichene Spiele: im Lauf des Abends spielst du meist gegen Leute auf deinem Niveau.',
     fixLink: o => `Falsches Ergebnis gegen ${o}?`, fixH: 'Ergebnis korrigieren', fixNote: o => `${o} bestätigt die Korrektur — dann wird es geändert.`,
     fixSent: s => `Korrektur gesendet: ${s} — wartet auf die andere Seite`,
@@ -876,7 +878,8 @@ function guide() {
   const steps = [r.queue ? L.g1 : '', r.balanced ? L.gBal : '', L.g2(push),
                  r.scores ? L.g3(r.auto_min) : L.g3desk, r.scores ? L.g6 : '',
                  // breaks are theirs only where they check themselves in
-                 r.queue && (!r.breaks || r.breaks.length) ? L.g4 : '', r.queue && r.scores ? L.g5 : ''].filter(Boolean);
+                 r.queue && (!r.breaks || r.breaks.length) ? L.g4 : '', r.queue && r.scores ? L.g5 : '',
+                 r.drop ? L.gDrop : ''].filter(Boolean);
   return `<div class="card2 guide" id="guide"><h4>${esc(L.guideH)}</h4><ol>${steps.map(x => `<li>${esc(x)}</li>`).join('')}</ol>
     <div class="acts flush"><button class="btn ghost small" data-act="guide-ok">${esc(L.gotIt)}</button></div></div>`;
 }

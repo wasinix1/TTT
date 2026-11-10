@@ -436,7 +436,7 @@ class Store:
 
     CUP_FIELDS = ("name", "blurb", "entry", "registration", "format_id", "max_entrants")
     # what players may do for themselves: None means "as the default"
-    CUP_RULES = ("self_checkin", "player_scores", "score_auto_min")
+    CUP_RULES = ("self_checkin", "player_scores", "score_auto_min", "void_after_min")
 
     def _ev_cup_add(self, p, seq):
         c = Cup(id=p["id"], name=p.get("name") or "Cup")

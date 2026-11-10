@@ -4,7 +4,7 @@ import http.client, json, os, random, shutil, sys, tempfile, threading, time
 from datetime import datetime, timedelta
 from http.server import ThreadingHTTPServer
 from tt.server import App, Handler
-from tt import dispatch, formats, simulate
+from tt import dispatch, formats, play, simulate
 from tt.simulate import play_one, drain
 
 
@@ -2341,6 +2341,55 @@ def on_table(app, keys):
     return m, keys[name(m.side_a[0])], keys[name(m.side_b[0])]
 
 
+def test_open_play_drops_a_match_nobody_entered():
+    print("\n[open play: a match nobody entered anything for is dropped, a while after running long]")
+    app, d = fresh()
+    s = app.store
+    (cup,) = pool_event(app, kind="open_play", config={"mode": "singles"})
+    for t in list(s.tables)[1:]:
+        app.act("admin", "remove_table", {"number": t})
+    app.act("admin", "set_phase", {"phase": "live"})
+    for n in ("Ana Roth", "Ben Ott", "Cem Kaya"):
+        app.act("admin", "admit", {"cup_id": cup, "name": n})
+    app.act("admin", "start_format", {"id": s.cups[cup].format_id})
+    m = s.matches[s.tables[1].match_id]
+    late = m.started_ts + 29 * 60 + 5      # 12 min a match: running long at 24, dropped at 29
+    app.sweep(now=late)
+    check(m.status == "live", "waits, unless the cup says otherwise")
+    app.act("admin", "update_cup", {"id": cup, "void_after_min": 5})
+    app.sweep(now=late)
+    check(m.status == "live", "and only where players enter their own results")
+    app.act("admin", "update_cup", {"id": cup, "player_scores": True})
+    app.sweep(now=m.started_ts + 28 * 60)
+    check(m.status == "live", "not before its time")
+    pid = next(p for p in m.side_a)
+    who = s.players[pid].person_id
+    out = play.claim(app, {"person_id": who, "games": [[11, 5], [11, 5]]})
+    app.sweep(now=late)
+    check(m.status == "live" and out["status"] == "sent",
+          "a result waiting for the other side is the wait's to settle, never dropped")
+    app.act("system", "score_withdraw", {"person_id": who, "claim_id": out["id"]})
+    app.sweep(now=late)
+    check(m.status == "void" and not s.done_matches(),
+          "nobody saying anything: dropped, and nothing counts")
+    check(s.tables[1].match_id and s.tables[1].match_id != m.id,
+          "the table goes to the next match")
+    shutil.rmtree(d)
+
+    app, d = fresh()
+    s = app.store
+    (cup,) = pool_event(app, kind="swiss", config={"rounds": 3})
+    app.act("admin", "set_phase", {"phase": "live"})
+    for n in ("Ana Roth", "Ben Ott"):
+        app.act("admin", "admit", {"cup_id": cup, "name": n})
+    app.act("admin", "update_cup", {"id": cup, "player_scores": True, "void_after_min": 5})
+    app.act("admin", "start_format", {"id": s.cups[cup].format_id})
+    m = next(x for x in s.matches.values() if x.status == "live")
+    app.sweep(now=m.started_ts + 3 * 3600)
+    check(m.status == "live", "a drawn fixture is never dropped: it would only have to be played again")
+    shutil.rmtree(d)
+
+
 def test_what_a_phone_may_do_follows_its_cup():
     print("\n[a phone acts only where its cup lets players act]")
     app, d = fresh()
@@ -4021,6 +4070,7 @@ if __name__ == "__main__":
     test_resting_and_put_back()
     test_a_reset_draw_leaves_no_old_bracket()
     test_the_board_shows_the_next_pairing()
+    test_open_play_drops_a_match_nobody_entered()
     test_what_a_phone_may_do_follows_its_cup()
     test_the_old_event_switch_moves_onto_the_cups()
     test_phones_check_in_and_come_and_go()

@@ -210,10 +210,19 @@ def cup_board(store, cup_id, app):
         # a match on a table longer than this has probably finished with
         # nobody entering it: the console and the wall say so (clients do the
         # clock, since this is cached per state)
-        "overdue_after": int(max(2 * per, per + 600)),
+        "overdue_after": overdue_after(store, cup_id, per),
         "waiting": sum(1 for r in rows if r["kind"] == "waiting"),
         "fixtures": sum(1 for r in rows if r["kind"] in ("fixture", "pairing")),
     }
+
+
+def overdue_after(store, cup_id, per=None):
+    """Seconds on a table after which a match has probably finished with
+    nobody entering it: twice how long matches take tonight, and at least
+    ten minutes more. The console and the wall say so from here, and open
+    play can drop the match some minutes later (tt/play.py)."""
+    per = store.median_match_seconds(cup_id) if per is None else per
+    return int(max(2 * per, per + 600))
 
 
 def cup_board_cached(store, cup_id, app):
