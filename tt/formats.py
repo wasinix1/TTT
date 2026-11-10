@@ -395,6 +395,110 @@ def _table(store, rec, eids, extra=None):
     return rows
 
 
+def _cross_seed(tiers, group_of):
+    """Seed order for a bracket drawn from group places, keeping people from
+    the same group apart for as long as the bracket allows.
+
+    `tiers` is every group winner, then every runner-up, and so on, each in
+    group order. Winners take the top seeds as they come. Each later tier is
+    then ordered so that two people from one group meet as late as possible:
+    never in the first round when the draw can avoid it, and in the far half
+    from their own winner when it can do that too.
+
+    Reversing the runners-up, which this used to do, only happens to work
+    for an odd number of groups. With two it gave A1-A2 and B1-B2 semis."""
+    seeded = list(tiers[0]) if tiers else []
+    for tier in tiers[1:]:
+        seeded.extend(tier)
+        lo = len(seeded) - len(tier)
+        n = len(seeded)
+        best = _clash_cost(seeded, group_of)
+        improved = True
+        while improved and best:
+            improved = False
+            for i in range(lo, n):
+                for j in range(i + 1, n):
+                    seeded[i], seeded[j] = seeded[j], seeded[i]
+                    cost = _clash_cost(seeded, group_of)
+                    if cost < best:
+                        best, improved = cost, True
+                    else:
+                        seeded[i], seeded[j] = seeded[j], seeded[i]
+    return seeded
+
+
+def _clash_cost(seeded, group_of):
+    """How early people from the same group could meet in a bracket drawn in
+    this seed order. A first-round meeting outweighs any number of later
+    ones, a second-round one any number after that, and so on."""
+    n = len(seeded)
+    if n < 2:
+        return 0
+    size = 2 ** math.ceil(math.log2(n))
+    rounds = int(math.log2(size))
+    where = {seed: pos for pos, seed in enumerate(seed_positions(size))}
+    cost = 0
+    for i in range(n):
+        for j in range(i + 1, n):
+            if group_of.get(seeded[i]) != group_of.get(seeded[j]):
+                continue
+            meet = (where[i] ^ where[j]).bit_length() - 1   # 0 = first round
+            cost += (n * n) ** (rounds - 1 - meet)
+    return cost
+
+
+def _rank_head_to_head(store, fid, group, rows):
+    """Order a group table the way a round robin is decided: on wins, and
+    among people level on wins, by the matches between just those people —
+    wins, then game difference, then point difference among them. A tie the
+    head-to-head separates only in part is worked out again among the ones
+    still level. Only when the matches between them cannot split them at all
+    do the whole-group game and point differences come in, then the name."""
+    ms = [m for m in store.matches.values()
+          if m.format_id == fid and m.status == "done"
+          and m.meta.get("group") == group and m.entrant_a and m.entrant_b]
+
+    def mini(ids):
+        rec = {e: [0, 0, 0] for e in ids}
+        for m in ms:
+            if m.entrant_a not in rec or m.entrant_b not in rec:
+                continue
+            gw = sum(1 for g in m.games if g[0] > g[1])
+            gl = sum(1 for g in m.games if g[1] > g[0])
+            pd = sum(g[0] - g[1] for g in m.games)
+            win = m.entrant_a if m.winner == "a" else m.entrant_b
+            rec[win][0] += 1
+            rec[m.entrant_a][1] += gw - gl
+            rec[m.entrant_b][1] += gl - gw
+            rec[m.entrant_a][2] += pd
+            rec[m.entrant_b][2] -= pd
+        return {e: tuple(-v for v in r) for e, r in rec.items()}
+
+    by_id = {r["entrant_id"]: r for r in rows}
+
+    def settle(ids):
+        if len(ids) < 2:
+            return list(ids)
+        key = mini(ids)
+        levels = sorted(set(key[e] for e in ids))
+        if len(levels) == 1:            # the matches between them do not help
+            return sorted(ids, key=lambda e: (-by_id[e]["game_diff"],
+                                              -by_id[e]["point_diff"],
+                                              by_id[e]["name"]))
+        out = []
+        for k in levels:
+            out.extend(settle([e for e in ids if key[e] == k]))
+        return out
+
+    ordered = []
+    for w in sorted({r["won"] for r in rows}, reverse=True):
+        ordered.extend(settle([r["entrant_id"] for r in rows if r["won"] == w]))
+    out = [by_id[e] for e in ordered]
+    for i, r in enumerate(out, 1):
+        r["rank"] = i
+    return out
+
+
 def build_bracket(store, fid, seeded, scoring, third_place=False, prefix="ko"):
     """Create a single-elimination bracket. Byes never become matches."""
     n = len(seeded)
@@ -760,12 +864,10 @@ class GroupStage(Format):
             live = [r["entrant_id"] for r in rows
                     if not store.withdrawn(r["entrant_id"])]
             qualified.append(live[:adv])
-        # cross-seed: all group winners first, then all runners-up reversed
-        seeded = []
-        for place in range(adv):
-            tier = [g[place] for g in qualified if len(g) > place]
-            seeded.extend(tier if place % 2 == 0 else list(reversed(tier)))
-        return seeded
+        group_of = {e: gi for gi, g in enumerate(qualified) for e in g}
+        tiers = [[g[place] for g in qualified if len(g) > place]
+                 for place in range(adv)]
+        return _cross_seed(tiers, group_of)
 
     def tick(self, store):
         if not self.config.get("then_ko"):
@@ -816,7 +918,9 @@ class GroupStage(Format):
                    if any(m.meta.get("group") == gname
                           and e in (m.entrant_a, m.entrant_b)
                           for m in store.matches.values() if m.format_id == self.id)]
-            out.append({"group": f"Group {gname}", "rows": _table(store, rec, ids)})
+            rows = _rank_head_to_head(store, self.id, gname,
+                                      _table(store, rec, ids))
+            out.append({"group": f"Group {gname}", "rows": rows})
         return out
 
     def view(self, store):

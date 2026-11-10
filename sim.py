@@ -168,6 +168,105 @@ def test_groups_ko():
     shutil.rmtree(d)
 
 
+def test_groups_ko_keeps_group_mates_apart():
+    print("\n[the knockout keeps people from one group apart]")
+    for n_groups in (2, 3, 4):
+        app, d = fresh()
+        ents = [add_pair(app, f"X{i}a", 5, f"X{i}b", 5, f"Pair {i}")
+                for i in range(n_groups * 4)]
+        fid = app.act("admin", "add_format", {
+            "kind": "groups", "name": "Main draw", "entrant_ids": ents,
+            "config": {"n_groups": n_groups, "then_ko": True,
+                       "advance_per_group": 2,
+                       "scoring": {"best_of": 1, "points_to": 11}}})["format_id"]
+        app.act("admin", "start_format", {"id": fid})
+        s = app.store
+        group_of = {}
+        for m in s.matches.values():
+            if m.meta.get("phase") == "groups":
+                group_of[m.entrant_a] = group_of[m.entrant_b] = m.meta["group"]
+        drain(app)
+        ko = [m for m in s.matches.values()
+              if m.format_id == fid and m.meta.get("phase") == "ko"]
+        first = min(m.meta["round"] for m in ko)
+        final = max(m.meta["round"] for m in ko)
+        early = [m for m in ko if m.meta["round"] < final
+                 and group_of[m.entrant_a] == group_of[m.entrant_b]]
+        check(not early, f"{n_groups} groups, top two through: group-mates "
+                         f"can only meet again in the final")
+        if n_groups == 2:
+            semis = sorted(sorted(group_of[e] for e in (m.entrant_a, m.entrant_b))
+                           for m in ko if m.meta["round"] == first)
+            check(semis == [["A", "B"], ["A", "B"]],
+                  "two groups give A1-B2 and B1-A2 semi-finals")
+        shutil.rmtree(d)
+
+
+def test_group_ties_go_to_head_to_head():
+    print("\n[a group tie is settled by the matches between those level]")
+    app, d = fresh()
+    names = ["Xan", "Yva", "Zed", "Wil"]
+    for n in names:
+        add_player(app, n, 5)
+    fid = app.act("admin", "add_format", {
+        "kind": "groups", "name": "G", "entrant_ids": entrant_ids(app),
+        "config": {"n_groups": 1, "then_ko": False,
+                   "scoring": {"best_of": 3, "points_to": 11}}})["format_id"]
+    app.act("admin", "start_format", {"id": fid})
+    s = app.store
+    eid = {s.entrant_name(e): e for e in s.formats[fid].entrant_ids}
+
+    def play(winner, loser, games):
+        m = next(m for m in s.matches.values() if m.format_id == fid
+                 and {m.entrant_a, m.entrant_b} == {eid[winner], eid[loser]})
+        if m.entrant_a != eid[winner]:
+            games = [[b, a] for a, b in games]
+        app.act("referee", "report", {"match_id": m.id, "games": games})
+
+    w21 = [[11, 5], [5, 11], [11, 9]]
+    w20 = [[11, 5], [11, 5]]
+    # Xan and Yva both win two. Yva has the better game difference (5:2 to
+    # Xan's 5:4), but Xan beat Yva, so Xan goes above.
+    play("Xan", "Yva", w21)
+    play("Xan", "Wil", w21)
+    play("Zed", "Xan", w21)
+    play("Yva", "Zed", w20)
+    play("Yva", "Wil", w20)
+    play("Wil", "Zed", w20)
+    rows = s.formats[fid].standings(s)[0]["rows"]
+    order = [r["name"] for r in rows]
+    check(order[:2] == ["Xan", "Yva"],
+          f"two level on wins: the one who won their match goes above ({order})")
+    check([r["rank"] for r in rows] == [1, 2, 3, 4], "ranks follow the new order")
+    check(order[2:] == ["Wil", "Zed"], "and so are the two below them")
+    shutil.rmtree(d)
+
+    print("\n[three level on wins are split on the games between them]")
+    app, d = fresh()
+    for n in ["Ann", "Bea", "Cal", "Dee"]:
+        add_player(app, n, 5)
+    fid = app.act("admin", "add_format", {
+        "kind": "groups", "name": "G", "entrant_ids": entrant_ids(app),
+        "config": {"n_groups": 1, "then_ko": False,
+                   "scoring": {"best_of": 3, "points_to": 11}}})["format_id"]
+    app.act("admin", "start_format", {"id": fid})
+    s = app.store
+    eid = {s.entrant_name(e): e for e in s.formats[fid].entrant_ids}
+    # a circle: Ann > Bea > Cal > Ann, and all three beat Dee. Among the
+    # three, Ann is +1 on games, Cal 0, Bea -1. Over the whole group Bea and
+    # Cal are level on games and points, and the name used to put Bea first.
+    play("Ann", "Bea", w20)
+    play("Bea", "Cal", w21)
+    play("Cal", "Ann", w21)
+    play("Ann", "Dee", w21)
+    play("Bea", "Dee", w20)
+    play("Cal", "Dee", w21)
+    order = [r["name"] for r in s.formats[fid].standings(s)[0]["rows"]]
+    check(order == ["Ann", "Cal", "Bea", "Dee"],
+          f"a three-way tie goes on the games between those three ({order})")
+    shutil.rmtree(d)
+
+
 def test_single_elim_byes():
     print("\n[straight knockout with an awkward field of 6]")
     app, d = fresh()
@@ -2860,6 +2959,8 @@ if __name__ == "__main__":
     test_open_play()
     test_scramble()
     test_groups_ko()
+    test_groups_ko_keeps_group_mates_apart()
+    test_group_ties_go_to_head_to_head()
     test_single_elim_byes()
     test_swiss()
     test_parallel()
