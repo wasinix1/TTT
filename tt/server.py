@@ -160,15 +160,20 @@ class App:
         return bool(t) and (now or time.time()) - t < self.PHONE_FRESH
 
     def sweep(self, now=None):
-        """What the clock settles on its own: reports nobody answered. Run
-        every few seconds by serve(); a no-op unless there is one open."""
+        """What the clock settles on its own: reports nobody answered, and
+        in open play a match nobody entered anything for. Run every few
+        seconds by serve(); a no-op while no table is in use and no report
+        is open."""
         s = self.store
         with s.lock:
-            if not any(c["state"] == "open" for c in s.claims.values()):
+            if not any(c["state"] == "open" for c in s.claims.values()) \
+                    and not any(t.match_id for t in s.tables.values()):
                 return False
             s.actor = "system"
             try:
-                wrote = play.sweep(self, now or s.clock())
+                now = now or s.clock()
+                wrote = play.sweep(self, now)
+                wrote = play.drop_unentered(self, now) or wrote
                 dispatch.tick(s)
             finally:
                 s.actor = "system"
@@ -1231,8 +1236,9 @@ class App:
         stores it: a wait is whole minutes, at most an hour; None on a cup
         means back to the default."""
         p = dict(p)
-        if p.get("score_auto_min") is not None:
-            p["score_auto_min"] = max(0, min(60, int(p["score_auto_min"] or 0)))
+        for k in ("score_auto_min", "void_after_min"):
+            if p.get(k) is not None:
+                p[k] = max(0, min(60, int(p[k] or 0)))
         for k in ("self_checkin", "player_scores"):
             if p.get(k) is not None:
                 p[k] = p[k] in (True, 1, "on", "true", "1")

@@ -153,6 +153,9 @@ class Cup:
     self_checkin: Optional[bool] = None
     player_scores: Optional[bool] = None
     score_auto_min: Optional[int] = None
+    # open play: minutes past "running long" after which a match nobody
+    # entered anything for is dropped (tt/play.py drop_unentered); 0 waits
+    void_after_min: Optional[int] = None
 
     def to_dict(self):
         return asdict(self)

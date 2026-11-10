@@ -678,8 +678,15 @@ function playersNote(t) {
   }
   const b = (S.board || []).find(x => (x.cup_id || '') === (m.cup_id || ''));
   const age = m.started_ts ? Date.now() / 1000 - m.started_ts : 0;
-  if (b && b.overdue_after && age > b.overdue_after && !(r && r.state === 'open'))
-    out.push(`<div class="warn2">Running long — ${Math.round(age / 60)} min. Finished with nobody entering it?</div>`);
+  if (b && b.overdue_after && age > b.overdue_after && !(r && r.state === 'open')) {
+    // open play drops it a while later if still nobody says anything (tt/play.py)
+    const f = (S.formats || []).find(x => x.id === m.format_id);
+    const cup = S.cups.find(c => c.id === m.cup_id);
+    const drop = !r && f && f.kind === 'open_play' && cupRule(cup, 'player_scores')
+      ? +cupRule(cup, 'void_after_min') || 0 : 0;
+    out.push(`<div class="warn2">Running long — ${Math.round(age / 60)} min. Finished with nobody entering it?${
+      drop ? ` If nothing is entered, it’s dropped at ${hhmm(m.started_ts + b.overdue_after + drop * 60)}.` : ''}</div>`);
+  }
   return out.join('');
 }
 
@@ -1433,6 +1440,7 @@ function openWizard() {
       kind: f ? f.kind : 'swiss',
       // what its players do for themselves comes along with the cup
       self_checkin: c.self_checkin, player_scores: c.player_scores, score_auto_min: c.score_auto_min,
+      void_after_min: c.void_after_min,
     };
   });
   if (!cups.length) {
@@ -2012,12 +2020,19 @@ function selfRunSection() {
     const id = c ? c.id : '', sc = rule(c, 'player_scores'), auto = +rule(c, 'score_auto_min') || 0;
     const box = (k, on) => `<label class="pick"${c && c[k] == null ? ' title="Not set for this cup — the default"' : ''}>
       <input type="checkbox" data-cuprule="${k}" data-cup="${esc(id)}" ${on ? 'checked' : ''}></label>`;
+    // open play only: a match nobody entered anything for, once it runs long
+    const f = c && (S.formats || []).find(x => x.id === c.format_id);
+    const drop = +rule(c, 'void_after_min') || 0;
+    const none = f && f.kind === 'open_play' ? `
+      <span class="sub" style="grid-column:1/4">Nothing entered and running long: dropped</span>
+      <select data-cuprule="void_after_min" data-cup="${esc(id)}" ${sc ? '' : 'disabled'}>${[0, 5, 10].map(n =>
+        `<option value="${n}" ${n === drop ? 'selected' : ''}>${n ? 'after ' + n + ' min' : 'waits'}</option>`).join('')}</select>` : '';
     return `<div class="drow" style="--cols:1fr 96px 96px 140px">
       <span><b>${esc(c ? c.name : 'Tonight')}</b></span>
       ${c ? box('self_checkin', rule(c, 'self_checkin')) : '<span class="sub">—</span>'}
       ${box('player_scores', sc)}
       <select data-cuprule="score_auto_min" data-cup="${esc(id)}" ${sc ? '' : 'disabled'}>${[0, 2, 3, 5, 10].map(n =>
-        `<option value="${n}" ${n === auto ? 'selected' : ''}>${n ? 'after ' + n + ' min' : 'waits'}</option>`).join('')}</select></div>`;
+        `<option value="${n}" ${n === auto ? 'selected' : ''}>${n ? 'after ' + n + ' min' : 'waits'}</option>`).join('')}</select>${none}</div>`;
   };
   return sblock('Players on their own',
     'Per cup: whether people check themselves in from their phone, enter their own results, and how long a result nobody answers waits.',
@@ -2028,7 +2043,10 @@ function selfRunSection() {
         'time set, a result nobody contradicts counts once it is up, so a table is never blocked ' +
         'by somebody without a phone.',
         'Two results that disagree write nothing: both sides are asked to enter it again, and the ' +
-        'table shows it on Live until they agree. You can always enter or correct a score yourself.'),
+        'table shows it on Live until they agree. You can always enter or correct a score yourself. ' +
+        'In open play, a match nobody entered anything for is flagged on Live and on the wall once ' +
+        'it runs far longer than matches take tonight; set a time and it is dropped that many ' +
+        'minutes later — it doesn’t count, the table is free, and both sides are back in the line.'),
     '', `<div class="rows"><div class="hrow" style="--cols:1fr 96px 96px 140px"><span>Cup</span>
       <span>Check in</span><span>Own results</span><span>Unanswered</span></div>
       ${S.cups.length ? S.cups.map(row).join('') : row(null)}</div>`);
@@ -3303,7 +3321,7 @@ document.addEventListener('change', e => {
   }
   if (e.target.dataset.cuprule) {
     const k = e.target.dataset.cuprule, cup = e.target.dataset.cup;
-    const v = k === 'score_auto_min' ? +e.target.value : e.target.checked;
+    const v = k === 'score_auto_min' || k === 'void_after_min' ? +e.target.value : e.target.checked;
     api(cup ? 'update_cup' : 'event_meta', cup ? { id: cup, [k]: v } : { [k]: v });
     return;
   }
@@ -3525,6 +3543,7 @@ document.addEventListener('click', async e => {
         name: c.name, blurb: c.blurb, entry: c.entry, registration: c.registration,
         max_entrants: c.max_entrants,
         self_checkin: c.self_checkin, player_scores: c.player_scores, score_auto_min: c.score_auto_min,
+        void_after_min: c.void_after_min,
         kind: c.kind || '',
         config: c.kind ? formatConfig('w' + i + '_', c.kind) : {},
       })),

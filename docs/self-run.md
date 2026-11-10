@@ -30,9 +30,18 @@ doubles can run themselves while the singles have a desk:
   however long that takes. With a time set, a result nobody contradicts is
   written once the time is up, so a table never stays blocked by somebody
   without a phone.
+- **Nothing entered and running long** (open play only, under the cup's
+  row). When nobody entered anything at all, *Waits* leaves the table to the
+  organisers. With *after 5* or *10 min*, a match still on its table
+  that long after it started running long (below) is dropped, as if put
+  back: nothing counts, the table is free, and both sides are back in the
+  line (`tt/play.py` `drop_unentered`). A table tennis match has no draw to
+  record instead. With matches taking 12 minutes tonight, *5 min* drops one
+  at 29 minutes. A report waiting for an answer, or two that disagree, is
+  never dropped.
 
 The settings live on the cup (`Cup.self_checkin`, `player_scores`,
-`score_auto_min`), so they carry over with the cup to the next event, and
+`score_auto_min`, `void_after_min`), so they carry over with the cup to the next event, and
 the new-event wizard keeps them. This table is the only place they are set.
 An event from before had one switch for the whole evening: on the first
 start it is copied onto every cup that never said, and the event's own goes
@@ -117,8 +126,9 @@ The console shows each table's state: *X reported 11:7 11:5 — counts at
 21:40*, with an *Accept* button, or *the players' scores don't match*. If a
 match runs far longer than matches take tonight (twice the median, and at
 least ten minutes over), it shows *Running long — finished with nobody
-entering it?*. On a night players enter their own scores, the wall says
-*Tisch 2 · Ergebnis eintragen!* for that table too.
+entering it?*, and when it will be dropped if the cup drops it. On a night
+players enter their own scores, the wall says *Ergebnis eintragen!* on that
+table too.
 
 ## Scramble doubles on the board
 
