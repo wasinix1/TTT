@@ -887,9 +887,11 @@ def test_the_mini_app_on_the_night():
     ask = me.view(app.telegram, on[1]["id"])["confirm"]
     check(len(ask) == 1 and ask[0]["games"] == [[4, 11], [6, 11]],
           "who sees it in their app, the right way round")
+    app.telegram.pump()
     check(fake.seen(on[1], "Stimmt das?"), "and in their chat, in case the app is closed")
     out = me.act(app.telegram, on[1], "confirm", {"id": ask[0]["id"], "yes": True})
     check(m.status == "done", "confirming in the app writes it")
+    app.telegram.pump()
     check(fake.seen(on[1], "Bestätigt und eingetragen") and not fake.seen(on[1], "Stimmt das?"),
           "and the question in the chat turns into the answer")
     check(me.view(app.telegram, on[0]["id"])["matches"][0]["won"],

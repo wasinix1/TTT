@@ -536,6 +536,7 @@ function sheetTile(t) {
       <span class="nm${winner === 'a' ? ' win' : ''}">${esc(nm(m.a))}</span>${cells('a')}
       <span class="nm${winner === 'b' ? ' win' : ''}">${esc(nm(m.b))}</span>${cells('b')}</div>
     ${st.bad ? `<div class="warn2">A game goes to ${s.points_to} and has to be won by ${s.win_by || 2}.</div>` : ''}
+    ${playersNote(t)}
     <div class="acts">
       <button class="save${st.decided ? ' ready' : ''}" data-act="report" data-m="${m.id}" ${st.decided ? '' : 'disabled'}>${
         st.decided ? `Save ${esc(nice(winner === 'a' ? m.a : m.b))} win <span class="ar">→</span>` : 'Save result'}</button>
@@ -647,6 +648,7 @@ function tile(t) {
         ${sc ? `<span class="lab">Best of ${s.best_of} to ${s.points_to}</span>` : ''}</div>
     </div>
     ${st && st.bad ? `<div class="warn2">A game goes to ${s.points_to} and has to be won by ${s.win_by || 2}.</div>` : ''}
+    ${sc ? playersNote(t) : ''}
     ${sc ? `<div class="acts">
       <button class="save${st.decided ? ' ready' : ''}" data-act="report" data-m="${m.id}" ${st.decided ? '' : 'disabled'}>${
         st.decided ? `Save ${esc(nice(winner === 'a' ? m.a : m.b))} win <span class="ar">→</span>` : 'Save result'}</button>
@@ -657,6 +659,41 @@ function tile(t) {
       ${pause}
     </div>` : ''}
   </div>`;
+}
+
+/* What the players at a table have said, and whether it has gone quiet:
+   on a night they enter their own scores, the console is where a report
+   nobody confirmed, a disagreement, or a result nobody entered at all shows
+   up — and is settled in one tap. */
+function playersNote(t) {
+  const m = t.match, r = t.report;
+  if (!m) return '';
+  const out = [];
+  if (r && r.state === 'open') {
+    out.push(`<div class="warn2 note-players"><b>${esc(nm(r.by))}</b> reported ${esc(r.games.map(g => g.join(':')).join(' '))}${
+      r.counts_at ? ` — counts at ${hhmm(r.counts_at)}` : ' — waiting for the other side'}${canScore()
+      ? ` <button class="link" data-act="accept-report" data-m="${m.id}" data-games='${esc(JSON.stringify(r.games))}'>Accept</button>` : ''}</div>`);
+  } else if (r && r.state === 'disputed') {
+    out.push(`<div class="warn2">The players' scores don't match — they've been asked to enter it again.</div>`);
+  }
+  const b = (S.board || []).find(x => (x.cup_id || '') === (m.cup_id || ''));
+  const age = m.started_ts ? Date.now() / 1000 - m.started_ts : 0;
+  if (b && b.overdue_after && age > b.overdue_after && !(r && r.state === 'open'))
+    out.push(`<div class="warn2">Running long — ${Math.round(age / 60)} min. Finished with nobody entering it?</div>`);
+  return out.join('');
+}
+
+/* Players asking for a result already written to be corrected (tt/play.py
+   fix): waiting for the other side, or the two disagree. Accept writes the
+   correction; Dismiss leaves the result as it is. */
+function correctionsNote() {
+  const cs = S.corrections || [];
+  if (!cs.length) return '';
+  const g = gs => gs.map(x => x.join(':')).join(' ');
+  return cs.map(c => `<div class="warn2"><b>${esc(nm(c.by))}</b> asks to correct ${esc(nm(c.a))} – ${esc(nm(c.b))}:
+      ${esc(g(c.was))} → <b>${esc(g(c.games))}</b>${c.state === 'disputed' ? ' — the other side disagrees' : ' — waiting for the other side'}
+      ${canScore() ? `<button class="link" data-act="accept-report" data-m="${esc(c.match_id)}" data-games='${esc(JSON.stringify(c.games))}'>Accept</button>
+      <button class="link" data-act="dismiss-fix" data-c="${c.claim_id}">Dismiss</button>` : ''}</div>`).join('');
 }
 
 function bestOfLine(m) {
@@ -912,7 +949,7 @@ function standTop(f) {
     }).join('')}</div>`);
   }
   const groups = (f.standings || []).filter(g => g.rows.length);
-  const label = f.kind === 'open_play' ? 'Wins tonight' : groups.length > 1 ? 'Through so far' : 'Standings';
+  const label = f.kind === 'open_play' ? 'Standings' : groups.length > 1 ? 'Through so far' : 'Standings';
   const c2 = f.kind === 'swiss' ? 'Bh' : 'L';
   if (!groups.length || !groups.some(g => g.rows.some(r => r.played))) return head(label) + slots('<p class="blank">Nothing played yet.</p>');
   let rows;
@@ -1073,7 +1110,7 @@ function renderStandings() {
     // so the ink rule under every chapter sits at the same height and the
     // first rows of Up next, Standings and Results line up across the page
     blocks.push(`<div class="panel">
-      <div class="panel-head sth"><h2>${open ? 'Wins tonight' : 'Standings'}</h2><span class="ch">W</span><span class="ch">${swiss ? 'Bh' : 'L'}</span><span class="ch">±</span></div>
+      <div class="panel-head sth"><h2>Standings</h2><span class="ch">W</span><span class="ch">${swiss ? 'Bh' : 'L'}</span><span class="ch">±</span></div>
       <div class="panel-body">${groups.map(g => {
         const rows = open ? g.rows.slice().sort((a, b) => b.won - a.won || a.lost - b.lost) : g.rows;
         const key = f.id + '|' + g.group, all = standAll[key];
@@ -1209,6 +1246,7 @@ function renderRecent() {
         title="For a game nobody arranged — a walk-up match, or one played before anyone was keeping track">+ Add a result</button>` : ''}</div>
     ${open && all.length > RECENT_SHOWN ? `<label class="find-res"><span aria-hidden="true">⌕</span><input id="recent-q" type="search"
         placeholder="Find a player" aria-label="Find a player in the results" value="${esc(recentQuery)}" autocomplete="off"></label>` : ''}
+    ${correctionsNote()}
     <div class="panel-body flush">${all.length ? '' : '<p class="blank">Nothing played yet.</p>'}${
       all.length && !hits.length ? '<p class="blank">No result with that name.</p>' : ''}${r.map(m => {
       // as the phone page has it: "Winner beat Loser", the games won, and
@@ -1393,6 +1431,8 @@ function openWizard() {
       registration: c.registration || 'closed',
       max_entrants: c.max_entrants || '',
       kind: f ? f.kind : 'swiss',
+      // what its players do for themselves comes along with the cup
+      self_checkin: c.self_checkin, player_scores: c.player_scores, score_auto_min: c.score_auto_min,
     };
   });
   if (!cups.length) {
@@ -1795,7 +1835,7 @@ function tabEvent() {
     '',
     `<div class="inline"><button data-act="wiz-open">Set up a new event</button></div>`);
 
-  return `<div class="form">${event}${cups}${notInCup}${tablesSection()}${next}</div>`;
+  return `<div class="form">${event}${cups}${notInCup}${tablesSection()}${selfRunSection()}${next}</div>`;
 }
 
 /* A cup and everything that is true of it. The draw lives here rather than
@@ -1956,6 +1996,44 @@ function newDrawBlock(c) {
    is supposed to describe. */
 const tablesAreSplit = () => S.tables.some(t => t.cup_id);
 
+/* A night nobody referees: players check in, take breaks and enter their
+   own scores from their phones (tt/play.py, docs/self-run.md). One row per
+   cup, so the doubles can run themselves while the singles have a desk. A
+   cup that never said shows what it falls back on, dimmed. */
+/* What a cup lets its players do (Store.cup_rule): its own setting, or
+   for a draw outside any cup, the event's. */
+const cupRule = (c, k) => c && c[k] != null ? c[k]
+  : k === 'player_scores' ? !!S.event.player_scores : k === 'score_auto_min' ? (+S.event.score_auto_min || 0) : false;
+const selfRun = () => S.cups.some(c => cupRule(c, 'self_checkin') || cupRule(c, 'player_scores'));
+
+function selfRunSection() {
+  const rule = cupRule;
+  const row = c => {
+    const id = c ? c.id : '', sc = rule(c, 'player_scores'), auto = +rule(c, 'score_auto_min') || 0;
+    const box = (k, on) => `<label class="pick"${c && c[k] == null ? ' title="Not set for this cup — the default"' : ''}>
+      <input type="checkbox" data-cuprule="${k}" data-cup="${esc(id)}" ${on ? 'checked' : ''}></label>`;
+    return `<div class="drow" style="--cols:1fr 96px 96px 140px">
+      <span><b>${esc(c ? c.name : 'Tonight')}</b></span>
+      ${c ? box('self_checkin', rule(c, 'self_checkin')) : '<span class="sub">—</span>'}
+      ${box('player_scores', sc)}
+      <select data-cuprule="score_auto_min" data-cup="${esc(id)}" ${sc ? '' : 'disabled'}>${[0, 2, 3, 5, 10].map(n =>
+        `<option value="${n}" ${n === auto ? 'selected' : ''}>${n ? 'after ' + n + ' min' : 'waits'}</option>`).join('')}</select></div>`;
+  };
+  return sblock('Players on their own',
+    'Per cup: whether people check themselves in from their phone, enter their own results, and how long a result nobody answers waits.',
+    why('Players start from the poster in the hall (Links → Poster for the hall): its code lets a ' +
+        'phone check in, pick its name, take breaks and enter results, each only where the cup ' +
+        'says so. Picking a name is trust, the same as telling the desk. A result from ' +
+        'one side waits for the other side to confirm it, on their phone or in Telegram. With a ' +
+        'time set, a result nobody contradicts counts once it is up, so a table is never blocked ' +
+        'by somebody without a phone.',
+        'Two results that disagree write nothing: both sides are asked to enter it again, and the ' +
+        'table shows it on Live until they agree. You can always enter or correct a score yourself.'),
+    '', `<div class="rows"><div class="hrow" style="--cols:1fr 96px 96px 140px"><span>Cup</span>
+      <span>Check in</span><span>Own results</span><span>Unanswered</span></div>
+      ${S.cups.length ? S.cups.map(row).join('') : row(null)}</div>`);
+}
+
 function tablesSection() {
   const split = tablesAreSplit();
   const many = S.cups.length > 1;
@@ -2031,7 +2109,17 @@ const fieldsFor = pfx => {
           <option value="0.6" ${v('c_rw', '0.6') === '0.6' ? 'selected' : ''}>Balanced</option>
           <option value="1.2" ${v('c_rw') === '1.2' ? 'selected' : ''}>Strong</option>
         </select></div>
+      <div class="field" style="max-width:190px"><label for="${id('c-res')}">Balanced matchmaking</label>
+        <select id="${id('c-res')}" data-f="${k('c_res')}">
+          <option value="1" ${v('c_res', '1') !== '0' ? 'selected' : ''}>On</option>
+          <option value="0" ${v('c_res') === '0' ? 'selected' : ''}>Off — who waited longest</option>
+        </select></div>
     </div>
+    ${why('Balanced matchmaking pairs people who are doing about as well as each other tonight, ' +
+          'read off the evening’s own results — nobody has to enter a level. The first round or ' +
+          'two are as good as random; after that people mostly play their own level. Nobody waits ' +
+          'for ever for a close match: the longer somebody waits, the wider the gap they accept. ' +
+          'The standings stay a plain table of wins.')}
     ${SHOW_STRENGTH ? why('The gap widens by one every few times a waiting entrant is passed over, so ' +
           'nobody sits all night waiting for a perfect match.',
           'Avoiding rematches is priced in strength points: on a lopsided field, ' +
@@ -2099,6 +2187,7 @@ function formatConfig(pfx, kind) {
     widen_every: n('c_widen') || 3,
     rematch_weight: n('c_rw') ?? 0.6,
     avoid_rematch: (n('c_rw') ?? 0.6) > 0,
+    by_results: v('c_res', '1') !== '0',
   });
   if (kind === 'groups') Object.assign(cfg, {
     n_groups: n('c_groups') || 2, then_ko: v('c_ko') !== false,
@@ -2128,6 +2217,7 @@ function seedFormat(pfx, kind, cfg) {
     set('c_mode', cfg.mode); set('c_gap', cfg.base_gap);
     set('c_widen', cfg.widen_every);
     if (cfg.rematch_weight !== undefined) form[pfx + 'c_rw'] = String(cfg.rematch_weight);
+    form[pfx + 'c_res'] = cfg.by_results === false ? '0' : '1';
   }
   if (kind === 'groups') {
     set('c_groups', cfg.n_groups); set('c_adv', cfg.advance_per_group);
@@ -2609,7 +2699,7 @@ function tabLinks() {
         ><button>Poster for this event</button></a>
       <a href="/print?base=${encodeURIComponent(base + '/')}" target="_blank"
         ><button>Poster for the live link</button></a>
-      <a href="/board" target="_blank"><button>Open the wall display</button></a>
+      <a href="/board${S.keys.door ? '?d=' + encodeURIComponent(S.keys.door) : ''}" target="_blank"><button>Open the wall display</button></a>
     </div>
     ${why('The event poster carries the name, the date, the venue and a QR code — that is ' +
           'the one for the noticeboard beforehand. The live-link poster is the plain one for ' +
@@ -2617,6 +2707,22 @@ function tabLinks() {
           'landing page before the event and the console once it starts.',
           'Pasting that URL into a chat shows the event name, date and blurb as a card, so ' +
           'the link does the advertising on its own.')}
+
+    ${sec('Players on their own')}
+    ${selfRun() ? `<p class="sub">On for ${esc(S.cups.filter(c => cupRule(c, 'self_checkin') || cupRule(c, 'player_scores')).map(c => c.name).join(', '))}.</p>
+    <div class="inline">
+      <a href="/print?mode=checkin&token=${encodeURIComponent(S.keys.admin || '')}&base=${encodeURIComponent(base + '/')}" target="_blank"
+        ><button>Poster for the hall</button></a>
+      <span class="key">${base}/checkin?v=${esc(S.checkin_code || '')}</span>
+    </div>` : `<p class="sub">Off for every cup. Switch it on per cup under Event → Players on their own.</p>`}
+    ${why('Once the doors open, scanning the poster opens the phone page with tonight’s code. ' +
+          'Where a cup allows it, players check themselves in — one tap for an entry made on ' +
+          'that phone, a name found among who is expected, or a walk-in — and pick their name ' +
+          'to take breaks and enter results. Without the code the page only shows the tables.',
+          'Checking in goes through the same checks as the desk, and the desk shows who checked ' +
+          'in themselves. A cup stops taking self check-ins once its draw starts, except open ' +
+          'play, which takes people all night. The code changes with the next event, so keep ' +
+          'it on the wall, not in a chat. The wall display shows it too when opened from here.')}
   </div>`;
 }
 
@@ -2681,8 +2787,7 @@ function tgSection() {
       <div class="drow" style="--cols:170px 1fr"><span>Link for posters and chats</span>
         <span class="key">${esc(t.link)}</span></div>
     </div>
-    <label class="pick"><input type="checkbox" id="tg-scores" data-tgscores="1"
-      ${S.event.player_scores ? 'checked' : ''}> Players enter their own scores — the other side confirms</label>
+    <p class="sub">Whether players enter their own results — here or on their phone — is set per cup under Event → Players on their own.</p>
     ${why('Anyone who opens the link starts following: they hear about new events and can ' +
           'enter with one tap. Somebody is only linked to a player — and gets their table calls — ' +
           'when the door has seen them: by confirming an entry they made in Telegram, or by them ' +
@@ -3196,8 +3301,10 @@ document.addEventListener('change', e => {
     api('event_meta', { auto_lend: e.target.checked });
     return;
   }
-  if (e.target.dataset.tgscores) {
-    api('event_meta', { player_scores: e.target.checked });
+  if (e.target.dataset.cuprule) {
+    const k = e.target.dataset.cuprule, cup = e.target.dataset.cup;
+    const v = k === 'score_auto_min' ? +e.target.value : e.target.checked;
+    api(cup ? 'update_cup' : 'event_meta', cup ? { id: cup, [k]: v } : { [k]: v });
     return;
   }
   // selects commit the moment they change — there is nothing to finish typing
@@ -3417,6 +3524,7 @@ document.addEventListener('click', async e => {
       cups: wiz.cups.map((c, i) => ({
         name: c.name, blurb: c.blurb, entry: c.entry, registration: c.registration,
         max_entrants: c.max_entrants,
+        self_checkin: c.self_checkin, player_scores: c.player_scores, score_auto_min: c.score_auto_min,
         kind: c.kind || '',
         config: c.kind ? formatConfig('w' + i + '_', c.kind) : {},
       })),
@@ -3430,6 +3538,12 @@ document.addEventListener('click', async e => {
     return;
   }
 
+  if (a === 'dismiss-fix') { await api('claim_dismiss', { claim_id: +b.dataset.c }); return; }
+  if (a === 'accept-report') {
+    const ok = await api('report', { match_id: b.dataset.m, games: JSON.parse(b.dataset.games) });
+    if (ok) toast('Result entered');
+    return;
+  }
   if (a === 'clear') { drafts[b.dataset.m] = [['', '']]; render(); return; }
   if (a === 'edit' || a === 'score') return openEditor(b.dataset.m);
   if (a === 'close-editor') return closeEditor();

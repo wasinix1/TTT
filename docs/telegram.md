@@ -196,9 +196,18 @@ says: *Nach dem Spiel einfach das Ergebnis hier eintippen, z. B. 11:7 9:11
 A score typed by one side goes to the other as a question with *Stimmt* and
 *Stimmt nicht*. *Stimmt* writes the result, marked as entered by players in
 the log. Both sides typing the same score is agreement too. *Stimmt nicht*,
-or two different scores, writes nothing and tells the organisers which table
-needs a referee. A referee entering the score always wins; a pending report
-for a match that already has a result is dropped.
+or two different scores, writes nothing, asks both sides to enter it again
+and tells the organisers which table it is. A referee entering the score
+always wins; a pending report for a match that already has a result is
+dropped.
+
+Reports are no longer Telegram's own. They live in the event log
+(`claim_open`, `claim_close`) and are shared with the web phone page, so one
+side can report in the bot and the other confirm on the web. The *Stimmt
+das?* question is planned from the open report like a table call is, and
+turns into the answer wherever it was given. With a wait set (Setup → Event
+→ *Players on their own*), a report nobody answers counts once the wait is
+up. See [self-run.md](self-run.md).
 
 ## Speed
 

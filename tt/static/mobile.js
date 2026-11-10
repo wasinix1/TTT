@@ -3,10 +3,15 @@
    One page, two shells, one set of renderers:
 
    web   /         (doors, live)  role public. Reads /api/state. "Playing
-                                  tonight?" picks a name once; this phone
-                                  remembers it (localStorage) and the page
-                                  works out where that person is from the
-                                  same board the wall shows. Read-only.
+                                  tonight?" picks a name once (or checks in,
+                                  when the evening lets players do that);
+                                  this phone remembers it (localStorage) with
+                                  the key the server gave it for that name,
+                                  and works out where that person is from the
+                                  same board the wall shows. With the key it
+                                  can act through /api/player (tt/play.py):
+                                  pause, go home, report and confirm scores,
+                                  say the other side never came.
    tg    /tg       (every phase)  the Telegram Mini App. Who is asking is
                                   whatever Telegram signed (/api/me, see
                                   tt/me.py); the room comes from the same
@@ -75,7 +80,7 @@ const STR = {
     notYou: 'Not you?',
     nowAt: t => 'now at ' + t, onDeck: 'next', aheadShort: n => n + ' before yours', paused: 'break', gone: 'gone home', inDraw: 'in the draw',
     // web way in
-    pillQ: 'Playing tonight?', pillA: 'Tap your name →', pillOn: t => t + ' →',
+    pillQ: 'Playing tonight?', pillA: 'Tap your name →', pillCi: 'Check in →', pillOn: t => t + ' →',
     whoH: 'Who are you?', whoP: 'Pick your name once. This phone remembers it for the evening.', find: 'Search your name',
     noName: 'No one by that name tonight.',
     pairWith: n => 'with ' + n,
@@ -87,7 +92,7 @@ const STR = {
     getReady: 'Get ready', nextChip: 'next', putBack: 'put back', waitsMatch: 'waiting for a match',
     more: n => `${n} more`, andMore: n => `and ${n} more after that`, nothingQueued: 'Nothing queued.',
     yourCup: 'you play here',
-    goThrough: n => `Top ${n} go through`, winsTonight: 'Wins tonight', youAre: r => `You’re ${ord(r)}`, leads: n => n + ' leads',
+    goThrough: n => `Top ${n} go through`, winsTonight: 'Standings', youAre: r => `You’re ${ord(r)}`, leads: n => n + ' leads',
     colW: 'W', colL: 'L', colBh: 'Bh', colDiff: '±',
     knockout: 'Knockout', champion: 'Winner', tbd: 'to be decided', liveAt: n => 'table ' + n,
     beat: n => 'beat ' + n, walkover: 'walkover', bye: 'bye',
@@ -114,6 +119,49 @@ const STR = {
     result: 'Result', game: n => 'Game ' + n, you: 'You', youWin: (a, b) => `You win ${a}:${b}`, youLose: (a, b) => `You lose ${a}:${b}`,
     padNote: o => `${o} confirms — then it counts.`,
     outsideH: 'Open this in Telegram', outsideP: 'Your evening — when you play, your matches, your table — is in our bot.',
+    // playing without a desk
+    pauseFweb: 'Tap “I’m back” when you are', noShow: 'Opponent not here?', noShowQ: o => `${o} never came to the table? They go on a break and the table goes to the next match — you’re back in the line.`,
+    reportedAuto: (s, t) => `Reported ${s} — counts at ${t} unless they object`, reportedWait: s => `Reported ${s} — waiting for the other side`,
+    padNoteAuto: (o, m) => `${o} confirms, or it counts after ${m} min.`,
+    ciH: 'Not on the list?', ciP: 'Check yourself in and you’re in the line.', ciName: 'First and last name', ciPartner: 'Partner, first and last name', ciGo: 'Check me in',
+    ciReg: 'Signed up already? Search your name.', ciRegRow: c => 'signed up · ' + c, ciTap: 'check in',
+    ciPairK: 'With a partner', ciSeekK: 'Looking for one',
+    ciWhole: 'First and last name, please — the wall only shows the first name.',
+    ciWaiting: 'You’re on the list — you’ll play with the next one who checks in alone.',
+    ciAlready: 'Already checked in — nothing more to do.',
+    scanHint: 'To check in, take breaks and enter results: scan the code in the hall.',
+    // calls on this phone (Web Push)
+    callH: 'Get called on this phone', callP: 'A buzz when you’re next and when your table is free — even with the screen locked.',
+    callGo: 'Turn on calls', callOn: 'Calls come to this phone', callOff: 'Turn off', orTg: 'or on Telegram',
+    iosAdd: 'On an iPhone: tap Share → Add to Home Screen, open TTT from there, and turn on calls.',
+    callBlocked: 'Notifications are blocked for this page — allow them in your browser’s settings.',
+    // what to do now, in a line
+    hWait: 'You’re in the line — this page and the wall show when you’re up. Stepping away? Tap Break, so nobody waits for you.',
+    hNext: 'Head over now, so the table isn’t kept waiting.',
+    hPlay: a => 'After the match, one of you enters the result here and the other confirms it' + (a ? `, or it counts after ${a} min.` : '.'),
+    hPlayDesk: 'After the match, the organisers enter the result.',
+    hRest: 'You won’t be called. Tap I’m back and you join the end of the line.',
+    hWaitDesk: 'You’re in the line — this page and the wall show when you’re up. Stepping away? Tell the desk.',
+    hRestDesk: 'You won’t be called. Tell the desk when you’re back.',
+    // the evening in a few lines
+    howLink: 'How tonight works', guideH: 'How tonight works', gotIt: 'Got it',
+    g1: 'You’re in the line as soon as you’re checked in. Nobody keeps a list.',
+    g2: p => 'This page and the screen on the wall show when you’re up: “Get ready”, then your table.' + (p ? ' Turn on calls and your phone buzzes, even locked.' : ''),
+    g3: a => 'After the match, one of you enters the result here; the other side confirms it.' + (a ? ` If nobody answers, it counts after ${a} minutes.` : ''),
+    g3desk: 'After the match, the organisers enter the result.',
+    g4: 'Stepping away? Tap Break so nobody waits for you, and I’m back when you return. Leaving? Tap I’m going home.',
+    g5: 'Called, and the other side isn’t there after three minutes? Tap “Opponent not here?” — you go back in the line.',
+    g6: 'Entered a result wrong? You can correct it for half an hour after the match; the other side confirms.',
+    gBal: 'Matches are balanced: as the evening goes on, you mostly play people at your level tonight.',
+    // correcting your last result
+    fixLink: o => `Wrong result against ${o}?`, fixH: 'Correct the result', fixNote: o => `${o} confirms the correction — then it’s changed.`,
+    fixSent: s => `Correction sent: ${s} — waiting for the other side`,
+    fixBy: b => `${b} says your last result was wrong`, fixWas: g => `Entered: ${g}`, fixQ: (w, a, b) => `It should be ${a}:${b} — ${w ? 'you win' : 'you lose'}. Right?`,
+    t: { push_on: 'Calls on ✓', push_off: 'Calls off',
+         fix_same: 'That’s what was entered', fix_sent: 'Sent — the other side confirms', fix_agreed: 'Corrected ✓',
+         fix_disputed: 'That doesn’t match theirs — tell the organisers', rest_on: 'On a break — you won’t be called', rest_off: 'Welcome back — you’re in the line', leave_on: 'Signed out — safe home', leave_off: 'Glad you’re still here',
+         sent: 'Sent — the other side confirms', agreed: 'Entered ✓', disputed: 'That doesn’t match — enter it again, both of you',
+         stale: 'Already entered', gone: 'Already settled', withdrawn: 'Taken back', no_show: 'Table freed', in: 'You’re in ✓' },
   },
   de: {
     tables: r => r ? 'Tisch ' + r : 'Kein Tisch', table1: n => 'Tisch ' + n, allTables: 'Alle Tische',
@@ -140,7 +188,7 @@ const STR = {
     entered: 'Angemeldet', nothingYet: 'noch nichts',
     notYou: 'Nicht du?',
     nowAt: t => 'jetzt an ' + t, onDeck: 'gleich dran', aheadShort: n => n + ' vor deinem', paused: 'Pause', gone: 'daheim', inDraw: 'im Turnier',
-    pillQ: 'Spielst du heute?', pillA: 'Tipp deinen Namen →', pillOn: t => t + ' →',
+    pillQ: 'Spielst du heute?', pillA: 'Tipp deinen Namen →', pillCi: 'Einchecken →', pillOn: t => t + ' →',
     whoH: 'Wer bist du?', whoP: 'Einmal auswählen. Dieses Handy merkt es sich für den Abend.', find: 'Namen suchen',
     noName: 'Heute niemand mit diesem Namen.',
     pairWith: n => 'mit ' + n,
@@ -151,7 +199,7 @@ const STR = {
     getReady: 'Mach dich bereit', nextChip: 'als nächstes', putBack: 'zurückgestellt', waitsMatch: 'wartet auf ein Spiel',
     more: n => `${n} weitere`, andMore: n => `und ${n} weitere danach`, nothingQueued: 'Noch niemand in der Reihe.',
     yourCup: 'du spielst hier',
-    goThrough: n => `Die ersten ${n} kommen weiter`, winsTonight: 'Siege heute', youAre: r => `Du bist ${r}.`, leads: n => n + ' führt',
+    goThrough: n => `Die ersten ${n} kommen weiter`, winsTonight: 'Tabelle', youAre: r => `Du bist ${r}.`, leads: n => n + ' führt',
     colW: 'S', colL: 'N', colBh: 'Bh', colDiff: '±',
     knockout: 'K.o.-Runde', champion: 'Sieger:in', tbd: 'steht noch nicht fest', liveAt: n => 'Tisch ' + n,
     beat: n => 'gegen ' + n, walkover: 'kampflos', bye: 'Freilos',
@@ -175,6 +223,44 @@ const STR = {
     result: 'Ergebnis', game: n => 'Satz ' + n, you: 'Du', youWin: (a, b) => `Du gewinnst ${a}:${b}`, youLose: (a, b) => `Du verlierst ${a}:${b}`,
     padNote: o => `${o} bestätigt — dann ist es eingetragen.`,
     outsideH: 'Öffne das in Telegram', outsideP: 'Dein Abend — wann du dran bist, deine Spiele, dein Tisch — steht in unserem Bot.',
+    pauseFweb: 'Tipp „Ich bin wieder da“, wenn du zurück bist', noShow: 'Gegenseite nicht da?', noShowQ: o => `${o} ist nicht an den Tisch gekommen? Dann gehen sie in Pause und der Tisch an das nächste Spiel — du bist wieder in der Reihe.`,
+    reportedAuto: (s, t) => `Gemeldet: ${s} — zählt um ${t}, wenn niemand widerspricht`, reportedWait: s => `Gemeldet: ${s} — wartet auf die andere Seite`,
+    padNoteAuto: (o, m) => `${o} bestätigt, sonst zählt es nach ${m} Min.`,
+    ciH: 'Nicht auf der Liste?', ciP: 'Trag dich selbst ein und du bist in der Reihe.', ciName: 'Vor- und Nachname', ciPartner: 'Partner:in, Vor- und Nachname', ciGo: 'Ich bin da',
+    ciReg: 'Schon angemeldet? Such deinen Namen.', ciRegRow: c => 'angemeldet · ' + c, ciTap: 'einchecken',
+    ciPairK: 'Mit Partner:in', ciSeekK: 'Partner:in gesucht',
+    ciWhole: 'Bitte Vor- und Nachnamen — öffentlich zeigen wir nur den Vornamen.',
+    ciWaiting: 'Du stehst auf der Liste — du spielst mit der nächsten Person, die allein eincheckt.',
+    ciAlready: 'Ist schon eingecheckt — du musst nichts mehr tun.',
+    scanHint: 'Zum Einchecken, für Pause und Ergebnisse: den Code im Saal scannen.',
+    callH: 'Aufrufe aufs Handy', callP: 'Es summt, wenn du gleich dran bist und wenn dein Tisch frei ist — auch bei gesperrtem Bildschirm.',
+    callGo: 'Aufrufe einschalten', callOn: 'Aufrufe kommen auf dieses Handy', callOff: 'Ausschalten', orTg: 'oder über Telegram',
+    iosAdd: 'Auf dem iPhone: Teilen → Zum Home-Bildschirm, TTT von dort öffnen und Aufrufe einschalten.',
+    callBlocked: 'Mitteilungen sind für diese Seite blockiert — erlaube sie in den Browser-Einstellungen.',
+    hWait: 'Du bist in der Reihe — diese Seite und die Wand zeigen, wann du dran bist. Kurz weg? Tipp Pause, damit niemand auf dich wartet.',
+    hNext: 'Geh jetzt rüber, damit der Tisch nicht auf dich wartet.',
+    hPlay: a => 'Nach dem Spiel trägt eine Seite das Ergebnis hier ein, die andere bestätigt' + (a ? ` — sonst zählt es nach ${a} Min.` : '.'),
+    hPlayDesk: 'Nach dem Spiel trägt die Orga das Ergebnis ein.',
+    hRest: 'Du wirst nicht aufgerufen. Tipp „Ich bin wieder da“ und du stellst dich hinten an.',
+    hWaitDesk: 'Du bist in der Reihe — diese Seite und die Wand zeigen, wann du dran bist. Kurz weg? Sag am Eingang Bescheid.',
+    hRestDesk: 'Du wirst nicht aufgerufen. Sag am Eingang Bescheid, wenn du wieder da bist.',
+    howLink: 'So läuft der Abend', guideH: 'So läuft der Abend', gotIt: 'Alles klar',
+    g1: 'Sobald du eingecheckt bist, bist du in der Reihe. Niemand führt eine Liste.',
+    g2: p => 'Diese Seite und der Bildschirm an der Wand zeigen, wann du dran bist: „Gleich“, dann dein Tisch.' + (p ? ' Mit Aufrufen summt dein Handy, auch gesperrt.' : ''),
+    g3: a => 'Nach dem Spiel trägt eine Seite das Ergebnis hier ein, die andere bestätigt.' + (a ? ` Antwortet niemand, zählt es nach ${a} Minuten.` : ''),
+    g3desk: 'Nach dem Spiel trägt die Orga das Ergebnis ein.',
+    g4: 'Kurz weg? Tipp Pause, damit niemand auf dich wartet, und „Ich bin wieder da“, wenn du zurück bist. Gehst du? Tipp „Ich gehe heim“.',
+    g5: 'Aufgerufen, und die andere Seite ist nach drei Minuten nicht da? Tipp „Gegenseite nicht da?“ — du bist wieder in der Reihe.',
+    g6: 'Ergebnis falsch eingetragen? Eine halbe Stunde nach dem Spiel kannst du es korrigieren; die andere Seite bestätigt.',
+    gBal: 'Ausgeglichene Spiele: im Lauf des Abends spielst du meist gegen Leute auf deinem Niveau.',
+    fixLink: o => `Falsches Ergebnis gegen ${o}?`, fixH: 'Ergebnis korrigieren', fixNote: o => `${o} bestätigt die Korrektur — dann wird es geändert.`,
+    fixSent: s => `Korrektur gesendet: ${s} — wartet auf die andere Seite`,
+    fixBy: b => `${b} meldet einen Fehler im letzten Ergebnis`, fixWas: g => `Eingetragen: ${g}`, fixQ: (w, a, b) => `Richtig wäre ${a}:${b} — ${w ? 'du gewinnst' : 'du verlierst'}. Stimmt das?`,
+    t: { push_on: 'Aufrufe an ✓', push_off: 'Aufrufe aus',
+         fix_same: 'So ist es schon eingetragen', fix_sent: 'Gesendet — die andere Seite bestätigt', fix_agreed: 'Korrigiert ✓',
+         fix_disputed: 'Passt nicht zur anderen Seite — sag der Orga Bescheid', rest_on: 'Pause — wir rufen dich nicht auf', rest_off: 'Willkommen zurück', leave_on: 'Gute Heimfahrt!', leave_off: 'Schön, dass du noch da bist',
+         sent: 'Gesendet — die andere Seite bestätigt', agreed: 'Eingetragen ✓', disputed: 'Passt nicht zusammen — tragt es beide nochmal ein',
+         stale: 'Schon eingetragen', gone: 'Schon erledigt', withdrawn: 'Zurückgezogen', no_show: 'Tisch frei', in: 'Du bist dabei ✓' },
   },
 };
 let LANG = SHELL === 'tg' ? 'de' : 'en';
@@ -224,7 +310,8 @@ let V = null;                      // /api/me (tg only)
 let skew = 0;
 let busy = false;
 const ME_KEY = 'ttt_me';
-let me = null;                     // web: { event, player } — who this phone is
+let me = null;                     // web: { event, player, key } — who this phone is
+let P = null;                      // web: /api/player — the key's person, scores, check-in
 const ui = {
   cup: null,                       // the strip's choice; null = not chosen yet
   q: '', all: false,               // results search
@@ -237,6 +324,10 @@ const ui = {
   playingKey: '',
 };
 const CUP_KEY = 'ttt_cup';
+// tonight's code from the poster in the hall (/checkin?v=…): what lets this
+// phone check in and act, not only look (App.venue_ok). Kept for the evening,
+// and taken out of the address so a shared link does not carry it
+const VENUE_KEY = 'ttt_venue';
 const store = {
   get(k) { try { return JSON.parse(localStorage.getItem(k) || 'null'); } catch (e) { return null; } },
   set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) { } },
@@ -248,6 +339,17 @@ const store = {
    The real thing talks to the server. A mockup or a test hands in its own
    object with the same four calls as window.TTT_IO. */
 
+let venue = '';
+try {
+  const u = new URL(location.href), v = u.searchParams.get('v');
+  if (v) {
+    localStorage.setItem(VENUE_KEY, JSON.stringify(v));
+    u.searchParams.delete('v');
+    history.replaceState(null, '', u.pathname + u.search + u.hash);
+  }
+  venue = JSON.parse(localStorage.getItem(VENUE_KEY) || '""') || '';
+} catch (e) { }
+
 const IO = window.TTT_IO || {
   state: () => fetch('/api/state').then(r => r.ok ? r.json() : null),
   me: () => INIT ? fetch('/api/me', { headers: { 'X-Tg-Init': INIT }, cache: 'no-store' })
@@ -256,6 +358,15 @@ const IO = window.TTT_IO || {
     method: 'POST', cache: 'no-store',
     headers: { 'Content-Type': 'application/json', 'X-Tg-Init': INIT },
     body: JSON.stringify({ op, data: data || {} }),
+  }).then(async r => ({ ok: r.ok, body: await r.json().catch(() => ({})) })),
+  // the web page's own door (tt/server.py phone): who this phone says it is
+  player: key => fetch('/api/player' + (venue ? '?v=' + encodeURIComponent(venue) : ''),
+    { headers: key ? { 'X-Player': key } : {}, cache: 'no-store' })
+    .then(async r => ({ ok: r.ok, status: r.status, body: await r.json().catch(() => ({})) })),
+  playerAct: (key, op, data) => fetch('/api/player', {
+    method: 'POST', cache: 'no-store',
+    headers: { 'Content-Type': 'application/json', ...(key ? { 'X-Player': key } : {}) },
+    body: JSON.stringify({ op, data: data || {}, code: venue }),
   }).then(async r => ({ ok: r.ok, body: await r.json().catch(() => ({})) })),
   listen: cb => {
     let es = null, soon = null;
@@ -268,9 +379,12 @@ const IO = window.TTT_IO || {
   },
 };
 
+const sim = () => new URLSearchParams(location.search).has('sim');
 async function load() {
   try {
-    const [s, v] = await Promise.all([IO.state(), SHELL === 'tg' ? IO.me() : null]);
+    const web = SHELL === 'web' && IO.player && !sim();
+    const [s, v, p] = await Promise.all([IO.state(), SHELL === 'tg' ? IO.me() : null,
+                                         web ? IO.player(me && me.key) : null]);
     if (s) S = s;
     if (SHELL === 'tg') {
       if (v && v.outside) return outside();
@@ -278,21 +392,29 @@ async function load() {
     } else if (s) {
       skew = s.now - Date.now() / 1000;
     }
+    if (p && p.ok) { P = p.body; pushFollow(); }
+    else if (p && p.status === 403 && me) { me.key = null; store.set(ME_KEY, me); }
     render();
   } catch (e) { /* hall wifi; the next push or tick catches up */ }
 }
+
+/* What the person behind this page can do: the Mini App's view, or the web
+   page's own when its key is good. */
+const PV = () => SHELL === 'tg' ? V : (me && me.key && P && P.me ? P : null);
+const toastText = (code, fallback) => (L.t && L.t[code]) || fallback || code;
 
 async function act(op, data, after) {
   if (busy) return false;
   busy = true;
   buzz('light');
   try {
-    const r = await IO.act(op, data);
-    if (!r.ok) { toast(r.body.error || 'Das hat nicht geklappt.', true); buzz('bad'); return false; }
-    V = r.body.view || V;
-    if (after) after();
-    render();
-    if (r.body.toast) toast(r.body.toast);
+    const web = SHELL === 'web';
+    const r = web ? await IO.playerAct(me && me.key, op, data) : await IO.act(op, data);
+    if (!r.ok) { toast(r.body.error || (LANG === 'de' ? 'Das hat nicht geklappt.' : 'That didn’t work.'), true); buzz('bad'); return false; }
+    if (web) P = r.body.view || P; else V = r.body.view || V;
+    if (after) after(r.body);
+    if (web) load(); else render();
+    if (r.body.toast) toast(web ? toastText(r.body.toast) : r.body.toast);
     buzz('ok');
     return true;
   } catch (e) {
@@ -483,8 +605,14 @@ function heroData() {
     if (ph === 'announced' || ph === 'registration') return heroBefore();
     if (ph === 'done') return heroDone();
   }
-  if (ui.moment && ui.moment.until > Date.now()) return heroResult(ui.moment);
   const t = tonight();
+  if (ui.moment && ui.moment.until > Date.now()) {
+    // the result is the picture; what they can do next (a break, straight
+    // after a match, is the usual one) is already under it
+    const H = heroResult(ui.moment);
+    if (t.length) H.x = t[0];
+    return H;
+  }
   if (!t.length) {
     if (SHELL !== 'tg') return null;
     const pend = (V.entries || []).find(e => e.status === 'pending');
@@ -525,7 +653,7 @@ function heroFor(x) {
   }
   if (x.state === 'resting') {
     return { key: 'rest', kind: 'word', a: 4, quiet: true, big: L.pauseWord, m: L.pauseM,
-      facts: [SHELL === 'tg' ? L.pauseFtg : L.pauseF], oppL: L.recordWord, opp: rec ? `${x.won} : ${x.lost}` : '', soft: L.nothingYet };
+      facts: [SHELL === 'tg' ? L.pauseFtg : PV() ? L.pauseFweb : L.pauseF], oppL: L.recordWord, opp: rec ? `${x.won} : ${x.lost}` : '', soft: L.nothingYet };
   }
   if (x.state === 'withdrawn') {
     return { key: 'gone', kind: 'word', a: 4, quiet: true, big: L.goneWord, m: L.goneM, facts: [L.goneF],
@@ -650,7 +778,7 @@ function also(H) {
   if (!H || !H.also || !H.also.length) return '';
   // an entry on a break or gone home can be brought back from here too,
   // not only when it happens to be the most urgent one
-  const back = o => SHELL !== 'tg' ? ''
+  const back = o => !PV() || !ownBreaks(PV(), o.eid) ? ''
     : o.state === 'resting' ? ` <button class="link" data-act="rest" data-eid="${esc(o.eid)}" data-on="">${esc(L.back)}</button>`
     : o.state === 'withdrawn' ? ` <button class="link" data-act="leave" data-eid="${esc(o.eid)}" data-on="">${esc(L.stay)}</button>` : '';
   return `<div class="also">${H.also.map(o => `<div><b>${esc(o.cup || cupName(o.cup_id))}</b><span class="st2">${shortState(o)}${back(o)}</span></div>`).join('')}</div>`;
@@ -677,34 +805,162 @@ function tgOffer() {
       <a class="btn ghost" href="${href}" target="_blank" rel="noopener">${esc(L.tgGo)} →</a></div>`;
 }
 
-function actions(H) {
-  if (SHELL === 'web') return tgOffer();
-  if (SHELL !== 'tg' || !H || !H.x) return '';
-  const x = H.x;
+/* Calls on this phone: Web Push (tt/push.py, static/sw.js). Offered once the
+   page knows who you are; Telegram stays the other way to the same calls. */
+const pushable = () => 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
+const isIOS = () => /iP(hone|ad|od)/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+const standalone = () => matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
+let pushSub = null;
+function callCard() {
+  const tgLink = tgOffer();
+  if (!PV()) return tgLink;                // nobody to call yet
+  if (!P || !P.push_key || sim() || !S || !(S.phase === 'doors' || S.phase === 'live')) return tgLink;
+  if (pushSub) return `<div class="acts"><p class="note">✓ ${esc(L.callOn)}</p>
+      <button class="link" data-act="push-off">${esc(L.callOff)}</button></div>`;
+  if (!pushable()) return isIOS() && !standalone()
+    ? `<div class="acts tg-offer"><p class="note"><b>${esc(L.callH)}</b> — ${esc(L.iosAdd)}</p></div>` + tgLink : tgLink;
+  if (Notification.permission === 'denied') return `<div class="acts"><p class="note">${esc(L.callBlocked)}</p></div>` + tgLink;
+  const bot = tgLink ? (tgLink.match(/href="([^"]+)"/) || [])[1] : '';
+  return `<div class="acts tg-offer"><p class="note"><b>${esc(L.callH)}</b> — ${esc(L.callP)}</p>
+      <button class="btn red wide" data-act="push-on">${esc(L.callGo)}</button>
+      ${bot ? `<a class="link" href="${bot}" target="_blank" rel="noopener">${esc(L.orTg)} →</a>` : ''}</div>`;
+}
+const keyBytes = k => Uint8Array.from(atob(k.replace(/-/g, '+').replace(/_/g, '/') + '='.repeat((4 - k.length % 4) % 4)), c => c.charCodeAt(0));
+async function pushInit() {
+  if (SHELL !== 'web' || !pushable() || sim()) return;
+  try {
+    const reg = await navigator.serviceWorker.register('/sw.js');
+    pushSub = await reg.pushManager.getSubscription();
+    render();
+  } catch (e) { /* no service worker here (plain http, private mode): no calls, nothing else changes */ }
+}
+async function pushOn() {
+  try {
+    if (await Notification.requestPermission() !== 'granted') { toast(L.callBlocked, true); return render(); }
+    const reg = await navigator.serviceWorker.ready;
+    let sub = await reg.pushManager.getSubscription();
+    // one made for another server's key (this one was reinstalled) cannot be used
+    if (sub && sub.options && sub.options.applicationServerKey
+        && keyB64(sub.options.applicationServerKey) !== P.push_key) { await sub.unsubscribe(); sub = null; }
+    if (!sub) sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: keyBytes(P.push_key) });
+    if (await act('push_subscribe', { sub: sub.toJSON(), lang: LANG })) { pushSub = sub; ui.pushFor = me && me.key; }
+    render();
+  } catch (e) { toast(String(e.message || e), true); }
+}
+const keyB64 = buf => btoa(String.fromCharCode(...new Uint8Array(buf))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+async function pushOff(quiet) {
+  const sub = pushSub;
+  pushSub = null;
+  ui.pushFor = null;
+  if (!sub) return;
+  if (me && me.key) await IO.playerAct(me.key, 'push_unsubscribe', { endpoint: sub.endpoint }).catch(() => { });
+  try { await sub.unsubscribe(); } catch (e) { }
+  if (!quiet) { toast(toastText('push_off')); render(); }
+}
+/* Calls already on and a name picked (again, or a different one): the
+   server hears whose phone this is now. */
+function pushFollow() {
+  if (!pushSub || !me || !me.key || ui.pushFor === me.key || !IO.playerAct) return;
+  ui.pushFor = me.key;
+  IO.playerAct(me.key, 'push_subscribe', { sub: pushSub.toJSON(), lang: LANG }).catch(() => { });
+}
+
+/* The evening in a few lines: once per evening, and whenever asked. */
+const GUIDE_KEY = () => 'ttt_guide_' + ((S && S.event && S.event.id) || '');
+function guide() {
+  const v = PV();
+  const r = (v && v.rules) || {};
+  if (!v || !(r.queue || r.scores)) return '';
+  if (!ui.guide && store.get(GUIDE_KEY())) return '';
+  const push = SHELL === 'web' && P && P.push_key;
+  const steps = [r.queue ? L.g1 : '', r.balanced ? L.gBal : '', L.g2(push),
+                 r.scores ? L.g3(r.auto_min) : L.g3desk, r.scores ? L.g6 : '',
+                 // breaks are theirs only where they check themselves in
+                 r.queue && (!r.breaks || r.breaks.length) ? L.g4 : '', r.queue && r.scores ? L.g5 : ''].filter(Boolean);
+  return `<div class="card2 guide" id="guide"><h4>${esc(L.guideH)}</h4><ol>${steps.map(x => `<li>${esc(x)}</li>`).join('')}</ol>
+    <div class="acts flush"><button class="btn ghost small" data-act="guide-ok">${esc(L.gotIt)}</button></div></div>`;
+}
+function howLink() {
+  const v = PV();
+  const r = (v && v.rules) || {};
+  return v && (r.queue || r.scores) ? `<p class="howlink"><button class="link" data-act="guide-open">${esc(L.howLink)}</button></p>` : '';
+}
+
+/* What to do now, in one line under the hero — so nobody has to ask. */
+function howNow(x, v) {
+  const r = v.rules || {};
   if (x.state === 'playing') {
-    if (!V.scores) return '';
-    const mine = (V.reported || [])[0];
-    return mine
-      ? `<div class="acts"><p class="note">${esc(L.reported(scoreLine(mine.games), nice(x.opponent)))}</p>
-          <button class="btn ghost small" data-act="withdraw" data-id="${esc(mine.id)}">${esc(L.withdraw)}</button></div>`
-      : `<div class="acts"><button class="btn red wide" data-act="pad">${esc(L.report)}</button></div>`;
+    if ((v.reported || []).some(c => !c.fix) || !(v.scores || r.scores)) return '';
+    return v.scores ? L.hPlay(v.auto_min) : L.hPlayDesk;
   }
+  if (!r.queue) return '';
+  const own = ownBreaks(v, x.eid);
+  if (x.state === 'resting') return own ? L.hRest : L.hRestDesk;
+  if (x.state === 'waiting' || x.state === 'drawn') return x.on_deck ? L.hNext : own ? L.hWait : L.hWaitDesk;
+  return '';
+}
+
+function actions(H) {
+  const v = PV();
+  const offer = SHELL === 'web' ? callCard() : '';
+  if (!v || !H || !H.x) return offer;
+  const x = H.x;
+  const how = howNow(x, v);
+  return (how ? `<p class="how">${esc(how)}</p>` : '') + actionButtons(v, x, offer) + fixLine(v);
+}
+
+/* A result they got wrong: for a while after the match, theirs to correct,
+   with the other side confirming — like a score, on a finished match. */
+function fixLine(v) {
+  const f = v && v.fixable;
+  if (!f) return '';
+  const sent = (v.reported || []).find(c => c.fix);
+  if (sent) return `<div class="acts"><p class="note">${esc(L.fixSent(scoreLine(sent.games)))}</p>
+      <button class="btn ghost small" data-act="withdraw" data-id="${esc(sent.id)}">${esc(L.withdraw)}</button></div>`;
+  return `<div class="acts"><button class="link" data-act="fix-pad">${esc(L.fixLink(nice(f.opponent)))}</button></div>`;
+}
+
+/* Whether this entry's breaks and going home are the player's own: on the
+   web page only in cups where players check themselves in (rules.breaks);
+   the Mini App has always had them. */
+const ownBreaks = (v, eid) => !(v && v.rules && v.rules.breaks) || v.rules.breaks.includes(eid);
+
+function actionButtons(v, x, offer) {
+  if (x.state === 'playing') {
+    // the other side never came: offered once they have had time to
+    const after = (v.no_show_after || 180), now = Date.now() / 1000 + skew;
+    const noShow = x.since && now - x.since > after
+      ? `<button class="btn ghost small" data-act="no-show" data-opp="${esc(nice(x.opponent))}">${esc(L.noShow)}</button>` : '';
+    if (!v.scores) return noShow ? `<div class="acts">${noShow}</div>` + offer : offer;
+    const mine = (v.reported || []).find(c => !c.fix);
+    const line = mine && (mine.counts_at ? L.reportedAuto(scoreLine(mine.games), hhmm(mine.counts_at))
+      : SHELL === 'tg' ? L.reported(scoreLine(mine.games), nice(x.opponent)) : L.reportedWait(scoreLine(mine.games)));
+    return (mine
+      ? `<div class="acts"><p class="note">${esc(line)}</p>
+          <button class="btn ghost small" data-act="withdraw" data-id="${esc(mine.id)}">${esc(L.withdraw)}</button></div>`
+      : `<div class="acts"><button class="btn red wide" data-act="pad">${esc(L.report)}</button>${noShow}</div>`) + offer;
+  }
+  if (!ownBreaks(v, x.eid)) return offer;
+  if (x.state === 'waiting' || x.state === 'drawn' || x.state === 'entered')
+    return `<div class="acts"><button class="btn ghost small" data-act="rest" data-eid="${esc(x.eid)}" data-on="1">${esc(L.pause)}</button></div>` + offer;
   if (x.state === 'resting') return `<div class="acts">
       <button class="btn wide" data-act="rest" data-eid="${esc(x.eid)}" data-on="">${esc(L.back)}</button>
       <button class="btn ghost" data-act="leave" data-eid="${esc(x.eid)}" data-on="1">${esc(L.leave)}</button></div>`;
   if (x.state === 'withdrawn') return `<div class="acts">
       <button class="btn wide" data-act="leave" data-eid="${esc(x.eid)}" data-on="">${esc(L.stay)}</button></div>`;
-  return `<div class="acts"><button class="btn ghost small" data-act="rest" data-eid="${esc(x.eid)}" data-on="1">${esc(L.pause)}</button></div>`;
+  return offer;
 }
 
 /* A score the other side reported, waiting for this person: it needs them,
    so it goes first. */
 function claims() {
-  if (SHELL !== 'tg' || !V) return '';
-  return (V.confirm || []).map(c => `<div class="ask">
-    <div class="micro">${esc(L.claimBy(nice(c.by)))}</div>
+  const v = PV();
+  if (!v) return '';
+  return (v.confirm || []).map(c => `<div class="ask">
+    <div class="micro">${esc(c.fix ? L.fixBy(nice(c.by)) : L.claimBy(nice(c.by)))}</div>
     <div class="sc">${scoreLine(c.games)}</div>
-    <div>${esc(L.claimQ(c.sets[0] > c.sets[1], c.sets[0], c.sets[1]))}</div>
+    ${c.fix ? `<div class="micro">${esc(L.fixWas(scoreLine(c.was)))}</div>` : ''}
+    <div>${esc(c.fix ? L.fixQ(c.sets[0] > c.sets[1], c.sets[0], c.sets[1]) : L.claimQ(c.sets[0] > c.sets[1], c.sets[0], c.sets[1]))}</div>
     <div class="row">
       <button class="btn" data-act="confirm" data-id="${c.id}" data-yes="1">${esc(L.yes)}</button>
       <button class="btn no" data-act="confirm" data-id="${c.id}" data-yes="">${esc(L.no)}</button>
@@ -1137,15 +1393,29 @@ function openCup(c) {
 /* ------------------------------------------------------------ the score pad */
 
 const playingNow = () => tonight().find(x => x.state === 'playing');
-function openPad() {
-  const x = playingNow();
-  if (!x) return;
-  ui.pad = { games: Array.from({ length: x.bo || 3 }, () => ['', '']), opp: x.opponent, need: x.need || 2, bo: x.bo || 3, pts: x.pts || 11, best: x.best_of };
+function openPad(fix) {
+  if (fix) {
+    const f = (PV() || {}).fixable;
+    if (!f) return;
+    const games = Array.from({ length: f.bo }, (_, i) => f.games[i] ? f.games[i].map(String) : ['', '']);
+    ui.pad = { fix: f.match_id, games, opp: f.opponent, need: f.need, bo: f.bo, pts: f.pts,
+               best: L.bestOf(f.bo, f.pts) };
+  } else {
+    const x = playingNow();
+    if (!x) return;
+    ui.pad = { games: Array.from({ length: x.bo || 3 }, () => ['', '']), opp: x.opponent, need: x.need || 2, bo: x.bo || 3, pts: x.pts || 11, best: x.best_of };
+  }
   renderPad();
   $('scrim').classList.add('on');
   requestAnimationFrame(() => $('pad').classList.add('on'));
   if (tg && tg.BackButton) { try { tg.BackButton.show(); tg.BackButton.onClick(closePad); } catch (e) { } }
   setTimeout(() => { const i = $('g0a'); if (i) i.focus(); }, 300);
+}
+function padSend() {
+  const st = padState();
+  if (!st.decided) return;
+  const fix = ui.pad.fix;
+  act(fix ? 'fix' : 'score', fix ? { match_id: fix, games: st.done } : { games: st.done }, closePad);
 }
 function closePad() {
   ui.pad = null;
@@ -1165,7 +1435,7 @@ function renderPad() {
   if (!p) return;
   const st = padState();
   const f = document.activeElement, fid = f && f.id;
-  $('pad').innerHTML = `<div class="grab"></div><h3>${esc(L.result)}</h3>
+  $('pad').innerHTML = `<div class="grab"></div><h3>${esc(p.fix ? L.fixH : L.result)}</h3>
     <p class="note">${esc([(LANG === 'de' ? 'gegen ' : 'against ') + nice(p.opp), p.best].filter(Boolean).join(' · '))}</p>
     <div class="sheet" style="--g:2">
       <span></span><span class="gh">${esc(L.you)}</span><span class="gh">${esc(first(nice(p.opp)))}</span>
@@ -1175,7 +1445,7 @@ function renderPad() {
     </div>
     <p class="verdict${st.decided && st.w > st.l ? ' win' : ''}">${st.decided ? esc(st.w > st.l ? L.youWin(st.w, st.l) : L.youLose(st.w, st.l)) : '&nbsp;'}</p>
     <button class="btn red wide" data-act="pad-send" ${st.decided ? '' : 'disabled'}>${esc(L.send)}</button>
-    <p class="hint">${esc(L.padNote(nice(p.opp)))}</p>`;
+    <p class="hint">${esc(p.fix ? L.fixNote(nice(p.opp)) : (PV() || {}).auto_min ? L.padNoteAuto(nice(p.opp), PV().auto_min) : L.padNote(nice(p.opp)))}</p>`;
   if (fid) { const back = $(fid); if (back) back.focus(); }
 }
 function updatePad() {
@@ -1200,16 +1470,117 @@ function pickerRows(q) {
     const mate = pair ? (S.players.find(z => z.id === pair.player_ids.find(i => i !== p.id)) || {}).name : '';
     return { p, xs, mate, cups: multiCup() ? es.map(e => cupName(e.cup_id)).filter(Boolean).join(' · ') : '' };
   }).filter(Boolean).filter(r => !qq || r.p.name.toLowerCase().includes(qq) || (r.mate || '').toLowerCase().includes(qq));
-  if (!rows.length) return `<p class="note">${esc(L.noName)}</p>`;
-  return rows.map(r => {
+  const ci = checkinBlock(qq);
+  if (!rows.length) return ci.regs + `<p class="note">${esc(L.noName)}</p>` + ci.form;
+  return ci.regs + rows.map(r => {
     const x = r.xs[0];
     const live = x.state === 'playing' || x.on_deck;
     return `<button class="nm-row" type="button" data-act="pick" data-p="${esc(r.p.id)}">
       <b>${esc(r.p.name)}<small>${esc([r.mate ? L.pairWith(first(r.mate)) : '', r.cups].filter(Boolean).join(' · '))}</small></b>
       ${shortState(x).replace('<span', `<span class="s micro${live ? ' red' : ''}"`).replace(' class="red"', '')}</button>`;
-  }).join('');
+  }).join('') + ci.form;
+}
+
+/* Checking yourself in (tt/server.py op_checkin), on a phone holding
+   tonight's code: the entries this phone made, one tap each; an entry made
+   ahead, found once you type the start of a name — a list of everyone who
+   signed up is nobody's business; or a walk-in, with their whole name. */
+function checkinBlock(qq) {
+  const cups = (P && P.checkin) || [];
+  if (sim()) return { regs: '', form: '' };
+  if (!cups.length) return { regs: '', form: P && P.self_run && !P.venue ? `<p class="note">${esc(L.scanHint)}</p>` : '' };
+  const mine = savedRegs().filter(x => (ui.ciMine || {})[x.token] === 'pending');
+  const found = qq.length >= 2 && ui.ciQ === qq ? (ui.ciFound || []) : [];
+  const cupSel = ui.ciCup && cups.find(c => c.id === ui.ciCup) ? ui.ciCup : cups[0].id;
+  const pair = (cups.find(c => c.id === cupSel) || {}).entry === 'pair';
+  const kind = ui.ciKind === 'seeking' ? 'seeking' : 'pair';
+  return {
+    regs: mine.map(x => `<button class="nm-row" type="button" data-act="checkin-mine" data-token="${esc(x.token)}">
+      <b>${esc(x.name)}<small>${esc(L.ciRegRow(x.cup || ''))}</small></b>
+      <span class="s micro red">${esc(L.ciTap)}</span></button>`).join('') +
+      found.map(r => `<button class="nm-row" type="button" data-act="checkin-reg" data-id="${esc(r.id)}">
+      <b>${esc(r.name)}<small>${esc(L.ciRegRow(r.cup))}</small></b>
+      <span class="s micro red">${esc(L.ciTap)}</span></button>`).join(''),
+    form: `<div class="ci"><h4>${esc(L.ciH)}</h4><p class="note">${esc(L.ciP)} ${esc(L.ciReg)}</p>
+      ${cups.length > 1 ? `<div class="seg" style="grid-template-columns:repeat(${cups.length},1fr)">${cups.map(c =>
+        `<button type="button" class="${c.id === cupSel ? 'on' : ''}" data-act="ci-cup" data-cup="${esc(c.id)}">${esc(c.name)}</button>`).join('')}</div>` : ''}
+      <input class="in1" id="ci-name" data-ui="ci-name" value="${esc(ui.ciName || '')}" placeholder="${esc(L.ciName)}" autocomplete="name" autocapitalize="words">
+      ${pair ? `<div class="seg"><button type="button" class="${kind === 'pair' ? 'on' : ''}" data-act="ci-kind" data-kind="pair">${esc(L.ciPairK)}</button>
+        <button type="button" class="${kind === 'seeking' ? 'on' : ''}" data-act="ci-kind" data-kind="seeking">${esc(L.ciSeekK)}</button></div>
+        ${kind === 'pair' ? `<input class="in1" id="ci-partner" data-ui="ci-partner" value="${esc(ui.ciPartner || '')}" placeholder="${esc(L.ciPartner)}" autocapitalize="words">` : ''}` : ''}
+      <div class="acts flush"><button class="btn red wide" type="button" data-act="checkin" data-cup="${esc(cupSel)}" data-pair="${pair ? 1 : ''}">${esc(L.ciGo)}</button></div></div>`,
+  };
+}
+
+/* What the landing page saved on this phone for tonight (site.js tt_regs). */
+function savedRegs() {
+  try {
+    const ev = (S && S.event && S.event.id) || '';
+    return (JSON.parse(localStorage.getItem('tt_regs') || '[]') || [])
+      .filter(x => x && x.token && (!x.event || x.event === ev)).slice(-8);
+  } catch (e) { return []; }
+}
+
+/* Asked once the picker opens: which of this phone's entries are still to
+   check in. And, as a name is typed, who is expected under it. */
+async function ciLookup(qq) {
+  if (!IO.playerAct || !P || !(P.checkin || []).length) return;
+  const repaint = () => { if ($('picker').classList.contains('on')) $('names').innerHTML = pickerRows($('find').value); };
+  if (qq == null) {
+    const tokens = savedRegs().map(x => x.token);
+    if (!tokens.length) return;
+    const r = await IO.playerAct(null, 'mine', { tokens }).catch(() => null);
+    if (r && r.ok) { ui.ciMine = r.body.mine || {}; repaint(); }
+    return;
+  }
+  clearTimeout(ciLookup.t);
+  if (qq.length < 2) return;
+  ciLookup.t = setTimeout(async () => {
+    const r = await IO.playerAct(null, 'find', { q: qq }).catch(() => null);
+    if (r && r.ok && $('find').value.trim().toLowerCase() === qq) { ui.ciQ = qq; ui.ciFound = r.body.found || []; repaint(); }
+  }, 200);
+}
+
+/* The key that lets this phone act for the name it picked. Asked for
+   quietly: without it the page still shows everything, it just cannot
+   act. */
+async function claimKey(pid) {
+  if (!IO.playerAct || sim()) return;
+  try {
+    const r = await IO.playerAct(null, 'claim_name', { player_id: pid });
+    if (r.ok && r.body.key && me && me.player === pid) {
+      me.key = r.body.key; P = r.body.view || P; store.set(ME_KEY, me); render();
+    }
+  } catch (e) { }
+}
+
+async function checkin(data) {
+  if (busy) return;
+  busy = true;
+  try {
+    const r = await IO.playerAct(null, 'checkin', data);
+    if (!r.ok) { toast(r.body.error || (LANG === 'de' ? 'Das hat nicht geklappt.' : 'That didn’t work.'), true); buzz('bad'); return; }
+    ui.ciName = ui.ciPartner = '';
+    P = r.body.view || P;
+    const c = r.body.checkin || {};
+    if (!r.body.key) {
+      // on the list, waiting for a partner, or in already from the desk
+      toast(c.waiting ? L.ciWaiting : L.ciAlready);
+      ui.ciMine = { ...(ui.ciMine || {}), [data.token || '']: 'confirmed' };
+      $('names').innerHTML = pickerRows($('find').value);
+      return;
+    }
+    me = { event: (S.event || {}).id || '', player: r.body.player_id, key: r.body.key };
+    store.set(ME_KEY, me);
+    closePicker();
+    toast(c.already ? L.ciAlready : toastText('in'));
+    buzz('ok');
+    await load();
+    scrollTo({ top: 0 });
+  } finally { busy = false; }
 }
 function openPicker() {
+  if (SHELL === 'web' && IO.player && !sim() && !P) IO.player(null).then(r => { if (r.ok) { P = r.body; $('names').innerHTML = pickerRows($('find').value); } }).catch(() => { });
   $('find').value = '';
   $('find').placeholder = L.find;
   $('pick-h').textContent = L.whoH;
@@ -1217,6 +1588,7 @@ function openPicker() {
   $('names').innerHTML = pickerRows('');
   $('scrim').classList.add('on');
   $('picker').classList.add('on');
+  ciLookup();
 }
 function closePicker() { $('scrim').classList.remove('on'); $('picker').classList.remove('on'); }
 
@@ -1230,6 +1602,7 @@ function pick(pid, row) {
     setTimeout(() => {
       me = { event: (S.event || {}).id || '', player: pid };
       store.set(ME_KEY, me);
+      claimKey(pid);
       ui.seen = null; ui.cup = null;
       render(true);
       scrollTo({ top: 0 });
@@ -1243,6 +1616,7 @@ function forget() {
   o.style.setProperty('--b', '60px');
   room.classList.add('out');
   $('hero').classList.add('out');
+  pushOff(true);
   setTimeout(() => {
     me = null; store.del(ME_KEY); ui.seen = null; ui.moment = null; ui.cup = null;
     $('hero').classList.remove('out');
@@ -1270,11 +1644,11 @@ function render(entering) {
   $('under').innerHTML = also(H) + actions(H);
   const pill = $('pill');
   pill.hidden = SHELL !== 'web' || known();
-  if (!pill.hidden) pill.innerHTML = `<b>${esc(L.pillQ)}</b><span>${esc(L.pillA)}</span>`;
-  $('mine').innerHTML = signup() + evening();
+  if (!pill.hidden) pill.innerHTML = `<b>${esc(L.pillQ)}</b><span>${esc(P && (P.checkin || []).length ? L.pillCi : L.pillA)}</span>`;
+  $('mine').innerHTML = guide() + signup() + evening();
   renderRoom();
-  $('tail').innerHTML = orga() + settings();
-  if (ui.pad && !playingNow()) closePad();          // the referee got there first
+  $('tail').innerHTML = howLink() + orga() + settings();
+  if (ui.pad && !ui.pad.fix && !playingNow()) closePad();          // the referee got there first
   const dot = $('dot');
   if (dot) { dot.classList.add('on'); setTimeout(() => dot.classList.remove('on'), 500); }
 }
@@ -1331,7 +1705,9 @@ function toast(msg, bad) {
 document.addEventListener('input', e => {
   const k = e.target.dataset.ui;
   if (e.target.id === 'res-q') { ui.q = e.target.value; return renderRoom(); }
-  if (e.target.id === 'find') { $('names').innerHTML = pickerRows(e.target.value); return; }
+  if (e.target.id === 'find') { $('names').innerHTML = pickerRows(e.target.value); ciLookup(e.target.value.trim().toLowerCase()); return; }
+  if (k === 'ci-name') { ui.ciName = e.target.value; return; }
+  if (k === 'ci-partner') { ui.ciPartner = e.target.value; return; }
   if (k === 'name') ui.name = e.target.value;
   else if (k === 'partner') ui.partner[e.target.dataset.cup] = e.target.value;
   else if (k === 'msg') {
@@ -1369,7 +1745,36 @@ document.addEventListener('click', async e => {
   if (a === 'me') return openPicker();
   if (a === 'pick') return pick(d.p, b);
   if (a === 'not-me') return forget();
-  if (SHELL !== 'tg') return;
+  if (a === 'ci-cup') { ui.ciCup = d.cup; $('names').innerHTML = pickerRows($('find').value); return; }
+  if (a === 'checkin-reg') return void checkin({ registration_id: d.id });
+  if (a === 'checkin-mine') return void checkin({ token: d.token });
+  if (a === 'ci-kind') { ui.ciKind = d.kind; $('names').innerHTML = pickerRows($('find').value); return; }
+  if (a === 'checkin') {
+    const name = (ui.ciName || '').trim(), partner = (ui.ciPartner || '').trim();
+    const kind = d.pair ? (ui.ciKind === 'seeking' ? 'seeking' : 'pair') : 'single';
+    const whole = n => n.split(/\s+/).length > 1;
+    if (!name) { toast(L.needName, true); const n = $('ci-name'); if (n) n.focus(); return; }
+    if (!whole(name) || (kind === 'pair' && partner && !whole(partner))) {
+      toast(L.ciWhole, true); const n = $(whole(name) ? 'ci-partner' : 'ci-name'); if (n) n.focus(); return;
+    }
+    return void checkin({ cup_id: d.cup, kind, name, partner_name: kind === 'pair' ? partner : '' });
+  }
+  if (a === 'guide-ok') { ui.guide = false; store.set(GUIDE_KEY(), 1); return render(); }
+  if (a === 'guide-open') { ui.guide = true; render(); const g = $('guide'); if (g) g.scrollIntoView({ behavior: reduced() ? 'auto' : 'smooth', block: 'center' }); return; }
+  if (a === 'push-on') return void pushOn();
+  if (a === 'push-off') return void pushOff();
+  if (a === 'no-show') { if (!(await ask(L.noShowQ(d.opp)))) return; return void act('no_show', {}); }
+  if (SHELL !== 'tg') {
+    if (!PV()) return;
+    if (a === 'rest') return void act('rest', { eid: d.eid, on: !!d.on });
+    if (a === 'leave') { if (d.on && !(await ask(L.leaveQ))) return; return void act('leave', { eid: d.eid, on: !!d.on }); }
+    if (a === 'confirm') return void act('confirm', { id: +d.id, yes: !!d.yes });
+    if (a === 'withdraw') return void act('withdraw_claim', { id: +d.id });
+    if (a === 'pad') { buzz('light'); return openPad(); }
+    if (a === 'fix-pad') { buzz('light'); return openPad(true); }
+    if (a === 'pad-send') return void padSend();
+    return;
+  }
   if (a === 'kind') { ui.kind[d.cup] = d.k; buzz('light'); return render(); }
   if (a === 'enter') {
     const c = (V.open || []).find(x => x.id === d.cup);
@@ -1385,7 +1790,8 @@ document.addEventListener('click', async e => {
   if (a === 'confirm') return void act('confirm', { id: +d.id, yes: !!d.yes });
   if (a === 'withdraw') return void act('withdraw', { id: +d.id });
   if (a === 'pad') { buzz('light'); return openPad(); }
-  if (a === 'pad-send') { const st = padState(); if (!st.decided) return; return void act('score', { games: st.done }, closePad); }
+  if (a === 'fix-pad') { buzz('light'); return openPad(true); }
+  if (a === 'pad-send') return void padSend();
   if (a === 'message') { const text = ui.msg.trim(); if (!text) return; return void act('message', { text }, () => { ui.msg = ''; }); }
   if (a === 'news') return void act('news', { on: !V.me.news });
   if (a === 'unlink') { if (!(await ask(L.unlinkQ))) return; return void act('unlink', {}); }
@@ -1404,8 +1810,10 @@ function start() {
   load().then(() => {
     // a name from another evening is not this evening's
     if (SHELL === 'web' && me && S && S.event && me.event && me.event !== (S.event.id || '')) { me = null; store.del(ME_KEY); render(); }
+    else if (SHELL === 'web' && me && !me.key && myPlayer()) claimKey(me.player);
   });
   IO.listen(load);
+  pushInit();
   setInterval(load, 30000);
   setInterval(() => {                       // the countdown, without fighting anyone typing
     const f = document.activeElement;

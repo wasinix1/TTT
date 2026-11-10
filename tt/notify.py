@@ -65,7 +65,6 @@ def plan(app, ok_chats, now):
     reach = reach_map(s, ok_chats)
     out = []
     multi = len(s.cups) > 1
-    scores = bool(s.event.get("player_scores"))
 
     # -- your turn: a match on a table
     for n, t in sorted(s.tables.items()):
@@ -80,7 +79,7 @@ def plan(app, ok_chats, now):
                 continue
             out.append(_notice(
                 f"go:{m.id}:{m.queued_seq}:{chat}", chat,
-                copy.text_go(app, m, pid, t, multi, scores),
+                copy.text_go(app, m, pid, t, multi, s.match_rule(m, "player_scores")),
                 prio=0, ttl=STALE,
                 ref={"kind": "go", "m": m.id, "q": m.queued_seq, "p": pid}))
 
@@ -120,6 +119,25 @@ def plan(app, ok_chats, now):
                         keyboard=[[copy.button("⏸ Kann gerade nicht", f"p:{eid}:1")]],
                         prio=0, ttl=STALE,
                         ref={"kind": "next", "e": eid}))
+
+    # -- a score the other side reported: asked here in case the app is
+    # closed. The claim is the store's (tt/play.py), whoever made it
+    for c in s.claims.values():
+        if c["state"] != "open":
+            continue
+        m = s.matches.get(c["match_id"])
+        if c not in s.open_claims(m) and c not in s.open_fixes(m):
+            continue
+        other = "b" if c["side"] == "a" else "a"
+        for pid in (m.side_b if other == "b" else m.side_a):
+            chat = reach.get(pid)
+            if not chat:
+                continue
+            out.append(_notice(
+                f"claim:{c['id']}:{chat}", chat, copy.claim_question(app, m, c, other),
+                keyboard=[[copy.button("✓ Stimmt", f"k+:{c['id']}"),
+                           copy.button("✗ Stimmt nicht", f"k-:{c['id']}")]],
+                prio=0, ttl=STALE, ref={"kind": "claim", "c": c["id"]}))
 
     out += _reminders(app, ok_chats, now)
     out += _thanks(app, reach)
@@ -216,6 +234,14 @@ def settle(app, open_rows, ok_chats):
                 "chat_id": row["chat"], "message_id": row["message_id"],
                 "text": text, "parse_mode": "HTML",
                 "link_preview_options": {"is_disabled": True}}})
+        elif kind == "claim":
+            c = s.claims.get(ref.get("c"))
+            if c and c["state"] == "open":
+                continue
+            out.append({"row": row, "method": "editMessageText", "params": {
+                "chat_id": row["chat"], "message_id": row["message_id"],
+                "text": copy.SETTLED.get(c["state"] if c else "stale", "Erledigt."),
+                "parse_mode": "HTML"}})
         elif kind == "next":
             if playing is None:
                 playing, waiting = _chats_now(app, ok_chats)
@@ -233,6 +259,9 @@ def still_true(app, ref):
     if kind == "go":
         m = s.matches.get(ref.get("m"))
         return bool(m and m.status == "live" and m.queued_seq == ref.get("q"))
+    if kind == "claim":
+        c = s.claims.get(ref.get("c"))
+        return bool(c) and c["state"] == "open"
     if kind == "next":
         e = s.entrants.get(ref.get("e"))
         return bool(e) and app.entrant_status(e) in ("waiting", "drawn")

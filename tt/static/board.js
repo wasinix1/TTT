@@ -66,8 +66,14 @@ function render(S) {
   }
   $('cups').innerHTML = bs.map(b => {
     const cup = S.cups.find(c => c.id === b.cup_id);
+    // a match far past how long matches take tonight has most likely been
+    // played with nobody entering it: on a night players enter their own,
+    // the wall is where they will see the nudge
+    const scores = cup && cup.player_scores != null ? cup.player_scores : S.event.player_scores;
+    const late = m => scores && m.started_ts && b.overdue_after
+      && Date.now() / 1000 - m.started_ts > b.overdue_after;
     const now = b.playing.map(m => `<div class="now">
-      <div class="t">Jetzt · Tisch ${m.table}</div>
+      <div class="t">${late(m) ? `Tisch ${m.table} · Ergebnis eintragen!` : `Jetzt · Tisch ${m.table}`}</div>
       <div class="p"><span>${esc(nm(m.a))}</span><span>${esc(nm(m.b))}</span></div></div>`).join('')
       || `<div class="now idle"><div class="t">&nbsp;</div><div class="p">No match on yet</div></div>`;
     const rows = b.up.map(r => `
@@ -88,23 +94,53 @@ function render(S) {
   const waiting = bs.reduce((n, b) => n + b.waiting, 0);
   const left = bs.reduce((n, b) => n + b.total, 0);
   $('note').textContent = left ? `${left} still to play` + (waiting ? `, ${waiting} waiting` : '') : '';
+  howTo(S, bs);
+}
+
+/* What a player has to do, said where everybody looks — only on a night the
+   cups on the wall let players check in or enter their own results. */
+function howTo(S, bs) {
+  const el = $('how');
+  const rule = (c, k) => c && c[k] != null ? c[k] : k === 'player_scores' ? !!S.event.player_scores : false;
+  const cups = bs.map(b => S.cups.find(c => c.id === b.cup_id)).filter(Boolean);
+  const checkin = cups.some(c => rule(c, 'self_checkin'));
+  const scores = cups.some(c => rule(c, 'player_scores'));
+  if (!checkin && !scores) { el.hidden = true; return; }
+  // tonight's code only reaches a wall opened from the console (?d=);
+  // without it, the QR would open a page that can only look
+  const code = S.checkin_code || '';
+  const steps = [
+    ['Handy', code ? (checkin ? 'Code scannen — einchecken oder Namen tippen' : 'Code scannen — Namen tippen')
+      : 'Code am Eingang scannen — Namen tippen'],
+    checkin ? ['Kurz weg?', 'Pause tippen, damit niemand auf dich wartet'] : null,
+    scores ? ['Nach dem Spiel', 'Ergebnis eintragen — die andere Seite bestätigt'] : null,
+  ].filter(Boolean);
+  const qr = code ? `/api/qr.svg?u=${encodeURIComponent(location.origin + '/checkin?v=' + code)}` : '';
+  const html = `${qr ? `<img src="${qr}" alt="" onerror="this.remove()">` : ''}
+    <ol>${steps.map(([h, t]) => `<li><b>${esc(h)}</b>${esc(t)}</li>`).join('')}</ol>`;
+  if (el.dataset.html !== html) { el.innerHTML = html; el.dataset.html = html; }
+  el.hidden = false;
 }
 
 /* The wall display can be pointed at the sandbox too — see tt/simulate.py.
    Same flag on every request, for the same reason. */
 const SIM = new URLSearchParams(location.search).get('sim') === '1';
+// the door key, when the console opened this wall: it carries tonight's
+// code for the poster strip, and nothing else here uses it
+const DOOR = new URLSearchParams(location.search).get('d') || '';
 const simq = sep => (SIM ? sep + 'sim=1' : '');
 
-let last = -1, etag = null;
+let last = -1, etag = null, shown = null;
 async function poll() {
   try {
     const h = {};
     if (etag && last >= 0) h['If-None-Match'] = etag;
+    if (DOOR) h['X-Key'] = DOOR;
     const r = await fetch('/api/state' + simq('?'), { headers: h });
     if (r.status === 304) return;
     etag = r.headers.get('ETag');
     const s = await r.json();
-    if (s.version !== last) { last = s.version; render(s); }
+    if (s.version !== last) { last = s.version; shown = s; render(s); }
   } catch (e) { /* the next tick will catch up */ }
 }
 
@@ -122,5 +158,6 @@ if (SIM) { document.body.classList.add('sim'); document.title = 'SIM · ' + docu
 poll();
 stream();
 setInterval(poll, 15000);
-setInterval(() => { if (last >= 0) poll(); }, 60000);
+// the clock moves on its own: a table running long is noticed without a result
+setInterval(() => { if (last >= 0) poll(); if (shown) render(shown); }, 60000);
 window.addEventListener('resize', () => { last = -1; poll(); });

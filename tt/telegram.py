@@ -172,6 +172,8 @@ CREATE INDEX IF NOT EXISTS outbox_due ON outbox (state, prio, id);
 CREATE TABLE IF NOT EXISTS inbox (
   id INTEGER PRIMARY KEY AUTOINCREMENT, chat_id INTEGER, ts REAL,
   dir TEXT, text TEXT, read INTEGER DEFAULT 0);
+-- score reports lived here until they moved to the event log (tt/play.py);
+-- kept so an older telegram.db still opens
 CREATE TABLE IF NOT EXISTS claims (
   id INTEGER PRIMARY KEY AUTOINCREMENT, match_id TEXT, qseq INTEGER,
   side TEXT, chat_id INTEGER, games TEXT, ts REAL, state TEXT DEFAULT 'open',
@@ -313,7 +315,7 @@ class Wire:
     def open_sent(self):
         rows = self._all("SELECT id, key, chat_id, message_id, ref FROM outbox"
                          " WHERE state='sent' AND closed=0 AND method='sendMessage'"
-                         " AND (key LIKE 'go:%' OR key LIKE 'next:%')")
+                         " AND (key LIKE 'go:%' OR key LIKE 'next:%' OR key LIKE 'claim:%')")
         return [{"id": r["id"], "key": r["key"], "chat": r["chat_id"],
                  "message_id": r["message_id"], "ref": json.loads(r["ref"] or "{}")}
                 for r in rows]
@@ -362,32 +364,6 @@ class Wire:
 
     def inbox(self, limit=400):
         return self._all("SELECT * FROM inbox ORDER BY id DESC LIMIT ?", (limit,))
-
-    # claims
-    def add_claim(self, match_id, qseq, side, chat_id, games):
-        return self._q("INSERT INTO claims (match_id, qseq, side, chat_id, games, ts)"
-                       " VALUES (?,?,?,?,?,?)",
-                       (match_id, qseq, side, chat_id, json.dumps(games), time.time())).lastrowid
-
-    def _claim(self, r):
-        r["games"] = json.loads(r["games"])
-        r["msgs"] = json.loads(r.get("msgs") or "[]")
-        return r
-
-    def set_claim_msgs(self, cid, msgs):
-        self._q("UPDATE claims SET msgs=? WHERE id=?", (json.dumps(msgs), cid))
-
-    def claim(self, cid):
-        rows = self._all("SELECT * FROM claims WHERE id=?", (cid,))
-        return self._claim(rows[0]) if rows else None
-
-    def claims_for(self, match_id, qseq):
-        return [self._claim(r) for r in self._all(
-            "SELECT * FROM claims WHERE match_id=? AND qseq=? AND state='open'",
-            (match_id, qseq))]
-
-    def close_claim(self, cid, state):
-        self._q("UPDATE claims SET state=? WHERE id=?", (state, cid))
 
     # door tokens
     def new_token(self, person_id):
