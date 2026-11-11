@@ -191,7 +191,9 @@ A newer call replaces the older one on the lock screen.
   the match one of you enters the result*; on a break, *tap I'm back*.
 - **How tonight works:** a few lines, only the ones that apply to the cups
   you're in, shown when someone first opens the page, and any time from the
-  link at the bottom. It comes back by itself once if a new line turns up
+  `?` at the top right or the link at the bottom. Each line is a bold
+  headline with a smaller detail under it, grouped into getting a match,
+  after the match, and if something comes up. It comes back by itself once if a new line turns up
   during the evening (say, you join a cup where players enter results).
 - **The wall** shows a dark strip along the bottom whenever a cup on it lets
   players check in or enter results: scan the code, tap Break when you step

@@ -386,10 +386,20 @@ a.btn{text-decoration:none}
 .ci{margin:18px 0 8px;padding-top:14px;border-top:1.5px solid var(--ink)}
 .ci h4{margin:0;font-family:var(--syne);font-size:20px;font-weight:700;letter-spacing:-.03em}
 
-/* what to do now, under the hero; and the evening in five lines */
+/* what to do now, under the hero; and the evening in a few lines */
 .how{margin:0 var(--pad) 12px;color:var(--ink-2);font-size:14px;line-height:1.4}
 .guide{margin:18px var(--pad) 0}
 .guide h4{margin:0 0 8px;font-family:var(--syne);font-size:20px;font-weight:700;letter-spacing:-.03em}
-.guide ol{margin:0;padding-left:20px;display:grid;gap:7px;font-size:14.5px;line-height:1.4}
+.guide h4{margin-bottom:2px}
+.guide h5{margin:14px 0 6px;font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-3)}
+.guide ul{margin:0;padding:0;list-style:none;display:grid;gap:9px}
+.guide li{padding-left:12px;border-left:2px solid var(--rule)}
+.guide li b{display:block;font-size:15px;font-weight:700;line-height:1.3}
+.guide li span{display:block;margin-top:1px;font-size:13px;line-height:1.4;color:var(--ink-2)}
+.guide .acts{margin-top:16px}
+/* the guide's own door, top right */
+.bar .help{margin-left:auto;align-self:center;width:28px;height:28px;padding:0;border:0;border-radius:50%;
+  background:transparent;box-shadow:inset 0 0 0 1.5px var(--ink-2);color:var(--ink-2);
+  font:700 15px/28px var(--grot);text-align:center;cursor:pointer}
 .howlink{margin:22px var(--pad) 0;text-align:center}
 .acts + .acts{margin-top:12px}

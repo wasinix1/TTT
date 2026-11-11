@@ -145,15 +145,17 @@ const STR = {
     hRestDesk: 'You won’t be called. Tell the desk when you’re back.',
     // the evening in a few lines
     howLink: 'How tonight works', guideH: 'How tonight works', gotIt: 'Got it',
-    g1: 'You’re in the line as soon as you’re checked in. Nobody keeps a list.',
-    g2: p => 'This page and the screen on the wall show when you’re up: “Get ready”, then your table.' + (p ? ' Turn on calls and your phone buzzes, even locked.' : ''),
-    g3: a => 'After the match, one of you enters the result here; the other side confirms it.' + (a ? ` If nobody answers, it counts after ${a} minutes.` : ''),
-    g3desk: 'After the match, the organisers enter the result.',
-    g4: 'Stepping away? Tap Break so nobody waits for you, and I’m back when you return. Leaving? Tap I’m going home.',
-    g5: 'Called, and the other side isn’t there after three minutes? Tap “Opponent not here?” — you go back in the line.',
-    g6: 'Entered a result wrong? You can correct it for half an hour after the match; the other side confirms.',
-    gDrop: 'Nobody enters a result at all? Once the match has run far too long it’s dropped: it doesn’t count, and you’re both back in the line.',
-    gBal: 'Matches are balanced: as the evening goes on, you mostly play people at your level tonight.',
+    // the guide: a headline you get at a glance, then the detail
+    gsPlay: 'Getting a match', gsAfter: 'After the match', gsIf: 'If something comes up',
+    g1: ['Check in and you’re in the line', 'Nobody keeps a list.'],
+    g2: p => ['Watch for your table', 'This page and the screen on the wall show “Get ready”, then your table.' + (p ? ' Turn on calls and your phone buzzes, even locked.' : '')],
+    g3: a => ['One of you enters the result', 'Right here on this page; the other side confirms it.' + (a ? ` If nobody answers, it counts after ${a} minutes.` : '')],
+    g3desk: ['The organisers enter the result', ''],
+    g4: ['Stepping away? Tap Break', 'So nobody waits for you, and I’m back when you return. Leaving? Tap I’m going home.'],
+    g5: ['Opponent not there after 3 minutes?', 'Tap “Opponent not here?” and you go back in the line.'],
+    g6: ['Wrong result? Fix it within 30 minutes', 'The other side confirms the correction.'],
+    gDrop: ['Nobody entered a result?', 'A match that runs far too long is dropped: it doesn’t count, and you’re both back in the line.'],
+    gBal: ['Matches even out', 'As the evening goes on, you mostly play people at your level tonight.'],
     // correcting your last result
     fixLink: o => `Wrong result against ${o}?`, fixH: 'Correct the result', fixNote: o => `${o} confirms the correction — then it’s changed.`,
     fixSent: s => `Correction sent: ${s} — waiting for the other side`,
@@ -246,15 +248,16 @@ const STR = {
     hWaitDesk: 'Du bist in der Reihe — diese Seite und die Wand zeigen, wann du dran bist. Kurz weg? Sag am Eingang Bescheid.',
     hRestDesk: 'Du wirst nicht aufgerufen. Sag am Eingang Bescheid, wenn du wieder da bist.',
     howLink: 'So läuft der Abend', guideH: 'So läuft der Abend', gotIt: 'Alles klar',
-    g1: 'Sobald du eingecheckt bist, bist du in der Reihe. Niemand führt eine Liste.',
-    g2: p => 'Diese Seite und der Bildschirm an der Wand zeigen, wann du dran bist: „Gleich“, dann dein Tisch.' + (p ? ' Mit Aufrufen summt dein Handy, auch gesperrt.' : ''),
-    g3: a => 'Nach dem Spiel trägt eine Seite das Ergebnis hier ein, die andere bestätigt.' + (a ? ` Antwortet niemand, zählt es nach ${a} Minuten.` : ''),
-    g3desk: 'Nach dem Spiel trägt die Orga das Ergebnis ein.',
-    g4: 'Kurz weg? Tipp Pause, damit niemand auf dich wartet, und „Ich bin wieder da“, wenn du zurück bist. Gehst du? Tipp „Ich gehe heim“.',
-    g5: 'Aufgerufen, und die andere Seite ist nach drei Minuten nicht da? Tipp „Gegenseite nicht da?“ — du bist wieder in der Reihe.',
-    g6: 'Ergebnis falsch eingetragen? Eine halbe Stunde nach dem Spiel kannst du es korrigieren; die andere Seite bestätigt.',
-    gDrop: 'Niemand trägt ein Ergebnis ein? Läuft das Spiel viel zu lange, wird es gestrichen: Es zählt nicht, und ihr seid beide wieder in der Reihe.',
-    gBal: 'Ausgeglichene Spiele: im Lauf des Abends spielst du meist gegen Leute auf deinem Niveau.',
+    gsPlay: 'Ans Spielen', gsAfter: 'Nach dem Spiel', gsIf: 'Wenn was ist',
+    g1: ['Eingecheckt heißt: in der Reihe', 'Niemand führt eine Liste.'],
+    g2: p => ['Achte auf deinen Tisch', 'Diese Seite und der Bildschirm an der Wand zeigen „Gleich“, dann deinen Tisch.' + (p ? ' Mit Aufrufen summt dein Handy, auch gesperrt.' : '')],
+    g3: a => ['Eine Seite trägt das Ergebnis ein', 'Hier auf der Seite; die andere bestätigt.' + (a ? ` Antwortet niemand, zählt es nach ${a} Minuten.` : '')],
+    g3desk: ['Die Orga trägt das Ergebnis ein', ''],
+    g4: ['Kurz weg? Tipp Pause', 'Damit niemand auf dich wartet, und „Ich bin wieder da“, wenn du zurück bist. Gehst du? Tipp „Ich gehe heim“.'],
+    g5: ['Gegenseite nach 3 Minuten nicht da?', 'Tipp „Gegenseite nicht da?“ — du bist wieder in der Reihe.'],
+    g6: ['Falsch eingetragen? 30 Minuten zum Korrigieren', 'Die andere Seite bestätigt die Korrektur.'],
+    gDrop: ['Niemand trägt etwas ein?', 'Läuft ein Spiel viel zu lange, wird es gestrichen: Es zählt nicht, und ihr seid beide wieder in der Reihe.'],
+    gBal: ['Ausgeglichene Spiele', 'Im Lauf des Abends spielst du meist gegen Leute auf deinem Niveau.'],
     fixLink: o => `Falsches Ergebnis gegen ${o}?`, fixH: 'Ergebnis korrigieren', fixNote: o => `${o} bestätigt die Korrektur — dann wird es geändert.`,
     fixSent: s => `Korrektur gesendet: ${s} — wartet auf die andere Seite`,
     fixBy: b => `${b} meldet einen Fehler im letzten Ergebnis`, fixWas: g => `Eingetragen: ${g}`, fixQ: (w, a, b) => `Richtig wäre ${a}:${b} — ${w ? 'du gewinnst' : 'du verlierst'}. Stimmt das?`,
@@ -878,13 +881,15 @@ function guideSteps() {
   const r = (v && v.rules) || {};
   if (!v || !(r.queue || r.scores)) return [];
   const push = SHELL === 'web' && P && P.push_key;
-  return [r.queue && ['g1', L.g1], r.balanced && ['gBal', L.gBal], ['g2', L.g2(push)],
-          r.scores ? ['g3:' + (r.auto_min || 0), L.g3(r.auto_min)] : ['g3desk', L.g3desk],
-          r.scores && ['g6', L.g6],
+  // [key, [headline, detail], section]: the key is what "Got it" remembers
+  return [r.queue && ['g1', L.g1, 'gsPlay'], r.balanced && ['gBal', L.gBal, 'gsPlay'],
+          ['g2', L.g2(push), 'gsPlay'],
+          r.scores ? ['g3:' + (r.auto_min || 0), L.g3(r.auto_min), 'gsAfter'] : ['g3desk', L.g3desk, 'gsAfter'],
+          r.scores && ['g6', L.g6, 'gsAfter'],
           // breaks are theirs only where they check themselves in
-          r.queue && (!r.breaks || r.breaks.length) && ['g4', L.g4],
-          r.queue && r.scores && ['g5', L.g5],
-          r.drop && ['gDrop', L.gDrop]].filter(Boolean);
+          r.queue && (!r.breaks || r.breaks.length) && ['g4', L.g4, 'gsIf'],
+          r.queue && r.scores && ['g5', L.g5, 'gsIf'],
+          r.drop && ['gDrop', L.gDrop, 'gsIf']].filter(Boolean);
 }
 function guideSeen() {
   const seen = store.get(GUIDE_KEY());
@@ -895,7 +900,12 @@ function guide() {
   if (!steps.length) return '';
   const seen = guideSeen();
   if (!ui.guide && (seen === null || steps.every(([k]) => seen.includes(k)))) return '';
-  return `<div class="card2 guide" id="guide"><h4>${esc(L.guideH)}</h4><ol>${steps.map(([, x]) => `<li>${esc(x)}</li>`).join('')}</ol>
+  const part = sec => {
+    const xs = steps.filter(x => x[2] === sec);
+    return xs.length ? `<h5>${esc(L[sec])}</h5><ul>${xs.map(([, [t, d]]) =>
+      `<li><b>${esc(t)}</b>${d ? `<span>${esc(d)}</span>` : ''}</li>`).join('')}</ul>` : '';
+  };
+  return `<div class="card2 guide" id="guide"><h4>${esc(L.guideH)}</h4>${part('gsPlay') + part('gsAfter') + part('gsIf')}
     <div class="acts flush"><button class="btn ghost small" data-act="guide-ok">${esc(L.gotIt)}</button></div></div>`;
 }
 function howLink() {
@@ -1649,7 +1659,10 @@ function forget() {
 function bar() {
   // the mark alone: the evening's name stays out of sight, read out with the mark
   const ev = SHELL === 'tg' && V ? V.event.name : (S && S.event && S.event.name) || '';
-  return `<span class="tt" role="img" aria-label="${esc(ev ? 'TTT · ' + ev : 'TTT')}">TTT</span>`;
+  // the guide, always one tap away wherever there is one
+  const help = guideSteps().length
+    ? `<button class="help" data-act="guide-open" aria-label="${esc(L.guideH)}" title="${esc(L.guideH)}">?</button>` : '';
+  return `<span class="tt" role="img" aria-label="${esc(ev ? 'TTT · ' + ev : 'TTT')}">TTT</span>${help}`;
 }
 
 function render(entering) {
