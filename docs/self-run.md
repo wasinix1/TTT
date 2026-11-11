@@ -188,7 +188,9 @@ A newer call replaces the older one on the lock screen.
 
 - **One line under the big number** says what to do right now: in the
   line, *step away? tap Break*; called, *head over now*; on a table, *after
-  the match one of you enters the result*; on a break, *tap I'm back*.
+  the match one of you enters the result* (or, where the desk scores,
+  *report the result to the ref or the desk right away*); on a break, *tap
+  I'm back*.
 - **How tonight works:** a few lines, only the ones that apply to the cups
   you're in, shown when someone first opens the page, and any time from the
   `?` at the top right or the link at the bottom. Each line is a bold

@@ -139,7 +139,7 @@ const STR = {
     hWait: 'You’re in the line — this page and the wall show when you’re up. Stepping away? Tap Break, so nobody waits for you.',
     hNext: 'Head over now, so the table isn’t kept waiting.',
     hPlay: a => 'After the match, one of you enters the result here and the other confirms it' + (a ? `, or it counts after ${a} min.` : '.'),
-    hPlayDesk: 'After the match, the organisers enter the result.',
+    hPlayDesk: 'Match over? Report the result to the ref or the desk right away.',
     hRest: 'You won’t be called. Tap I’m back and you join the end of the line.',
     hWaitDesk: 'You’re in the line — this page and the wall show when you’re up. Stepping away? Tell the desk.',
     hRestDesk: 'You won’t be called. Tell the desk when you’re back.',
@@ -150,7 +150,7 @@ const STR = {
     g1: ['Check in and you’re in the line', 'Nobody keeps a list.'],
     g2: p => ['Watch for your table', 'This page and the screen on the wall show “Get ready”, then your table.' + (p ? ' Turn on calls and your phone buzzes, even locked.' : '')],
     g3: a => ['One of you enters the result', 'Right here on this page; the other side confirms it.' + (a ? ` If nobody answers, it counts after ${a} minutes.` : '')],
-    g3desk: ['The organisers enter the result', ''],
+    g3desk: ['Report the result to the ref right away', 'Straight after the match, tell the ref or the desk the score, so the table is free for the next match.'],
     g4: ['Stepping away? Tap Break', 'So nobody waits for you, and I’m back when you return. Leaving? Tap I’m going home.'],
     g5: ['Opponent not there after 3 minutes?', 'Tap “Opponent not here?” and you go back in the line.'],
     g6: ['Wrong result? Fix it within 30 minutes', 'The other side confirms the correction.'],
@@ -243,7 +243,7 @@ const STR = {
     hWait: 'Du bist in der Reihe — diese Seite und die Wand zeigen, wann du dran bist. Kurz weg? Tipp Pause, damit niemand auf dich wartet.',
     hNext: 'Geh jetzt rüber, damit der Tisch nicht auf dich wartet.',
     hPlay: a => 'Nach dem Spiel trägt eine Seite das Ergebnis hier ein, die andere bestätigt' + (a ? ` — sonst zählt es nach ${a} Min.` : '.'),
-    hPlayDesk: 'Nach dem Spiel trägt die Orga das Ergebnis ein.',
+    hPlayDesk: 'Spiel vorbei? Meldet das Ergebnis sofort beim Schiri oder bei der Orga.',
     hRest: 'Du wirst nicht aufgerufen. Tipp „Ich bin wieder da“ und du stellst dich hinten an.',
     hWaitDesk: 'Du bist in der Reihe — diese Seite und die Wand zeigen, wann du dran bist. Kurz weg? Sag am Eingang Bescheid.',
     hRestDesk: 'Du wirst nicht aufgerufen. Sag am Eingang Bescheid, wenn du wieder da bist.',
@@ -252,7 +252,7 @@ const STR = {
     g1: ['Eingecheckt heißt: in der Reihe', 'Niemand führt eine Liste.'],
     g2: p => ['Achte auf deinen Tisch', 'Diese Seite und der Bildschirm an der Wand zeigen „Gleich“, dann deinen Tisch.' + (p ? ' Mit Aufrufen summt dein Handy, auch gesperrt.' : '')],
     g3: a => ['Eine Seite trägt das Ergebnis ein', 'Hier auf der Seite; die andere bestätigt.' + (a ? ` Antwortet niemand, zählt es nach ${a} Minuten.` : '')],
-    g3desk: ['Die Orga trägt das Ergebnis ein', ''],
+    g3desk: ['Ergebnis sofort beim Schiri melden', 'Direkt nach dem Spiel dem Schiri oder der Orga sagen, damit der Tisch fürs nächste Spiel frei wird.'],
     g4: ['Kurz weg? Tipp Pause', 'Damit niemand auf dich wartet, und „Ich bin wieder da“, wenn du zurück bist. Gehst du? Tipp „Ich gehe heim“.'],
     g5: ['Gegenseite nach 3 Minuten nicht da?', 'Tipp „Gegenseite nicht da?“ — du bist wieder in der Reihe.'],
     g6: ['Falsch eingetragen? 30 Minuten zum Korrigieren', 'Die andere Seite bestätigt die Korrektur.'],
@@ -879,7 +879,8 @@ const GUIDE_KEY = () => 'ttt_guide_' + ((S && S.event && S.event.id) || '');
 function guideSteps() {
   const v = PV();
   const r = (v && v.rules) || {};
-  if (!v || !(r.queue || r.scores)) return [];
+  // a bracket the desk scores still has something to say: report the result
+  if (!v || !(r.queue || r.scores || r.entered)) return [];
   const push = SHELL === 'web' && P && P.push_key;
   // [key, [headline, detail], section]: the key is what "Got it" remembers
   return [r.queue && ['g1', L.g1, 'gsPlay'], r.balanced && ['gBal', L.gBal, 'gsPlay'],
@@ -909,17 +910,16 @@ function guide() {
     <div class="acts flush"><button class="btn ghost small" data-act="guide-ok">${esc(L.gotIt)}</button></div></div>`;
 }
 function howLink() {
-  const v = PV();
-  const r = (v && v.rules) || {};
-  return v && (r.queue || r.scores) ? `<p class="howlink"><button class="link" data-act="guide-open">${esc(L.howLink)}</button></p>` : '';
+  return guideSteps().length ? `<p class="howlink"><button class="link" data-act="guide-open">${esc(L.howLink)}</button></p>` : '';
 }
 
 /* What to do now, in one line under the hero — so nobody has to ask. */
 function howNow(x, v) {
   const r = v.rules || {};
   if (x.state === 'playing') {
-    if ((v.reported || []).some(c => !c.fix) || !(v.scores || r.scores)) return '';
-    return v.scores ? L.hPlay(v.auto_min) : L.hPlayDesk;
+    if (!v.scores) return L.hPlayDesk;       // nobody on the phone enters it: go and say
+    if ((v.reported || []).some(c => !c.fix)) return '';
+    return L.hPlay(v.auto_min);
   }
   if (!r.queue) return '';
   const own = ownBreaks(v, x.eid);
