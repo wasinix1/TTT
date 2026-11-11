@@ -867,20 +867,35 @@ function pushFollow() {
   IO.playerAct(me.key, 'push_subscribe', { sub: pushSub.toJSON(), lang: LANG }).catch(() => { });
 }
 
-/* The evening in a few lines: once per evening, and whenever asked. */
+/* The evening in a few lines: once per evening, and whenever asked. "Got
+   it" remembers which lines were read, so the card comes back by itself
+   only when a new one turns up — joining a cup that takes scores, say.
+   A line going away (the queue closing for a knockout) needs nobody's
+   attention. */
 const GUIDE_KEY = () => 'ttt_guide_' + ((S && S.event && S.event.id) || '');
-function guide() {
+function guideSteps() {
   const v = PV();
   const r = (v && v.rules) || {};
-  if (!v || !(r.queue || r.scores)) return '';
-  if (!ui.guide && store.get(GUIDE_KEY())) return '';
+  if (!v || !(r.queue || r.scores)) return [];
   const push = SHELL === 'web' && P && P.push_key;
-  const steps = [r.queue ? L.g1 : '', r.balanced ? L.gBal : '', L.g2(push),
-                 r.scores ? L.g3(r.auto_min) : L.g3desk, r.scores ? L.g6 : '',
-                 // breaks are theirs only where they check themselves in
-                 r.queue && (!r.breaks || r.breaks.length) ? L.g4 : '', r.queue && r.scores ? L.g5 : '',
-                 r.drop ? L.gDrop : ''].filter(Boolean);
-  return `<div class="card2 guide" id="guide"><h4>${esc(L.guideH)}</h4><ol>${steps.map(x => `<li>${esc(x)}</li>`).join('')}</ol>
+  return [r.queue && ['g1', L.g1], r.balanced && ['gBal', L.gBal], ['g2', L.g2(push)],
+          r.scores ? ['g3:' + (r.auto_min || 0), L.g3(r.auto_min)] : ['g3desk', L.g3desk],
+          r.scores && ['g6', L.g6],
+          // breaks are theirs only where they check themselves in
+          r.queue && (!r.breaks || r.breaks.length) && ['g4', L.g4],
+          r.queue && r.scores && ['g5', L.g5],
+          r.drop && ['gDrop', L.gDrop]].filter(Boolean);
+}
+function guideSeen() {
+  const seen = store.get(GUIDE_KEY());
+  return Array.isArray(seen) ? seen : seen ? null : [];   // null: read before lines were kept
+}
+function guide() {
+  const steps = guideSteps();
+  if (!steps.length) return '';
+  const seen = guideSeen();
+  if (!ui.guide && (seen === null || steps.every(([k]) => seen.includes(k)))) return '';
+  return `<div class="card2 guide" id="guide"><h4>${esc(L.guideH)}</h4><ol>${steps.map(([, x]) => `<li>${esc(x)}</li>`).join('')}</ol>
     <div class="acts flush"><button class="btn ghost small" data-act="guide-ok">${esc(L.gotIt)}</button></div></div>`;
 }
 function howLink() {
@@ -1762,7 +1777,7 @@ document.addEventListener('click', async e => {
     }
     return void checkin({ cup_id: d.cup, kind, name, partner_name: kind === 'pair' ? partner : '' });
   }
-  if (a === 'guide-ok') { ui.guide = false; store.set(GUIDE_KEY(), 1); return render(); }
+  if (a === 'guide-ok') { ui.guide = false; store.set(GUIDE_KEY(), [...new Set([...(guideSeen() || []), ...guideSteps().map(([k]) => k)])]); return render(); }
   if (a === 'guide-open') { ui.guide = true; render(); const g = $('guide'); if (g) g.scrollIntoView({ behavior: reduced() ? 'auto' : 'smooth', block: 'center' }); return; }
   if (a === 'push-on') return void pushOn();
   if (a === 'push-off') return void pushOff();
