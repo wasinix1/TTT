@@ -148,6 +148,9 @@ const STR = {
     // the guide: a headline you get at a glance, then the detail
     gsPlay: 'Getting a match', gsAfter: 'After the match', gsIf: 'If something comes up',
     g1: ['Check in and you’re in the line', 'Nobody keeps a list.'],
+    // open play: being in the line and stepping out of it, together up front
+    g1op: ['Check in and you’re in the line', 'Not ready to play yet, or taking a break? Tap “Break”, then “I’m back” once you’re ready. Leaving? Tap “I’m going home”.'],
+    g1opDesk: ['Check in and you’re in the line', 'Not ready to play yet, or taking a break? Tell the desk, and again once you’re ready.'],
     g2: p => ['Watch for your table', 'This page and the screen on the wall show “Get ready”, then your table.' + (p ? ' Turn on calls and your phone buzzes, even locked.' : '')],
     g3: a => ['One of you enters the result', 'Right here on this page; the other side confirms it.' + (a ? ` If nobody answers, it counts after ${a} minutes.` : '')],
     g3desk: ['Report the result to the ref right away', 'Straight after the match, tell the ref or the desk the score, so the table is free for the next match.'],
@@ -250,6 +253,8 @@ const STR = {
     howLink: 'So läuft der Abend', guideH: 'So läuft der Abend', gotIt: 'Alles klar',
     gsPlay: 'Ans Spielen', gsAfter: 'Nach dem Spiel', gsIf: 'Wenn was ist',
     g1: ['Eingecheckt heißt: in der Reihe', 'Niemand führt eine Liste.'],
+    g1op: ['Eingecheckt heißt: in der Reihe', 'Noch nicht bereit oder kurz weg? Tipp „Pause“, dann „Ich bin wieder da“, sobald du bereit bist. Gehst du? Tipp „Ich gehe heim“.'],
+    g1opDesk: ['Eingecheckt heißt: in der Reihe', 'Noch nicht bereit oder kurz weg? Sag am Eingang Bescheid, und wieder, sobald du bereit bist.'],
     g2: p => ['Achte auf deinen Tisch', 'Diese Seite und der Bildschirm an der Wand zeigen „Gleich“, dann deinen Tisch.' + (p ? ' Mit Aufrufen summt dein Handy, auch gesperrt.' : '')],
     g3: a => ['Eine Seite trägt das Ergebnis ein', 'Hier auf der Seite; die andere bestätigt.' + (a ? ` Antwortet niemand, zählt es nach ${a} Minuten.` : '')],
     g3desk: ['Ergebnis sofort beim Schiri melden', 'Direkt nach dem Spiel dem Schiri oder der Orga sagen, damit der Tisch fürs nächste Spiel frei wird.'],
@@ -883,12 +888,15 @@ function guideSteps() {
   if (!v || !(r.queue || r.scores || r.entered)) return [];
   const push = SHELL === 'web' && P && P.push_key;
   // [key, [headline, detail], section]: the key is what "Got it" remembers
-  return [r.queue && ['g1', L.g1, 'gsPlay'], r.balanced && ['gBal', L.gBal, 'gsPlay'],
+  // breaks are theirs only where they check themselves in
+  const own = r.queue && (!r.breaks || r.breaks.length);
+  // open play: the break goes with the line, first thing; elsewhere it waits below
+  const first = r.open_play ? (own ? ['g1op', L.g1op] : ['g1opDesk', L.g1opDesk]) : ['g1', L.g1];
+  return [r.queue && [...first, 'gsPlay'], r.balanced && ['gBal', L.gBal, 'gsPlay'],
           ['g2', L.g2(push), 'gsPlay'],
           r.scores ? ['g3:' + (r.auto_min || 0), L.g3(r.auto_min), 'gsAfter'] : ['g3desk', L.g3desk, 'gsAfter'],
           r.scores && ['g6', L.g6, 'gsAfter'],
-          // breaks are theirs only where they check themselves in
-          r.queue && (!r.breaks || r.breaks.length) && ['g4', L.g4, 'gsIf'],
+          own && !r.open_play && ['g4', L.g4, 'gsIf'],
           r.queue && r.scores && ['g5', L.g5, 'gsIf'],
           r.drop && ['gDrop', L.gDrop, 'gsIf']].filter(Boolean);
 }
