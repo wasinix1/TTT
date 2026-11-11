@@ -403,3 +403,6 @@ a.btn{text-decoration:none}
   font:700 15px/28px var(--grot);text-align:center;cursor:pointer}
 .howlink{margin:22px var(--pad) 0;text-align:center}
 .acts + .acts{margin-top:12px}
+
+/* the sandbox (/?sim=1): a quiet tag beside the mark, on every screen */
+.bar .sim-tag{align-self:center;padding:3px 8px;border-radius:99px;background:var(--ink);color:var(--bone);letter-spacing:.08em;text-transform:uppercase}

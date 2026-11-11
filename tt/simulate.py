@@ -158,7 +158,11 @@ def structure(store):
                      "registration": "closed",     # no public door on a sim
                      "kind": f.kind if f else "",
                      "format_name": f.name if f else "",
-                     "config": cfg})
+                     "config": cfg,
+                     # what players may do for themselves, so the sim's
+                     # phone page (/?sim=1) offers what tonight's would
+                     **{k: getattr(c, k) for k in store.CUP_RULES
+                        if getattr(c, k, None) is not None}})
 
     tables = []
     for n in sorted(store.tables):

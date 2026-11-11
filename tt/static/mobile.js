@@ -118,6 +118,7 @@ const STR = {
     // pad
     result: 'Result', game: n => 'Game ' + n, you: 'You', youWin: (a, b) => `You win ${a}:${b}`, youLose: (a, b) => `You lose ${a}:${b}`,
     padNote: o => `${o} confirms — then it counts.`,
+    simTag: 'Sandbox', simGoneH: 'No sim running', simGoneP: 'This sandbox has been stopped, or was never built. Run one from the console, under Setup → More.',
     outsideH: 'Open this in Telegram', outsideP: 'Your evening — when you play, your matches, your table — is in our bot.',
     // playing without a desk
     pauseFweb: 'Tap “I’m back” when you are', noShow: 'Opponent not here?', noShowQ: o => `${o} never came to the table? They go on a break and the table goes to the next match — you’re back in the line.`,
@@ -228,6 +229,7 @@ const STR = {
     single: 'Einzel', pair: 'Doppel', drawn: n => `mit ${n} — zugelost`, lookingFor: 'Partner:in gesucht', comes: 'kommt',
     result: 'Ergebnis', game: n => 'Satz ' + n, you: 'Du', youWin: (a, b) => `Du gewinnst ${a}:${b}`, youLose: (a, b) => `Du verlierst ${a}:${b}`,
     padNote: o => `${o} bestätigt — dann ist es eingetragen.`,
+    simTag: 'Sandbox', simGoneH: 'Keine Simulation', simGoneP: 'Diese Simulation wurde beendet oder nie gestartet. Starte eine in der Konsole unter Setup → More.',
     outsideH: 'Öffne das in Telegram', outsideP: 'Dein Abend — wann du dran bist, deine Spiele, dein Tisch — steht in unserem Bot.',
     pauseFweb: 'Tipp „Ich bin wieder da“, wenn du zurück bist', noShow: 'Gegenseite nicht da?', noShowQ: o => `${o} ist nicht an den Tisch gekommen? Dann gehen sie in Pause und der Tisch an das nächste Spiel — du bist wieder in der Reihe.`,
     reportedAuto: (s, t) => `Gemeldet: ${s} — zählt um ${t}, wenn niemand widerspricht`, reportedWait: s => `Gemeldet: ${s} — wartet auf die andere Seite`,
@@ -315,11 +317,18 @@ const scoreLine = games => (games || []).map(([a, b]) => `${a}:${b}`).join(' · 
 
 /* ------------------------------------------------------------ state */
 
+/* The sandbox (tt/simulate.py) as a phone sees it: /?sim=1. Every request
+   asks for the sim, the way the console's sim tab does, so a sandbox phone
+   can never act on the real evening. It keeps its own name and cup on this
+   phone, and leaves out what reaches the outside: Telegram and pushes. */
+const SIM = new URLSearchParams(location.search).get('sim') === '1';
+const simq = sep => SIM ? sep + 'sim=1' : '';
+
 let S = null;                      // /api/state, role public
 let V = null;                      // /api/me (tg only)
 let skew = 0;
 let busy = false;
-const ME_KEY = 'ttt_me';
+const ME_KEY = SIM ? 'ttt_me_sim' : 'ttt_me';
 let me = null;                     // web: { event, player, key } — who this phone is
 let P = null;                      // web: /api/player — the key's person, scores, check-in
 const ui = {
@@ -333,7 +342,7 @@ const ui = {
   rank: {},                        // eid -> last known rank, for "up from 3rd"
   playingKey: '',
 };
-const CUP_KEY = 'ttt_cup';
+const CUP_KEY = SIM ? 'ttt_cup_sim' : 'ttt_cup';
 // tonight's code from the poster in the hall (/checkin?v=…): what lets this
 // phone check in and act, not only look (App.venue_ok). Kept for the evening,
 // and taken out of the address so a shared link does not carry it
@@ -350,7 +359,7 @@ const store = {
    object with the same four calls as window.TTT_IO. */
 
 let venue = '';
-try {
+if (!SIM) try {
   const u = new URL(location.href), v = u.searchParams.get('v');
   if (v) {
     localStorage.setItem(VENUE_KEY, JSON.stringify(v));
@@ -361,7 +370,10 @@ try {
 } catch (e) { }
 
 const IO = window.TTT_IO || {
-  state: () => fetch('/api/state').then(r => r.ok ? r.json() : null),
+  state: () => fetch('/api/state' + simq('?')).then(r => {
+    if (SIM && r.status === 404) simGone();
+    return r.ok ? r.json() : null;
+  }),
   me: () => INIT ? fetch('/api/me', { headers: { 'X-Tg-Init': INIT }, cache: 'no-store' })
     .then(r => (r.status === 401 || r.status === 404) ? { outside: true } : r.json()) : Promise.resolve({ outside: true }),
   act: (op, data) => fetch('/api/me', {
@@ -370,10 +382,10 @@ const IO = window.TTT_IO || {
     body: JSON.stringify({ op, data: data || {} }),
   }).then(async r => ({ ok: r.ok, body: await r.json().catch(() => ({})) })),
   // the web page's own door (tt/server.py phone): who this phone says it is
-  player: key => fetch('/api/player' + (venue ? '?v=' + encodeURIComponent(venue) : ''),
+  player: key => fetch('/api/player' + (venue ? '?v=' + encodeURIComponent(venue) : '') + simq(venue ? '&' : '?'),
     { headers: key ? { 'X-Player': key } : {}, cache: 'no-store' })
     .then(async r => ({ ok: r.ok, status: r.status, body: await r.json().catch(() => ({})) })),
-  playerAct: (key, op, data) => fetch('/api/player', {
+  playerAct: (key, op, data) => fetch('/api/player' + simq('?'), {
     method: 'POST', cache: 'no-store',
     headers: { 'Content-Type': 'application/json', ...(key ? { 'X-Player': key } : {}) },
     body: JSON.stringify({ op, data: data || {}, code: venue }),
@@ -381,7 +393,7 @@ const IO = window.TTT_IO || {
   listen: cb => {
     let es = null, soon = null;
     const open = () => {
-      try { es = new EventSource('/api/stream'); } catch (e) { return; }
+      try { es = new EventSource('/api/stream' + simq('?')); } catch (e) { return; }
       es.onmessage = () => { clearTimeout(soon); soon = setTimeout(cb, 250); };
       es.onerror = () => { es.close(); setTimeout(open, 4000); };
     };
@@ -389,10 +401,10 @@ const IO = window.TTT_IO || {
   },
 };
 
-const sim = () => new URLSearchParams(location.search).has('sim');
+const sim = () => SIM;
 async function load() {
   try {
-    const web = SHELL === 'web' && IO.player && !sim();
+    const web = SHELL === 'web' && IO.player;
     const [s, v, p] = await Promise.all([IO.state(), SHELL === 'tg' ? IO.me() : null,
                                          web ? IO.player(me && me.key) : null]);
     if (s) S = s;
@@ -1523,7 +1535,6 @@ function pickerRows(q) {
    signed up is nobody's business; or a walk-in, with their whole name. */
 function checkinBlock(qq) {
   const cups = (P && P.checkin) || [];
-  if (sim()) return { regs: '', form: '' };
   if (!cups.length) return { regs: '', form: P && P.self_run && !P.venue ? `<p class="note">${esc(L.scanHint)}</p>` : '' };
   const mine = savedRegs().filter(x => (ui.ciMine || {})[x.token] === 'pending');
   const found = qq.length >= 2 && ui.ciQ === qq ? (ui.ciFound || []) : [];
@@ -1550,6 +1561,7 @@ function checkinBlock(qq) {
 
 /* What the landing page saved on this phone for tonight (site.js tt_regs). */
 function savedRegs() {
+  if (sim()) return [];               // the landing page's entries are the real evening's
   try {
     const ev = (S && S.event && S.event.id) || '';
     return (JSON.parse(localStorage.getItem('tt_regs') || '[]') || [])
@@ -1581,7 +1593,7 @@ async function ciLookup(qq) {
    quietly: without it the page still shows everything, it just cannot
    act. */
 async function claimKey(pid) {
-  if (!IO.playerAct || sim()) return;
+  if (!IO.playerAct) return;
   try {
     const r = await IO.playerAct(null, 'claim_name', { player_id: pid });
     if (r.ok && r.body.key && me && me.player === pid) {
@@ -1616,7 +1628,7 @@ async function checkin(data) {
   } finally { busy = false; }
 }
 function openPicker() {
-  if (SHELL === 'web' && IO.player && !sim() && !P) IO.player(null).then(r => { if (r.ok) { P = r.body; $('names').innerHTML = pickerRows($('find').value); } }).catch(() => { });
+  if (SHELL === 'web' && IO.player && !P) IO.player(null).then(r => { if (r.ok) { P = r.body; $('names').innerHTML = pickerRows($('find').value); } }).catch(() => { });
   $('find').value = '';
   $('find').placeholder = L.find;
   $('pick-h').textContent = L.whoH;
@@ -1670,7 +1682,9 @@ function bar() {
   // the guide, always one tap away wherever there is one
   const help = guideSteps().length
     ? `<button class="help" data-act="guide-open" aria-label="${esc(L.guideH)}" title="${esc(L.guideH)}">?</button>` : '';
-  return `<span class="tt" role="img" aria-label="${esc(ev ? 'TTT · ' + ev : 'TTT')}">TTT</span>${help}`;
+  // the sandbox says so on every screen, like the console's stripe
+  const tag = sim() ? `<span class="sim-tag micro">${esc(L.simTag)}</span>` : '';
+  return `<span class="tt" role="img" aria-label="${esc(ev ? 'TTT · ' + ev : 'TTT')}">TTT</span>${tag}${help}`;
 }
 
 function render(entering) {
@@ -1704,6 +1718,14 @@ function renderRoom() {
   // a bracket wider than the phone opens at the round being played
   room.querySelectorAll('.ko.wide').forEach(k => { k.scrollLeft = +k.dataset.at || 0; });
   if (had) { const back = $('res-q'); if (back) { back.focus(); try { back.setSelectionRange(caret, caret); } catch (e) { } } }
+}
+
+/* The sandbox page with no sandbox behind it: stopped, or never built. */
+function simGone() {
+  S = null;
+  $('hero').hidden = true;
+  $('pill').hidden = true;
+  $('room').innerHTML = `<div class="empty"><h1>${esc(L.simGoneH)}</h1><p>${esc(L.simGoneP)}</p></div>`;
 }
 
 function outside() {
