@@ -188,9 +188,15 @@ A newer call replaces the older one on the lock screen.
 
 - **One line under the big number** says what to do right now: in the
   line, *step away? tap Break*; called, *head over now*; on a table, *after
-  the match one of you enters the result*; on a break, *tap I'm back*.
-- **How tonight works:** five lines, shown once per evening when someone
-  first opens the page, and any time from the link at the bottom.
+  the match one of you enters the result* (or, where the desk scores,
+  *report the result to the ref or the desk right away*); on a break, *tap
+  I'm back*.
+- **How tonight works:** a few lines, only the ones that apply to the cups
+  you're in, shown when someone first opens the page, and any time from the
+  `?` at the top right or the link at the bottom. Each line is a bold
+  headline with a smaller detail under it, grouped into getting a match,
+  after the match, and if something comes up. It comes back by itself once if a new line turns up
+  during the evening (say, you join a cup where players enter results).
 - **The wall** shows a dark strip along the bottom whenever a cup on it lets
   players check in or enter results: scan the code, tap Break when you step
   away (where players check themselves in), enter your result after the

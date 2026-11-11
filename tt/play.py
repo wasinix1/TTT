@@ -129,7 +129,10 @@ def rules_for(store, person_id):
                         and store.cup_rule(store.cup_of_format(f), "player_scores")
                         and store.cup_rule(store.cup_of_format(f), "void_after_min")
                         for f in fmts),
-            "queue": any(f is not None and f.uses_queue() for f in fmts)}
+            "queue": any(f is not None and f.uses_queue() for f in fmts),
+            "open_play": any(f is not None and f.kind == "open_play" for f in fmts),
+            # in anything tonight at all, so the phone has something to explain
+            "entered": bool(ents)}
 
 
 def side_in(store, m, person_id):
