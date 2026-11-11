@@ -2085,7 +2085,9 @@ def test_routing():
     app.act("admin", "set_phase", {"phase": "live"})
     check("/static/mobile.js" in get("/")[1], "once live the plain URL is the phone page")
     check("/static/app.js" in get("/?console")[1], "and ?console still opens the console")
-    check("/static/app.js" in get("/?sim=1")[1], "so does the sandbox")
+    check("/static/mobile.js" in get("/?sim=1")[1], "the sandbox has a phone page too")
+    check("/static/app.js" in get("/?sim=1&console")[1], "and its console behind ?console")
+    check("/static/app.js" in get("/?past=x")[1], "a past event is the console")
     check("/static/mobile.js" in get("/tg")[1], "the Mini App is the same page")
     st = json.loads(get("/api/state")[1])
     check(all("ahead" in r for b in st["board"] for r in b["up"]),
@@ -3900,6 +3902,63 @@ def test_the_sandbox_is_reachable_only_by_asking_for_it():
     shutil.rmtree(d)
 
 
+def test_the_sandbox_has_a_phone():
+    """The phone page works on the sandbox: pick a name, get a key without
+    a poster to scan, enter a score — all in the sim, none of it live."""
+    print("\n[sandbox phone]")
+    app, d = fresh()
+    sim_event(app)
+    cup = app.store.cup_order[0]
+    app.act("admin", "update_cup", {"id": cup, "player_scores": True})
+    Handler.app = app
+    srv = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    port = srv.server_address[1]
+
+    def call(method, path, body=None, h=None):
+        c = http.client.HTTPConnection("127.0.0.1", port)
+        h = dict(h or {})
+        if body is not None:
+            h["Content-Type"] = "application/json"
+        c.request(method, path, json.dumps(body) if body is not None else None, h)
+        r = c.getresponse()
+        raw = r.read()
+        try:
+            return r.status, json.loads(raw)
+        except Exception:
+            return r.status, raw.decode()
+
+    check(call("GET", "/api/player?sim=1")[0] == 404,
+          "no sandbox, no sandbox phone — never the real event instead")
+    check("/static/mobile.js" in call("GET", "/?sim=1")[1],
+          "the page itself still loads, to say so")
+    app.act("admin", "sim_start", {"per_cup": 8, "rounds": 1})
+    sb = app.sim.app
+    check(sb.store.cup_rule(sb.store.cup_order[0], "player_scores"),
+          "the sim copies what players may do in each cup")
+    seq = app.store.seq
+    view = call("GET", "/api/player?sim=1")[1]
+    check(view["venue"] and view["self_run"],
+          "a sandbox phone acts without the poster's code")
+    m = next(sb.store.matches[t.match_id] for t in sb.store.tables.values() if t.match_id)
+    p = sb.store.players[m.side_a[0]]
+    st, out = call("POST", "/api/player?sim=1",
+                   {"op": "claim_name", "data": {"player_id": p.id}})
+    check(st == 200 and out.get("key"), "picking a name in the sim gives a key")
+    key = out["key"]
+    check(call("POST", "/api/player", {"op": "claim_name", "data": {"player_id": p.id}})[0] == 403,
+          "the same pick without the flag is the real event's, which wants the code")
+    st, out = call("POST", "/api/player?sim=1",
+                   {"op": "score", "data": {"games": [[11, 3]] * m.scoring.games_to_win()}},
+                   {"X-Player": key})
+    check(st == 200 and out["claim"]["status"] in ("sent", "agreed"),
+          f"and the score goes in from the phone ({out.get('claim', out)})")
+    check(app.store.seq == seq, "the live log never moved")
+    srv.shutdown()
+    app.sim.close()
+    shutil.rmtree(d)
+
+
 def test_nobody_in_a_sandbox_shares_a_name():
     """Two people with the same name is refused at the door, for a good
     reason — it is how the wrong strength ends up on the wrong person — so a
@@ -4114,6 +4173,7 @@ if __name__ == "__main__":
     test_the_sandbox_looks_like_time_passed()
     test_every_format_stops_where_it_was_told()
     test_the_sandbox_is_reachable_only_by_asking_for_it()
+    test_the_sandbox_has_a_phone()
     test_nobody_in_a_sandbox_shares_a_name()
     test_a_sandbox_needs_something_to_copy()
     import sim_telegram           # the Telegram layer, against a fake Bot API

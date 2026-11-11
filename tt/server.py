@@ -2753,12 +2753,19 @@ class Handler(BaseHTTPRequestHandler):
         # console once they have.
         if path.startswith(("/a/", "/r/")):
             return self._static("index.html")
+        flags = parse_qs(u.query, keep_blank_values=True)
+        if "past" in q or "console" in flags:
+            # the archive keeps the console, which knows how to ask for it;
+            # `console` is the way to the console's public view on purpose
+            return self._static("index.html")
+        if q.get("sim", [""])[0] == "1":
+            # the sandbox as a phone sees it: the same mobile page, asking
+            # for the sim on every request (tt/static/mobile.js). Always the
+            # page, even with no sim running — it says so itself
+            return self._static("live.html")
         if self.app.store.shows_console():
             # the bare root on a phone in the hall: the mobile page (see
-            # docs/mobile-redesign.md). The sandbox and the archive keep the
-            # console, which knows how to ask for them.
-            if "sim" in q or "past" in q or "console" in parse_qs(u.query, keep_blank_values=True):
-                return self._static("index.html")
+            # docs/mobile-redesign.md)
             return self._static("live.html")
         return self._site_page()
 
@@ -2824,8 +2831,16 @@ class Handler(BaseHTTPRequestHandler):
 
     def _player(self, q, post=False):
         """The phone page's own door, for whoever this phone says it is.
-        Always the live event, like /api/me."""
+        The live event, or the sandbox when the page asks for it with
+        `sim=1` — never an archive. In the sandbox there is no poster to
+        scan, so every phone holds the sim's code: picking a name, checking
+        in, breaks and scores all work as they would in the hall."""
         app = type(self).app
+        sim = q.get("sim", [""])[0] == "1"
+        if sim:
+            if not app.sim:
+                return self._send(404, {"error": "not available — no such sim or past event"})
+            app = app.sim.app
         body = {}
         if post:
             n = int(self.headers.get("Content-Length", 0))
@@ -2844,6 +2859,9 @@ class Handler(BaseHTTPRequestHandler):
             proto = self.headers.get("X-Forwarded-Proto") or ""
             origin = f"{proto}://{host}" if proto and host else ""
             code = body.get("code") or q.get("v", [""])[0]
+            if sim:
+                with app.store.lock:
+                    code = app.checkin_code()
             out = phone(app, key, body.get("op") or "", body.get("data") or {}, post, origin,
                         str(code or "")[:20])
         except PermissionError as e:

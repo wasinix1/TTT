@@ -3053,6 +3053,9 @@ function tabMore() {
    the same evening somewhere else and plays it for you. */
 
 const simUrl = () => location.pathname + '?sim=1';
+// the sandbox as a player's phone sees it (tt/static/mobile.js): the bare
+// root, no key — pick a name, check in, take a break, enter a score
+const simPhoneUrl = () => location.origin + '/?sim=1';
 
 function simBlock() {
   const sim = S.sim || {};
@@ -3075,9 +3078,18 @@ function simBlock() {
         form.sim_busy ? 'Building…' : sim.running ? 'Build a new one' : 'Run a sim'}</button>
       ${sim.running ? `<button class="ghost" data-act="sim-open">Open the tab</button>
         <button class="ghost" data-act="sim-board">Wall display</button>
+        <button class="ghost" data-act="sim-phone">Phone view</button>
+        <button class="ghost" data-act="sim-qr">${form.sim_qr ? 'Hide the code' : 'On a phone'}</button>
         <button class="ghost" data-act="sim-stop">Stop it</button>` : ''}
     </div>
-    ${built}`}
+    ${built}
+    ${sim.running && form.sim_qr ? `
+      <div class="qr"><img src="/api/qr.svg?u=${encodeURIComponent(simPhoneUrl())}" alt="QR code"
+        onerror="this.parentNode.hidden=true"></div>
+      <p class="sub">Scan it with a phone to see the sim the way a player does. Pick any name
+        to be that player; breaks, scores and checking in work wherever the cup lets players
+        do them. Telegram and pushes stay off.</p>
+      <div class="key">${esc(simPhoneUrl())}</div>` : ''}`}
     ${why('A pair cup counts pairs, so 18 there is 36 people. Rounds is how far in to ' +
       'stop: three leaves a group stage part-played and a bracket at the semis, with ' +
       'matches still live on the tables, which is where the screens are worth looking at.',
@@ -3802,6 +3814,8 @@ document.addEventListener('click', async e => {
   }
   if (a === 'sim-open') { window.open(simUrl(), 'tt-sim'); return; }
   if (a === 'sim-board') { window.open('/board?sim=1', 'tt-sim-board'); return; }
+  if (a === 'sim-phone') { window.open('/?sim=1', 'tt-sim-phone', 'popup,width=400,height=820'); return; }
+  if (a === 'sim-qr') { form.sim_qr = !form.sim_qr; renderSheet(); return; }
   if (a === 'tg-connect') {
     if (!(form.tg_token || '').trim()) return toast('Paste the token from @BotFather first');
     form.tg_busy = true; renderSheet();
