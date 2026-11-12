@@ -2607,7 +2607,8 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self, *a):
         pass
 
-    def _send(self, code, body, ctype="application/json; charset=utf-8", etag=None):
+    def _send(self, code, body, ctype="application/json; charset=utf-8", etag=None,
+              cache="no-store"):
         if isinstance(body, (dict, list)):
             body = json.dumps(body).encode()
         elif isinstance(body, str):
@@ -2615,7 +2616,9 @@ class Handler(BaseHTTPRequestHandler):
         self.send_response(code)
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(body)))
-        self.send_header("Cache-Control", "no-store")
+        # with an ETag the browser may keep a copy, but must ask before using
+        # it: a 304 is a few bytes where the full answer was the whole page
+        self.send_header("Cache-Control", "no-cache" if etag and cache == "no-store" else cache)
         if etag:
             self.send_header("ETag", etag)
         self.end_headers()
@@ -3018,10 +3021,26 @@ class Handler(BaseHTTPRequestHandler):
         if not p.startswith(STATIC) or not os.path.isfile(p):
             return self._send(404, "not found", "text/plain")
         ctype = mimetypes.guess_type(p)[0] or "application/octet-stream"
+        # Kept by the browser and checked on each load (no-cache + ETag), so a
+        # phone opening the page again gets 304s instead of the fonts, the
+        # script and the textures all over again — and still never runs an
+        # old copy after an update. Fonts and images do not change in place.
+        st = os.stat(p)
+        tag = f'W/"{st.st_mtime_ns:x}-{st.st_size:x}"'
+        fixed = rel.startswith("fonts/") or ctype.startswith("image/")
+        cache = "public, max-age=86400" if fixed else "no-cache"
+        if self.headers.get("If-None-Match") == tag:
+            self.send_response(304)
+            self.send_header("ETag", tag)
+            self.send_header("Cache-Control", cache)
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return
         with open(p, "rb") as fh:
             data = fh.read()
         self._send(200, data, ctype + ("; charset=utf-8" if "text" in ctype
-                                       or "javascript" in ctype else ""))
+                                       or "javascript" in ctype else ""),
+                   etag=tag, cache=cache)
 
 
 mimetypes.add_type("font/woff2", ".woff2")       # self-hosted fonts (tt/static/fonts)
