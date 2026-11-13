@@ -2396,6 +2396,41 @@ class App:
         return self._take_registration(cup, p, tg_id=p["tg_id"],
                                        person_id=person.id if person else None)
 
+    def op_tg_join(self, p):
+        """Already checked in somewhere tonight, joining another cup that
+        takes itself in all night (self_checkin) — the same immediate
+        admission a venue walk-in gets, but for an account the door or a
+        confirmed entry has already linked to a person, so there is nobody
+        to ask who they are. Refused everywhere self-checkin itself would
+        refuse (`_checkin_closed`), so this opens nothing new."""
+        s = self.store
+        person = s.person_by_tg(p.get("tg_id"))
+        if not person:
+            raise ValueError("Wir kennen dich hier noch nicht — melde dich zuerst an.")
+        cup = s.cups.get(p.get("cup_id") or "")
+        if not cup:
+            raise ValueError("Das gibt es nicht mehr.")
+        why = self._checkin_closed(cup)
+        if why:
+            raise ValueError(why)
+        if self._in_cup("N:" + person.id, cup):
+            return {"already": True, "cup": cup.name}
+        kind = {"p": "pair", "k": "seeking"}.get(p.get("kind"), "single")
+        partner = " ".join(str(p.get("partner_name") or "").split())[:60]
+        reg = self._take_registration(cup, {"name": person.name, "kind": kind,
+                                            "partner_name": partner},
+                                      tg_id=p.get("tg_id"), person_id=person.id)
+        if reg.get("possible_duplicate"):
+            raise ValueError("Dieses Team steht schon auf der Liste.")
+        rid = reg["registration_id"]
+        r = s.registrations[rid]
+        mate = s.registrations.get(r.matched_with or "")
+        if r.kind == "seeking" and not (mate and mate.status == "pending"):
+            return {"waiting": True, "name": r.name, "cup": cup.name}
+        out = self.op_admit({"registration_id": rid})
+        return {"name": person.name, "cup": out["cup"],
+                "drawn": out["where"] == "entered", "entrant_id": out["entrant_id"]}
+
     def op_tg_attach(self, p):
         """The web form's private link, opened in Telegram. Before the door
         it marks the entry; after, the entry was already witnessed, so the
@@ -2571,7 +2606,7 @@ OP_LEVEL = {
     "merge_players": 2, "split_player": 2,
     "admit": 2, "add_registration": 2, "remove_entrant": 2, "remove_entrants": 2, "update_person": 2, "remove_person": 2, "add_from_directory": 2,
     "tg_connect": 2, "tg_disconnect": 2, "tg_send": 2, "tg_door_link": 2, "tg_read": 2,
-    "tg_register": 3, "tg_attach": 3, "tg_link": 3, "tg_detach": 3, "tg_rsvp": 3,
+    "tg_register": 3, "tg_join": 3, "tg_attach": 3, "tg_link": 3, "tg_detach": 3, "tg_rsvp": 3,
     "score_claim": 3, "score_answer": 3, "score_withdraw": 3, "no_show": 3, "checkin": 3,
     "score_fix": 3, "claim_dismiss": 1,
 }

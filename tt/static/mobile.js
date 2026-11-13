@@ -115,6 +115,7 @@ const STR = {
     seekNote: 'We’ll draw you someone who comes alone too.', imIn: 'I’m in', yourName: 'Your name', namePh: 'First and last name',
     nameNote: 'As we’ll find you at the door.', regClosed: 'Sign-up isn’t open yet — we’ll tell you.', needName: 'We need your name.',
     single: 'Singles', pair: 'Doubles', drawn: n => `with ${n} — drawn`, lookingFor: 'looking for a partner', comes: 'coming',
+    alsoPlay: 'Also play', alsoIn: 'Also join',
     // pad
     result: 'Result', game: n => 'Game ' + n, you: 'You', youWin: (a, b) => `You win ${a}:${b}`, youLose: (a, b) => `You lose ${a}:${b}`,
     padNote: o => `${o} confirms — then it counts.`,
@@ -227,6 +228,7 @@ const STR = {
     seekNote: 'Wir losen dir jemanden zu, der auch alleine kommt.', imIn: 'Ich bin dabei', yourName: 'Dein Name', namePh: 'Vor- und Nachname',
     nameNote: 'So, wie wir dich am Eingang finden.', regClosed: 'Die Anmeldung ist noch nicht offen — wir sagen dir Bescheid.', needName: 'Wir brauchen deinen Namen.',
     single: 'Einzel', pair: 'Doppel', drawn: n => `mit ${n} — zugelost`, lookingFor: 'Partner:in gesucht', comes: 'kommt',
+    alsoPlay: 'Auch dabei', alsoIn: 'Auch mitspielen',
     result: 'Ergebnis', game: n => 'Satz ' + n, you: 'Du', youWin: (a, b) => `Du gewinnst ${a}:${b}`, youLose: (a, b) => `Du verlierst ${a}:${b}`,
     padNote: o => `${o} bestätigt — dann ist es eingetragen.`,
     simTag: 'Sandbox', simGoneH: 'Keine Simulation', simGoneP: 'Diese Simulation wurde beendet oder nie gestartet. Starte eine in der Konsole unter Setup → More.',
@@ -1415,15 +1417,23 @@ function settings() {
 /* Before the night: what they are in, and what they could be in. */
 const soonTs = () => V.event.starts_ts && V.event.starts_ts - (Date.now() / 1000 + skew) < 26 * 3600;
 function signup() {
-  if (SHELL !== 'tg' || !V || !(V.phase === 'announced' || V.phase === 'registration')) return '';
-  const mine = V.entries || [], open = V.open || [];
-  if (!mine.length && !open.length) return head(L.signup) + `<div class="card2"><p class="note">${esc(L.regClosed)}</p></div>`;
-  const name = ui.name ?? V.me.name ?? '';
-  const needName = !V.me.known && open.length && !mine.length;
-  return head(L.signup) + `<div class="cards">${mine.map(entered).join('')}${needName ? `<div class="card2">
-      <label class="micro" for="nm">${esc(L.yourName)}</label>
-      <input class="in1" id="nm" data-ui="name" value="${esc(name)}" autocomplete="name" autocapitalize="words" placeholder="${esc(L.namePh)}">
-      <p class="note">${esc(L.nameNote)}</p></div>` : ''}${open.map(openCup).join('')}</div>`;
+  if (SHELL !== 'tg' || !V) return '';
+  if (V.phase === 'announced' || V.phase === 'registration') {
+    const mine = V.entries || [], open = V.open || [];
+    if (!mine.length && !open.length) return head(L.signup) + `<div class="card2"><p class="note">${esc(L.regClosed)}</p></div>`;
+    const name = ui.name ?? V.me.name ?? '';
+    const needName = !V.me.known && open.length && !mine.length;
+    return head(L.signup) + `<div class="cards">${mine.map(entered).join('')}${needName ? `<div class="card2">
+        <label class="micro" for="nm">${esc(L.yourName)}</label>
+        <input class="in1" id="nm" data-ui="name" value="${esc(name)}" autocomplete="name" autocapitalize="words" placeholder="${esc(L.namePh)}">
+        <p class="note">${esc(L.nameNote)}</p></div>` : ''}${open.map(openCup).join('')}</div>`;
+  }
+  // on the night, already checked into something: the other cups still
+  // taking themselves in (open play and the like) — join with one tap
+  if ((V.phase === 'doors' || V.phase === 'live') && (V.open || []).length) {
+    return head(L.alsoPlay) + `<div class="cards">${V.open.map(openCup).join('')}</div>`;
+  }
+  return '';
 }
 function entered(e) {
   const detail = e.kind === 'pair' ? L.pairWith(e.partner) : e.kind === 'seeking' ? (e.partner ? L.drawn(e.partner) : L.lookingFor) : '';
@@ -1449,7 +1459,7 @@ function openCup(c) {
       <button class="${kind === 'k' ? 'on' : ''}" data-act="kind" data-cup="${esc(c.id)}" data-k="k">${esc(L.seeking)}</button></div>` : ''}
     ${pair && kind === 'p' ? `<input class="in1" id="pt-${esc(c.id)}" data-ui="partner" data-cup="${esc(c.id)}" value="${esc(ui.partner[c.id] || '')}" placeholder="${esc(L.partnerPh)}" autocapitalize="words">` : ''}
     ${pair && kind === 'k' ? `<p class="note">${esc(L.seekNote)}</p>` : ''}
-    <div class="acts flush"><button class="btn red wide" data-act="enter" data-cup="${esc(c.id)}">${esc(L.imIn)}</button></div></div>`;
+    <div class="acts flush"><button class="btn red wide" data-act="${c.live ? 'join' : 'enter'}" data-cup="${esc(c.id)}">${esc(c.live ? L.alsoIn : L.imIn)}</button></div></div>`;
 }
 
 /* ------------------------------------------------------------ the score pad */
@@ -1861,6 +1871,11 @@ document.addEventListener('click', async e => {
     const name = (ui.name ?? V.me.name ?? '').trim();
     if (!V.me.known && !name) { toast(L.needName, true); const n = $('nm'); if (n) n.focus(); return; }
     return void act('enter', { cup_id: d.cup, kind, name, partner: ui.partner[d.cup] || '' });
+  }
+  if (a === 'join') {
+    const c = (V.open || []).find(x => x.id === d.cup);
+    const kind = ui.kind[d.cup] || (c && c.entry === 'pair' ? 'p' : 's');
+    return void act('join', { cup_id: d.cup, kind, partner: ui.partner[d.cup] || '' });
   }
   if (a === 'drop') { if (!(await ask(L.dropQ(d.cup)))) return; return void act('drop', { id: d.id }); }
   if (a === 'rsvp') return void act('rsvp', { id: d.id, yes: !!d.yes });

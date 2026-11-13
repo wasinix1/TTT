@@ -929,6 +929,54 @@ def test_the_menu_button_opens_the_app():
     shutil.rmtree(d2)
 
 
+def test_joining_another_cup_on_the_night():
+    print("\n[the Mini App: also joining a second cup once the night is on]")
+    from tt import me
+    app, fake, d = fresh()
+    s = app.store
+    cup = event(app, tables=1, phase="doors")
+    ana, = linked_players(app, fake, cup, ["Ana Berg"])
+    who = s.person_by_tg(ana["id"])
+
+    open_play = app.act("admin", "add_cup", {"name": "Offenes Spiel"})["cup_id"]
+    app.act("admin", "update_cup", {"id": open_play, "registration": "open",
+                                    "self_checkin": True})
+    fid = app.act("admin", "add_format", {"kind": "open_play", "name": "O",
+                                          "config": {"cup_id": open_play,
+                                                     "scoring": {"best_of": 1, "points_to": 11}}})["format_id"]
+    app.act("admin", "update_cup", {"id": open_play, "format_id": fid})
+    app.act("admin", "start_format", {"id": fid})
+
+    v = me.view(app.telegram, ana["id"])
+    check(any(c["id"] == open_play and c.get("live") for c in v["open"]),
+          "already checked into one cup, the one that takes itself in all night shows up to join too")
+
+    out = me.act(app.telegram, ana, "join", {"cup_id": open_play, "kind": "s"})
+    check("✓" in out["toast"], "one tap and she is in")
+    cups_now = {e.cup_id for e in s.entries_of(who.id)}
+    check(cups_now == {cup, open_play}, "and now has an entry in both cups, as the same person")
+    check(not any(c["id"] == open_play for c in out["view"]["open"]),
+          "and the card no longer offers it")
+
+    again = me.act(app.telegram, ana, "join", {"cup_id": open_play, "kind": "s"})
+    check(again["toast"] == "Du bist schon dabei", "joining it twice just says so")
+
+    # a doubles cup not yet drawn can be joined too, and — since the app
+    # already knows exactly who is tapping — there is no name to clash on
+    doubles = app.act("admin", "add_cup", {"name": "Mixed Doppel"})["cup_id"]
+    app.act("admin", "update_cup", {"id": doubles, "entry": "pair",
+                                    "registration": "open", "self_checkin": True})
+    v2 = me.view(app.telegram, ana["id"])
+    check(any(c["id"] == doubles and c["entry"] == "pair" for c in v2["open"]),
+          "an un-drawn doubles cup offers itself too")
+    out2 = me.act(app.telegram, ana, "join", {"cup_id": doubles, "kind": "k"})
+    reg = next(r for r in s.registrations.values() if r.cup_id == doubles)
+    check(reg.kind == "seeking" and reg.person_id == who.id,
+          "entered as herself looking for a partner — her identity, not a typed name")
+    check("gesucht" in out2["toast"], "and the app says so")
+    shutil.rmtree(d)
+
+
 def test_the_desk_with_telegram():
     print("\n[the registration desk, with Telegram on]")
     app, fake, d = fresh()
@@ -1237,6 +1285,7 @@ def run():
     test_the_mini_app_knows_who_is_asking()
     test_the_mini_app_door()
     test_the_mini_app_on_the_night()
+    test_joining_another_cup_on_the_night()
     test_the_menu_button_opens_the_app()
     test_a_crowd_is_answered_side_by_side()
     test_a_table_call_does_not_wait_behind_cards()

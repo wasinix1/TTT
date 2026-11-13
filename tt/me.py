@@ -132,6 +132,18 @@ def view(bot, uid):
                 out["open"].append({"id": cid, "name": cup.name, "entry": cup.entry,
                                     "about": KIND_DE.get(f.kind, "") if f else "",
                                     "blurb": cup.blurb})
+        elif phase in ("doors", "live") and me.person:
+            # on the night, already checked into one cup: the others that
+            # still take themselves in (open play and the like) — one tap,
+            # no door to wait for (app.op_tg_join)
+            mine = {e.cup_id for e in me.ents}
+            for cup in app.checkin_cups():
+                if cup.id in mine or app._checkin_closed(cup):
+                    continue
+                f = s.formats.get(cup.format_id or "")
+                out["open"].append({"id": cup.id, "name": cup.name, "entry": cup.entry,
+                                    "about": KIND_DE.get(f.kind, "") if f else "",
+                                    "blurb": cup.blurb, "live": True})
 
         # tonight: where each of their entrants is, most urgent first
         multi = len(s.cups) > 1 or len(me.ents) > 1
@@ -255,6 +267,14 @@ def act(bot, user, op, d):
         toast = ("Du bist schon dabei" if out.get("already")
                  else f"Mit {out['matched_with']} zugelost ✓" if out.get("matched_with")
                  else "Angemeldet ✓")
+    elif op == "join":
+        # already in one cup tonight, joining another that takes itself in
+        # all night — straight in, not a sign-up waiting on the door
+        out = c.join_cup(uid, d.get("cup_id") or "", d.get("kind") or "s",
+                         " ".join(str(d.get("partner") or "").split())[:60])
+        toast = ("Du bist schon dabei" if out.get("already")
+                 else "Partner:in gesucht — wir sagen Bescheid" if out.get("waiting")
+                 else f"Dabei in {out['cup']} ✓")
     elif op == "drop":
         reg = c._my_reg(uid, d.get("id") or "")
         bot.system("update_registration", {"id": reg.id, "status": "cancelled"})
