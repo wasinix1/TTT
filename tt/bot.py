@@ -1021,6 +1021,21 @@ class Conversation:
                 "kind": {"p": "pair", "k": "seeking"}.get(kind, "single"),
                 "partner_name": partner or ""})
 
+    def join_cup(self, uid, cup_id, kind, partner=""):
+        """Already in one cup tonight, joining another that takes itself in
+        all night (open play and the like) — straight in, no door to wait
+        for. `kind` is the same s/p/k as register()."""
+        with self.store.lock:
+            me = self.who(uid)
+        if not me.person:
+            raise ValueError("Wir kennen dich hier noch nicht.")
+        if kind == "p" and not (partner or "").strip():
+            raise ValueError("Wie heißt deine Partnerin oder dein Partner?")
+        return self.bot.system("tg_join", {
+            "cup_id": cup_id, "tg_id": uid,
+            "kind": {"p": "pair", "k": "seeking"}.get(kind, "single"),
+            "partner_name": partner or ""})
+
     def _register(self, uid, cup_id, kind, name, partner, mid):
         out = self.register(uid, cup_id, kind, name, partner)
         extra = (f"\nDu spielst mit <b>{esc(out['matched_with'])}</b>."
