@@ -744,6 +744,18 @@ function geom(H, W) {
     b: H.kind === 'result' ? 30 : [9, 18, 27, 35, 42][a], lines: H.quiet ? .35 : .5 };
 }
 
+/* Write a block only when what it shows has changed. Every push from the
+   room (any score at any table) redraws the page; rebuilding blocks that came
+   out the same threw away their DOM, re-ran paint.js over every button and
+   made the phone lay out and paint it all again. Now an unchanged block is
+   left alone, and keeps its scroll, its open folds and its focus. */
+function put(el, html) {
+  if (!el || el._html === html) return false;
+  el.innerHTML = html;
+  el._html = html;
+  return true;
+}
+
 let lastKey = null, pulled = false;
 function paintHero(H, entering) {
   const hero = $('hero');
@@ -751,8 +763,10 @@ function paintHero(H, entering) {
   if (!H) { lastKey = null; return; }
   const W = hero.clientWidth || Math.min(innerWidth, 460);
   const g = geom(H, W), o = $('obj');
-  const set = gg => Object.entries({ '--x': gg.x + 'px', '--y': gg.y + 'px', '--w': gg.w + 'px', '--h': gg.h + 'px', '--b': gg.b + 'px', '--lines': gg.lines })
-    .forEach(([k, v]) => o.style.setProperty(k, v));
+  // the table is one 250px picture, placed and sized by transform (the GPU's
+  // job, no layout per frame); the blur is drawn before the scale, so divide
+  const set = gg => { const sc = gg.w / 250; Object.entries({ '--x': gg.x + 'px', '--y': gg.y + 'px', '--s': sc.toFixed(4), '--b': (gg.b / sc).toFixed(1) + 'px', '--lines': gg.lines })
+    .forEach(([k, v]) => { if (o.style.getPropertyValue(k) !== String(v)) o.style.setProperty(k, v); }); };
   if (entering && !reduced()) {
     // the focus pull: start far away and soft, then come in
     set({ ...g, b: 60, x: g.x + 30, y: g.y + 30, w: g.w * .8, h: g.h * .8, lines: 0 });
@@ -773,14 +787,14 @@ function paintHero(H, entering) {
   const lab = $('lab');
   lab.className = 'lab' + (g.sharp ? ' center' : '');
   lab.style.setProperty('--ly', (g.sharp ? g.y + g.h + 20 : 318) + 'px');
-  lab.innerHTML = `<span class="m">${esc(H.m)}</span>${H.facts.length
-    ? `<span class="f micro">${H.facts.map(esc).join('<i>·</i>')}</span>` : ''}`;
-  $('opp').innerHTML = `<span class="micro">${esc(H.oppL)}</span>${H.opp
-    ? `<b>${esc(H.opp)}</b>` : `<b class="soft">${esc(H.soft || '')}</b>`}`;
+  put(lab, `<span class="m">${esc(H.m)}</span>${H.facts.length
+    ? `<span class="f micro">${H.facts.map(esc).join('<i>·</i>')}</span>` : ''}`);
+  put($('opp'), `<span class="micro">${esc(H.oppL)}</span>${H.opp
+    ? `<b>${esc(H.opp)}</b>` : `<b class="soft">${esc(H.soft || '')}</b>`}`);
 
   const name = SHELL === 'tg' ? (V.me.name || V.me.first) : (myPlayer() || {}).name;
-  $('who').innerHTML = `<span>${esc(name || '')}${H.x && H.x.cup ? ' · ' + esc(H.x.cup) : ''}</span>${SHELL === 'web'
-    ? `<button type="button" data-act="not-me">${esc(L.notYou)}</button>` : ''}`;
+  put($('who'), `<span>${esc(name || '')}${H.x && H.x.cup ? ' · ' + esc(H.x.cup) : ''}</span>${SHELL === 'web'
+    ? `<button type="button" data-act="not-me">${esc(L.notYou)}</button>` : ''}`);
 
   if (changed && H.kind === 'table' && lastKey !== null) buzz('call');
   lastKey = H.key;
@@ -1690,17 +1704,17 @@ function bar() {
 function render(entering) {
   if (!S && !V) return;
   noticeResults();
-  $('bar').innerHTML = bar();
-  $('asks').innerHTML = claims();
+  put($('bar'), bar());
+  put($('asks'), claims());
   const H = known() ? heroData() : null;
   paintHero(H, entering);
-  $('under').innerHTML = also(H) + actions(H);
+  put($('under'), also(H) + actions(H));
   const pill = $('pill');
   pill.hidden = SHELL !== 'web' || known();
-  if (!pill.hidden) pill.innerHTML = `<b>${esc(L.pillQ)}</b><span>${esc(P && (P.checkin || []).length ? L.pillCi : L.pillA)}</span>`;
-  $('mine').innerHTML = guide() + signup() + evening();
+  if (!pill.hidden) put(pill, `<b>${esc(L.pillQ)}</b><span>${esc(P && (P.checkin || []).length ? L.pillCi : L.pillA)}</span>`);
+  put($('mine'), guide() + signup() + evening());
   renderRoom();
-  $('tail').innerHTML = howLink() + orga() + settings();
+  put($('tail'), howLink() + orga() + settings());
   if (ui.pad && !ui.pad.fix && !playingNow()) closePad();          // the referee got there first
   const dot = $('dot');
   if (dot) { dot.classList.add('on'); setTimeout(() => dot.classList.remove('on'), 500); }
@@ -1709,11 +1723,11 @@ function render(entering) {
 function renderRoom() {
   const room = $('room');
   const before = SHELL === 'tg' && V && (V.phase === 'announced' || V.phase === 'registration');
-  if (!S || before) { room.innerHTML = ''; return; }
+  if (!S || before) { put(room, ''); return; }
   const had = document.activeElement && document.activeElement.id === 'res-q';
   const caret = had ? document.activeElement.selectionStart : 0;
   const openFolds = new Set([...room.querySelectorAll('details.fold[open] summary b')].map(b => b.textContent));
-  room.innerHTML = strip() + tablesSection() + upNextSection() + standingsSection() + resultsSection();
+  if (!put(room, strip() + tablesSection() + upNextSection() + standingsSection() + resultsSection())) return;
   room.querySelectorAll('details.fold summary b').forEach(b => { if (openFolds.has(b.textContent)) b.closest('details').open = true; });
   // a bracket wider than the phone opens at the round being played
   room.querySelectorAll('.ko.wide').forEach(k => { k.scrollLeft = +k.dataset.at || 0; });
@@ -1725,12 +1739,12 @@ function simGone() {
   S = null;
   $('hero').hidden = true;
   $('pill').hidden = true;
-  $('room').innerHTML = `<div class="empty"><h1>${esc(L.simGoneH)}</h1><p>${esc(L.simGoneP)}</p></div>`;
+  put($('room'), `<div class="empty"><h1>${esc(L.simGoneH)}</h1><p>${esc(L.simGoneP)}</p></div>`);
 }
 
 function outside() {
   $('hero').hidden = true;
-  $('room').innerHTML = `<div class="empty"><h1>${esc(L.outsideH)}</h1><p>${esc(L.outsideP)}</p></div>`;
+  put($('room'), `<div class="empty"><h1>${esc(L.outsideH)}</h1><p>${esc(L.outsideP)}</p></div>`);
 }
 
 /* ------------------------------------------------------------ small things */
@@ -1763,7 +1777,11 @@ function toast(msg, bad) {
 
 /* ------------------------------------------------------------ events */
 
+// what is typed is not in the written copy any more: the next render rewrites that block
+const typed = e => { for (let n = e.target; n && n !== document; n = n.parentNode) if ('_html' in n) { n._html = null; return; } };
+document.addEventListener('change', typed, true);
 document.addEventListener('input', e => {
+  typed(e);
   const k = e.target.dataset.ui;
   if (e.target.id === 'res-q') { ui.q = e.target.value; return renderRoom(); }
   if (e.target.id === 'find') { $('names').innerHTML = pickerRows(e.target.value); ciLookup(e.target.value.trim().toLowerCase()); return; }
