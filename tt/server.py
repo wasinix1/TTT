@@ -2396,30 +2396,24 @@ class App:
         return self._take_registration(cup, p, tg_id=p["tg_id"],
                                        person_id=person.id if person else None)
 
-    def op_tg_join(self, p):
+    def _self_join(self, person, cup, kind, partner_name, tg_id=None):
         """Already checked in somewhere tonight, joining another cup that
         takes itself in all night (self_checkin) — the same immediate
-        admission a venue walk-in gets, but for an account the door or a
-        confirmed entry has already linked to a person, so there is nobody
-        to ask who they are. Refused everywhere self-checkin itself would
-        refuse (`_checkin_closed`), so this opens nothing new."""
+        admission a venue walk-in gets, but for somebody already identified
+        (a linked Telegram account, or a phone whose key the door's own
+        check-in already gave it), so there is nobody to ask who they are.
+        Shared by the bot (op_tg_join) and the web page (op_self_join).
+        Refused everywhere self-checkin itself would refuse
+        (`_checkin_closed`), so this opens nothing new."""
         s = self.store
-        person = s.person_by_tg(p.get("tg_id"))
-        if not person:
-            raise ValueError("Wir kennen dich hier noch nicht — melde dich zuerst an.")
-        cup = s.cups.get(p.get("cup_id") or "")
-        if not cup:
-            raise ValueError("Das gibt es nicht mehr.")
         why = self._checkin_closed(cup)
         if why:
             raise ValueError(why)
         if self._in_cup("N:" + person.id, cup):
             return {"already": True, "cup": cup.name}
-        kind = {"p": "pair", "k": "seeking"}.get(p.get("kind"), "single")
-        partner = " ".join(str(p.get("partner_name") or "").split())[:60]
         reg = self._take_registration(cup, {"name": person.name, "kind": kind,
-                                            "partner_name": partner},
-                                      tg_id=p.get("tg_id"), person_id=person.id)
+                                            "partner_name": partner_name},
+                                      tg_id=tg_id, person_id=person.id)
         if reg.get("possible_duplicate"):
             raise ValueError("Dieses Team steht schon auf der Liste.")
         rid = reg["registration_id"]
@@ -2430,6 +2424,33 @@ class App:
         out = self.op_admit({"registration_id": rid})
         return {"name": person.name, "cup": out["cup"],
                 "drawn": out["where"] == "entered", "entrant_id": out["entrant_id"]}
+
+    def op_tg_join(self, p):
+        """The bot's side of `_self_join`: the account is identified by its
+        Telegram id."""
+        person = self.store.person_by_tg(p.get("tg_id"))
+        if not person:
+            raise ValueError("Wir kennen dich hier noch nicht — melde dich zuerst an.")
+        cup = self.store.cups.get(p.get("cup_id") or "")
+        if not cup:
+            raise ValueError("Das gibt es nicht mehr.")
+        kind = {"p": "pair", "k": "seeking"}.get(p.get("kind"), "single")
+        partner = " ".join(str(p.get("partner_name") or "").split())[:60]
+        return self._self_join(person, cup, kind, partner, tg_id=p.get("tg_id"))
+
+    def op_self_join(self, p):
+        """The web page's side of `_self_join`: the phone already holds a
+        key from checking in once tonight (tt/server.py `phone`), which is
+        how it knows its own `person_id` — nothing it could have typed."""
+        person = self.store.people.get(p.get("person_id") or "")
+        if not person:
+            raise ValueError("Wir kennen dich hier noch nicht.")
+        cup = self.store.cups.get(p.get("cup_id") or "")
+        if not cup:
+            raise ValueError("Das gibt es nicht mehr.")
+        kind = p.get("kind") if p.get("kind") in ("pair", "seeking") else "single"
+        partner = " ".join(str(p.get("partner_name") or "").split())[:60]
+        return self._self_join(person, cup, kind, partner)
 
     def op_tg_attach(self, p):
         """The web form's private link, opened in Telegram. Before the door
@@ -2606,7 +2627,7 @@ OP_LEVEL = {
     "merge_players": 2, "split_player": 2,
     "admit": 2, "add_registration": 2, "remove_entrant": 2, "remove_entrants": 2, "update_person": 2, "remove_person": 2, "add_from_directory": 2,
     "tg_connect": 2, "tg_disconnect": 2, "tg_send": 2, "tg_door_link": 2, "tg_read": 2,
-    "tg_register": 3, "tg_join": 3, "tg_attach": 3, "tg_link": 3, "tg_detach": 3, "tg_rsvp": 3,
+    "tg_register": 3, "tg_join": 3, "self_join": 3, "tg_attach": 3, "tg_link": 3, "tg_detach": 3, "tg_rsvp": 3,
     "score_claim": 3, "score_answer": 3, "score_withdraw": 3, "no_show": 3, "checkin": 3,
     "score_fix": 3, "claim_dismiss": 1,
 }
@@ -3109,6 +3130,14 @@ def phone_view(app, pid, code=""):
         out["confirm"], out["reported"] = play.pending(app, pid)
         out["fixable"] = play.fix_view(app, pid)
         out["rules"] = play.rules_for(s, pid)
+        # already checked into something tonight: the other self-checkin
+        # cups still open that this person has not joined yet — "also join"
+        if venue:
+            mine = {e.cup_id for e in play.entrants_of(s, pid)}
+            out["joinable"] = [{"id": c.id, "name": c.name, "entry": c.entry,
+                                "full": not s.cup_has_room(c)}
+                               for c in app.checkin_cups()
+                               if c.id not in mine and not app._checkin_closed(c)]
     return out
 
 
@@ -3178,6 +3207,15 @@ def phone(app, key, op, d, post, origin="", code=""):
         else:
             app.act("system", "withdraw", {"entrant_id": d["eid"], "withdrawn": bool(d.get("on"))}, actor="phone")
         toast = op + ("_on" if d.get("on") else "_off")
+    elif op == "join":
+        # this phone already holds a key (it checked in once tonight), so
+        # its person_id is not something it typed — straight into another
+        # self-checkin cup, the web page's op_tg_join (tt/server.py _self_join)
+        r = app.act("system", "self_join", {"person_id": pid, "cup_id": d.get("cup_id") or "",
+                                            "kind": d.get("kind") or "single",
+                                            "partner_name": d.get("partner_name") or ""}, actor="phone")
+        out["join"] = {k: r.get(k) for k in ("name", "cup", "drawn", "already", "waiting", "entrant_id")}
+        toast = "waiting" if r.get("waiting") else "in" if r.get("entrant_id") and not r.get("already") else ""
     elif op == "score":
         r = app.act("system", "score_claim", {"person_id": pid, "via": "phone",
                                                "games": d.get("games") or []}, actor="phone")

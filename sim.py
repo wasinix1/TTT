@@ -971,6 +971,40 @@ def test_self_checkin():
         shutil.rmtree(x)
 
 
+def test_joining_a_second_cup_from_the_web_page():
+    print("\n[the web page: also joining a second cup once checked in]")
+    from tt.server import phone, phone_view
+    app, d = fresh()
+    s = app.store
+    ph = lambda a, op, data, code="": phone(a, data.pop("key", None), op, data, True, "", code)
+
+    app.act("admin", "create_event", {
+        "name": "Two cups", "starts_at": "2099-10-04T19:00",
+        "cups": [{"name": "Einzelcup", "kind": "swiss", "registration": "open", "config": {"rounds": 3}},
+                 {"name": "Open play", "kind": "open_play", "registration": "open",
+                  "self_checkin": True}],
+        "tables": [{"name": "T1", "cup": -1}]})
+    first, open_play = s.cup_order
+    app.act("admin", "set_phase", {"phase": "doors"})
+    out = app.act("admin", "admit", {"cup_id": first, "name": "Jana Berger"})
+    pid = s.players[s.entrants[out["entrant_id"]].player_ids[0]].person_id
+    key = app.player_key(pid)
+    code = app.checkin_code()
+
+    check([c["id"] for c in phone_view(app, pid, code)["joinable"]] == [open_play],
+          "already checked into one cup, the other that takes itself in all night offers itself to join")
+
+    out = ph(app, "join", {"key": key, "cup_id": open_play, "kind": "single"}, code)
+    check(out["join"]["entrant_id"] and out["toast"] == "in", "one tap and she is in")
+    cups_now = {e.cup_id for e in s.entries_of(pid)}
+    check(cups_now == {first, open_play}, "and now has an entry in both cups, as the same person")
+    check(not phone_view(app, pid, code)["joinable"], "and the page no longer offers it")
+
+    again = ph(app, "join", {"key": key, "cup_id": open_play, "kind": "single"}, code)
+    check(again["join"]["already"], "joining it twice just says so")
+    shutil.rmtree(d)
+
+
 def test_the_form_asks_before_a_team_registers_twice():
     print("\n[public form: a team sent twice]")
     app, d = fresh()
@@ -4113,6 +4147,7 @@ if __name__ == "__main__":
     test_the_door_pairs()
     test_the_door_key()
     test_self_checkin()
+    test_joining_a_second_cup_from_the_web_page()
     test_the_desk_payload()
     test_the_desk_actions_and_their_undo()
     test_duplicates_are_grouped_never_lost()
