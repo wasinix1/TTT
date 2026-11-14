@@ -169,7 +169,8 @@ const STR = {
          fix_same: 'That’s what was entered', fix_sent: 'Sent — the other side confirms', fix_agreed: 'Corrected ✓',
          fix_disputed: 'That doesn’t match theirs — tell the organisers', rest_on: 'On a break — you won’t be called', rest_off: 'Welcome back — you’re in the line', leave_on: 'Signed out — safe home', leave_off: 'Glad you’re still here',
          sent: 'Sent — the other side confirms', agreed: 'Entered ✓', disputed: 'That doesn’t match — enter it again, both of you',
-         stale: 'Already entered', gone: 'Already settled', withdrawn: 'Taken back', no_show: 'Table freed', in: 'You’re in ✓' },
+         stale: 'Already entered', gone: 'Already settled', withdrawn: 'Taken back', no_show: 'Table freed', in: 'You’re in ✓',
+         waiting: 'Looking for a partner — we’ll let you know' },
   },
   de: {
     tables: r => r ? 'Tisch ' + r : 'Kein Tisch', table1: n => 'Tisch ' + n, allTables: 'Alle Tische',
@@ -274,7 +275,8 @@ const STR = {
          fix_same: 'So ist es schon eingetragen', fix_sent: 'Gesendet — die andere Seite bestätigt', fix_agreed: 'Korrigiert ✓',
          fix_disputed: 'Passt nicht zur anderen Seite — sag der Orga Bescheid', rest_on: 'Pause — wir rufen dich nicht auf', rest_off: 'Willkommen zurück', leave_on: 'Gute Heimfahrt!', leave_off: 'Schön, dass du noch da bist',
          sent: 'Gesendet — die andere Seite bestätigt', agreed: 'Eingetragen ✓', disputed: 'Passt nicht zusammen — tragt es beide nochmal ein',
-         stale: 'Schon eingetragen', gone: 'Schon erledigt', withdrawn: 'Zurückgezogen', no_show: 'Tisch frei', in: 'Du bist dabei ✓' },
+         stale: 'Schon eingetragen', gone: 'Schon erledigt', withdrawn: 'Zurückgezogen', no_show: 'Tisch frei', in: 'Du bist dabei ✓',
+         waiting: 'Partner:in gesucht — wir sagen Bescheid' },
   },
 };
 let LANG = SHELL === 'tg' ? 'de' : 'en';
@@ -583,7 +585,13 @@ function myEntrants() {
     return (S.entrants || []).filter(e => ids.has(e.id));
   }
   const p = myPlayer();
-  return p ? (S.entrants || []).filter(e => e.player_ids.includes(p.id)) : [];
+  if (!p) return [];
+  // every player row of this person, not only the one first checked into —
+  // joining a second cup (op_self_join) makes another one of these
+  const mine = new Set(p.person_id
+    ? (S.players || []).filter(q => q.person_id === p.person_id).map(q => q.id)
+    : [p.id]);
+  return (S.entrants || []).filter(e => e.player_ids.some(id => mine.has(id)));
 }
 function tonight() {
   if (SHELL === 'tg') {
@@ -1435,6 +1443,14 @@ function signup() {
   }
   return '';
 }
+/* The same, for the web page: once a phone has checked in once (its key is
+   good), the other self-checkin cups it has not joined yet. */
+function joinable() {
+  if (SHELL !== 'web' || !PV()) return '';
+  const open = (P.joinable || []).map(c => ({ ...c, live: true }));
+  if (!open.length) return '';
+  return head(L.alsoPlay) + `<div class="cards">${open.map(openCup).join('')}</div>`;
+}
 function entered(e) {
   const detail = e.kind === 'pair' ? L.pairWith(e.partner) : e.kind === 'seeking' ? (e.partner ? L.drawn(e.partner) : L.lookingFor) : '';
   const rsvp = e.status === 'pending' && soonTs() && !e.rsvp;
@@ -1722,7 +1738,7 @@ function render(entering) {
   const pill = $('pill');
   pill.hidden = SHELL !== 'web' || known();
   if (!pill.hidden) put(pill, `<b>${esc(L.pillQ)}</b><span>${esc(P && (P.checkin || []).length ? L.pillCi : L.pillA)}</span>`);
-  put($('mine'), guide() + signup() + evening());
+  put($('mine'), guide() + signup() + joinable() + evening());
   renderRoom();
   put($('tail'), howLink() + orga() + settings());
   if (ui.pad && !ui.pad.fix && !playingNow()) closePad();          // the referee got there first
@@ -1853,7 +1869,14 @@ document.addEventListener('click', async e => {
   if (a === 'push-on') return void pushOn();
   if (a === 'push-off') return void pushOff();
   if (a === 'no-show') { if (!(await ask(L.noShowQ(d.opp)))) return; return void act('no_show', {}); }
+  if (a === 'kind') { ui.kind[d.cup] = d.k; buzz('light'); return render(); }
   if (SHELL !== 'tg') {
+    if (a === 'join') {
+      const c = ((P && P.joinable) || []).find(x => x.id === d.cup);
+      const k = ui.kind[d.cup] || (c && c.entry === 'pair' ? 'p' : 's');
+      const kind = { p: 'pair', k: 'seeking' }[k] || 'single';
+      return void act('join', { cup_id: d.cup, kind, partner_name: ui.partner[d.cup] || '' });
+    }
     if (!PV()) return;
     if (a === 'rest') return void act('rest', { eid: d.eid, on: !!d.on });
     if (a === 'leave') { if (d.on && !(await ask(L.leaveQ))) return; return void act('leave', { eid: d.eid, on: !!d.on }); }
@@ -1864,7 +1887,6 @@ document.addEventListener('click', async e => {
     if (a === 'pad-send') return void padSend();
     return;
   }
-  if (a === 'kind') { ui.kind[d.cup] = d.k; buzz('light'); return render(); }
   if (a === 'enter') {
     const c = (V.open || []).find(x => x.id === d.cup);
     const kind = ui.kind[d.cup] || (c && c.entry === 'pair' ? 'p' : 's');
