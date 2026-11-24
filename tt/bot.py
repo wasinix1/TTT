@@ -117,15 +117,18 @@ def entry_labels(name, pair, many):
     return [(f"✋ {pre}Ich bin dabei", "s")]
 
 
-def announce_preview(p, details, has_url):
+def announce_preview(p, details, has_url, note="", flyer=""):
     """The round message as a new follower would get it, drawn from what the
-    editor holds — the event it announces may not exist yet."""
+    editor holds — the event it announces may not exist yet. The organisers'
+    own words go first, as in Bot.broadcast; a flyer goes ahead of it all as
+    a photo of its own."""
     lines = [f"<b>{esc(p.get('name') or 'Tischtennis')}</b>"]
     w = when_text(p)
     if w:
         lines.append(w)
-    if details:
-        lines += ["", details]
+    said = "\n\n".join(x for x in (esc(note.strip()), details) if x)
+    if said:
+        lines += ["", said]
     lines.append("")
     cups = [c for c in p.get("cups") or [] if c.get("registration") == "open"]
     rows = []
@@ -137,7 +140,7 @@ def announce_preview(p, details, has_url):
         lines.append(NOT_OPEN_YET)
     if has_url:
         rows.append([ALL_INFO])
-    return {"text": ANNOUNCE_HEAD + "\n".join(lines), "buttons": rows}
+    return {"text": ANNOUNCE_HEAD + "\n".join(lines), "buttons": rows, "photo": flyer}
 
 
 def best_of(m):

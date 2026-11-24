@@ -313,6 +313,10 @@ body.pre .kicker,body.pre .hero h1,body.pre .count,body.pre #foot-note{display:n
   /* the photo is portrait: on a phone show a 3:2 window near its bottom, where the table is */
   .poster{--poster-pos:var(--poster-pos-m,50% 78%);min-height:0;aspect-ratio:3/2}
 }
+/* the event's own flyer, when it has one, takes the photo's place in the
+   same frame, filled and cropped like the photo; a tap opens it whole. It
+   keeps to the middle rather than the photo's table-at-the-bottom framing */
+.poster.flyer{cursor:zoom-in;--poster-pos:50% 50%;--poster-pos-m:50% 50%}
 </style>
 </head>
 <body>

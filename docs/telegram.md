@@ -176,6 +176,17 @@ from the op, not derived in `notify.plan`, because a derived notice would keep
 reaching whoever follows the bot later. Editing the text afterwards does not
 change what was sent; *Announce* sends it again.
 
+Both ways carry the organisers' own words on top — the Chat tab's message box,
+or *Your message on top* under the wizard's tick, which the preview shows as it
+will arrive. An event can also have a **flyer**: an image picked on the
+wizard's first step or in Setup → Event (`flyer_upload` keeps it under
+`<data>/flyers/` by its hash; `event.flyer` names it). The landing page shows
+it in place of the stock photo, the link card uses it as `og:image`, and an
+announcement sends it ahead of the card as a photo of its own — a caption holds
+a quarter of what the card does, and the card is the message whose buttons are
+kept true. The file is uploaded with the first follower's photo; everyone after
+gets Telegram's `file_id` for it (`Bot.send_flyer`).
+
 **Live.** Tonight's players, one cup, or the pre-registered, from the Chat
 tab. One person, from their row at the door.
 

@@ -33,6 +33,9 @@ BLANK_EVENT = {
     "venue": "",
     "starts_at": "",        # naive local "YYYY-MM-DDTHH:MM", "" = unscheduled
     "ends_at": "",          # optional "HH:MM", shown as a range on the landing
+    "flyer": "",            # an image the organisers made, by file name under
+                            # <data>/flyers: on the landing page and with the
+                            # Telegram announcement
     "phase_pin": "",        # admin override; "" = derive from the clock
     # players enter their own results. Each cup says so for itself now
     # (Cup.player_scores); this is what a cup that never said falls back on
@@ -564,7 +567,7 @@ class Store:
         carried = {k: self.event.get(k, BLANK_EVENT[k]) for k in CARRIED}
         self.event = dict(BLANK_EVENT, **carried)
         self.event["id"] = p.get("id") or f"EV{seq}"
-        for k in ("name", "note", "blurb", "venue", "starts_at", "ends_at", "phase_pin"):
+        for k in ("name", "note", "blurb", "venue", "starts_at", "ends_at", "phase_pin", "flyer"):
             if k in p:
                 self.event[k] = p[k]
 

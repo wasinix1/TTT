@@ -108,6 +108,20 @@ function render() {
   if (text !== shownText) { $('programme').innerHTML = text; shownText = text; }
   $('programme').hidden = !text;
 
+  // the flyer, if the event has one, in place of the stock photo
+  const poster = document.querySelector('.poster');
+  if (poster) {
+    poster.classList.toggle('flyer', !!P.flyer);
+    let img = poster.querySelector('img');
+    if (!img && P.flyer) { img = document.createElement('img'); img.alt = ''; poster.append(img); }
+    const want = P.flyer || '/static/poster.jpg';
+    if (img && img.getAttribute('src') !== want) {
+      img.setAttribute('src', want);
+      img.alt = P.flyer ? 'Flyer: ' + P.name : '';
+    }
+    poster.onclick = P.flyer ? () => window.open(P.flyer, '_blank') : null;
+  }
+
   const facts = [];
   if (P.starts_at) facts.push(['When', fmtDate(P.starts_at)]);
   // only the place, not the street address: "Funkhaus, Argentinierstraße" shows as "Funkhaus"

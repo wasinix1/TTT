@@ -1450,7 +1450,8 @@ function openWizard() {
   wiz = {
     step: 0,
     name: '', venue: S.event.venue || '', blurb: S.event.blurb || '', starts_at: '',
-    announce: false,
+    announce: false, announce_text: '',
+    flyer: '',      // a new event, a new flyer: last month's is not carried over
     cups,
     tables: S.tables.length
       ? S.tables.map(t => ({ name: t.name, cup: S.cups.findIndex(c => c.id === t.cup_id) }))
@@ -1480,17 +1481,64 @@ const pgEditor = area => `<div class="field pg-field">
     <p class="warn-in" id="pg-warn" hidden></p>
   </div>`;
 
+/* ------------------------------------------------ the flyer
+
+   An image the organisers made. Uploaded the moment it is picked — the
+   server keeps it by what it is and hands back a name — but only ever
+   attached to an event by the wizard's commit or the Event tab. */
+
+const FLYER_MAX = 8 * 1024 * 1024;
+let flyerBusy = false;
+const flyerSrc = name => name ? '/flyer/' + encodeURIComponent(name) : '';
+
+function flyerField(where, name) {
+  const id = 'flyer-' + where;
+  return `<div class="field flyer-field">
+    <label for="${id}">Flyer <span class="sub" style="display:inline">· optional</span></label>
+    <div class="flyer-row">
+      ${name ? `<a href="${flyerSrc(name)}" target="_blank" class="flyer-thumb"><img src="${flyerSrc(name)}" alt="The flyer"></a>` : ''}
+      <div class="flyer-pick">
+        <input id="${id}" type="file" accept="image/jpeg,image/png,image/webp" data-flyer="${where}"
+               ${flyerBusy ? 'disabled' : ''}>
+        ${flyerBusy ? '<span class="sub" style="display:inline">Uploading…</span>' : ''}
+        ${name ? `<button type="button" class="ghost tiny" data-act="flyer-rm" data-where="${where}">Remove</button>` : ''}
+      </div>
+    </div>
+    <p class="sub">A JPG, PNG or WebP, up to 8 MB. It goes on the landing page, onto the link card when the
+      address is pasted into a chat, and ahead of the Telegram announcement as a photo.</p>
+  </div>`;
+}
+
+async function flyerPicked(input) {
+  const file = input.files && input.files[0], where = input.dataset.flyer;
+  if (!file) return;
+  if (file.size > FLYER_MAX) return toast('The flyer is over 8 MB — save it smaller and try again');
+  const data = await new Promise((ok, no) => {
+    const r = new FileReader();
+    r.onload = () => ok(r.result); r.onerror = no; r.readAsDataURL(file);
+  }).catch(() => null);
+  if (!data) return toast('Could not read that file');
+  flyerBusy = true; renderSheet();
+  try {
+    const up = await api('flyer_upload', { data });
+    if (!up) return;
+    if (where === 'wiz') { if (wiz) wiz.flyer = up.flyer; }
+    else await api('event_flyer', { flyer: up.flyer });
+  } finally { flyerBusy = false; renderSheet(); }
+}
+
 function pgBody() {
   const area = $('pg-text');
   if (wiz) return {
     text: area ? area.value : wiz.blurb, name: wiz.name, starts_at: wiz.starts_at, venue: wiz.venue,
+    announce_text: wiz.announce_text || '', flyer: wiz.flyer || '',
     cups: wiz.cups.map(c => ({ name: c.name, blurb: c.blurb, entry: c.entry,
                                registration: c.registration, kind: c.kind || '' })),
   };
   const ev = S.event || {};
   return {
     text: area ? area.value : ev.blurb, name: ev.name, starts_at: ev.starts_at,
-    ends_at: ev.ends_at, venue: ev.venue,
+    ends_at: ev.ends_at, venue: ev.venue, flyer: ev.flyer || '',
     cups: S.cups.map(c => ({ name: c.name, blurb: c.blurb, entry: c.entry, registration: c.registration,
                              kind: (S.formats.find(f => f.id === c.format_id) || {}).kind || '' })),
   };
@@ -1513,7 +1561,8 @@ async function pgAsk() {
 function pgQueue() { clearTimeout(pgTimer); pgTimer = setTimeout(pgAsk, 250); }
 
 // the server built this text and escaped everything in it
-const pgTelegram = t => !t ? '' : `<div class="pg-tg"><div class="pg-bubble">${t.text}</div>${
+const pgTelegram = t => !t ? '' : `<div class="pg-tg">${t.photo
+  ? `<div class="pg-photo"><img src="${esc(t.photo)}" alt="The flyer"></div>` : ''}<div class="pg-bubble">${t.text}</div>${
   t.buttons.map(row => `<div class="pg-tg-row">${row.map(l => `<span>${esc(l)}</span>`).join('')}</div>`).join('')}</div>`;
 
 function pgPaint() {
@@ -1564,7 +1613,13 @@ function wizRound() {
       ${wizSends() ? 'checked' : ''} ${cant ? 'disabled' : ''}> Send a round message on Telegram</label>
     <p class="sub">${cant ? esc('Unavailable: ' + cant)
       : `Goes to ${n} ${n === 1 ? 'follower' : 'followers'} as soon as the event is created. It can’t be recalled.`}</p>
-    ${wizSends() ? '<div id="pg-review"></div>' : ''}`;
+    ${wizSends() ? `<div class="field"><label for="w-announce-text">Your message on top
+        <span class="sub" style="display:inline">· optional</span></label>
+      <textarea id="w-announce-text" rows="3" data-w="announce_text" maxlength="1000"
+        placeholder="Friday is on — doors at seven. Bring a friend!">${esc(wiz.announce_text || '')}</textarea></div>
+      <p class="sub">${wiz.flyer ? 'The flyer goes first as a photo, then this message with the event and its entry buttons.'
+        : 'No flyer — add one on step 1 and it goes out first as a photo.'}</p>
+      <div id="pg-review"></div>` : ''}`;
 }
 
 function wizCarried() {
@@ -1608,6 +1663,7 @@ function wizEvent() {
              placeholder="Turnhalle, Hauptstraße 3"></div>
     ${pgEditor(`<textarea id="pg-text" rows="14" data-w="blurb"
         placeholder="Open to everyone, bats provided, first match at seven.">${esc(wiz.blurb)}</textarea>`)}
+    ${flyerField('wiz', wiz.flyer)}
     ${why('Name and text are what the landing page shows. Until the start time the plain ' +
           'URL is that page; at the start time it becomes the console on its own.')}
     ${wizCarried() ? `<p class="sub">Cups, tables and their settings on the next two steps
@@ -1812,7 +1868,8 @@ function tabEvent() {
                'placeholder="Turnhalle, Hauptstraße 3"')}</div>
     </div>
     ${pgEditor(autoArea('pg-text', 'event_meta', 'blurb', ev.blurb, 'rows="14" ' +
-        'placeholder="Open to everyone, bats provided, first match at seven."'))}`);
+        'placeholder="Open to everyone, bats provided, first match at seven."'))}
+    ${flyerField('event', ev.flyer || '')}`);
 
   const cups = sblock('Cups',
     'Each cup is one entry form and one draw. Confirmed people land in its draw.',
@@ -2841,7 +2898,8 @@ function tabChat() {
           'Tonight’s players and a cup reach whoever is playing and linked, news or not — ' +
           'that is the evening talking, not a newsletter.',
           canAnnounce ? 'Announce sends the event itself — name, date, place, its text and an entry button ' +
-            'per open cup — with your message on top, so entering is one tap from the announcement.' : '')}
+            'per open cup — with your message on top, so entering is one tap from the announcement.' +
+            (S.event.flyer ? ' The event’s flyer goes ahead of it as a photo.' : '') : '')}
 
     ${sec('Messages')}
     ${threads.length ? threads.map(threadCard).join('')
@@ -3151,6 +3209,7 @@ function hopTo(ids, save) {
 
 document.addEventListener('input', e => {
   if (e.target.id === 'pg-text') pgQueue();
+  if (e.target.id === 'w-announce-text' && wiz) { wiz.announce_text = e.target.value; pgQueue(); }
   if (e.target.id === 'nudge-q') { nudgeQ = e.target.value; drawNudgeList(); return; }
   if (e.target.id === 'recent-q') { recentQuery = e.target.value; renderRecent(); return; }
   const mg = e.target.dataset.mg;
@@ -3214,6 +3273,7 @@ function wizInput(e) {
   if (w) {
     wiz[w] = val;
     if (w === 'announce') renderSheet();
+    if (w === 'announce_text') pgQueue();
     return true;
   }
   const wc = e.target.dataset.wc;
@@ -3319,6 +3379,7 @@ document.addEventListener('focusout', e => {
 });
 
 document.addEventListener('change', e => {
+  if (e.target.dataset.flyer) return void flyerPicked(e.target);
   const mf = e.target.dataset.mf;
   if (mf) {
     manualDraft[mf] = e.target.value;
@@ -3543,6 +3604,12 @@ document.addEventListener('click', async e => {
     return;
   }
   if (a === 'pg-mode') { pgMode = b.dataset.m; pgPaint(); return; }
+  if (a === 'flyer-rm') {
+    if (b.dataset.where === 'wiz') { if (wiz) wiz.flyer = ''; renderSheet(); return; }
+    if (!confirm('Take the flyer off this event? The landing page and the next announcement go without it.')) return;
+    await api('event_flyer', { flyer: '' });
+    return;
+  }
   if (a === 'wiz-rm-table') { wiz.tables.splice(+b.dataset.i, 1); renderSheet(); return; }
   if (a === 'wiz-create') {
     const send = wizSends();
@@ -3550,7 +3617,9 @@ document.addEventListener('click', async e => {
       + (send ? `\n\nThe round message goes to ${wizFollowers()} on Telegram straight away and can’t be recalled.` : ''))) return;
     const ok = await api('create_event', {
       name: wiz.name, venue: wiz.venue, blurb: wiz.blurb, starts_at: wiz.starts_at,
-      announce: send, url: location.origin + '/',
+      flyer: wiz.flyer || '',
+      announce: send, announce_text: send ? (wiz.announce_text || '').trim() : '',
+      url: location.origin + '/',
       cups: wiz.cups.map((c, i) => ({
         name: c.name, blurb: c.blurb, entry: c.entry, registration: c.registration,
         max_entrants: c.max_entrants,

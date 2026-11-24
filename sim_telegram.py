@@ -60,6 +60,13 @@ class FakeTelegram:
             self.mid += 1
             box[self.mid] = self._msg(params)
             return {"message_id": self.mid, "chat": {"id": chat}}
+        if method == "sendPhoto":
+            # a file path is an upload, anything else an id from an earlier one
+            self.mid += 1
+            box[self.mid] = {"text": "", "kb": [], "reply": False, "photo": params["photo"]}
+            fid = params["photo"] if params["photo"].startswith("FID-") else "FID-" + str(self.mid)
+            return {"message_id": self.mid, "chat": {"id": chat},
+                    "photo": [{"file_id": "thumb"}, {"file_id": fid}]}
         if method == "editMessageText":
             old = box.get(params["message_id"])
             if old is None:
@@ -673,6 +680,76 @@ def test_the_event_text_is_read_for_its_structure():
     check(programme.date_mismatch(EVENT_TEXT, "2099-12-11T17:00") == {"says": "13.11.", "starts": "11.12."}
           and programme.date_mismatch(EVENT_TEXT, "2099-11-13T17:00") is None,
           "last month's date is noticed, and this month's is not")
+
+
+# the smallest PNG there is: one transparent pixel
+PIXEL = ("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=")
+
+
+def test_the_flyer_and_the_message_on_top():
+    print("\nthe wizard's announcement: the organisers' words on top, the flyer ahead of it")
+    import base64 as b64
+    app, fake, d = fresh()
+    event(app)
+    fans = [fake.user(n, "Kern") for n in ("Ada", "Ben")]
+    for u in fans:
+        fake.say(u, "/start")
+    app.telegram.pump()
+    try:
+        app.act("admin", "flyer_upload", {"data": b64.b64encode(b"GIF89a not ours").decode()})
+        check(False, "only images we can show are taken")
+    except ValueError:
+        check(True, "only images we can show are taken")
+    up = app.act("admin", "flyer_upload", {"data": "data:image/png;base64," + PIXEL})
+    again = app.act("admin", "flyer_upload", {"data": PIXEL})
+    check(up["flyer"].endswith(".png") and up["flyer"] == again["flyer"], "kept by what it is: the same file twice is one")
+    try:
+        app.act("referee", "flyer_upload", {"data": PIXEL})
+        check(False, "a referee cannot put up a flyer")
+    except PermissionError:
+        check(True, "a referee cannot put up a flyer")
+
+    spec = {"name": "Dezember Open", "starts_at": "2099-12-11T18:00", "venue": "TÜWI",
+            "blurb": EVENT_TEXT, "flyer": up["flyer"],
+            "cups": [{"name": "Einzelcup", "entry": "single", "registration": "open",
+                      "kind": "open_play", "config": {"mode": "singles"}}],
+            "tables": [{"name": "Table 1", "cup": -1}]}
+    prev = app.act("admin", "event_text_preview", dict(spec, text=EVENT_TEXT,
+                                                       announce_text="Bringt <Freunde> mit!"))
+    check(prev["telegram"]["photo"] == "/flyer/" + up["flyer"]
+          and "Bringt &lt;Freunde&gt; mit!" in prev["telegram"]["text"],
+          "the preview shows the flyer and the message, escaped")
+    out = app.act("admin", "create_event", dict(spec, announce=True, announce_text="Bringt <Freunde> mit!",
+                                                url="https://tt.example/"))
+    app.telegram.pump()
+    check(out.get("announced") == 2 and app.store.event["flyer"] == up["flyer"], "the event keeps its flyer")
+    for u in fans:
+        box = fake.chats[u["id"]]
+        order = [("photo" if m.get("photo") else "card" if "Neuer Termin" in m["text"] else "other")
+                 for _, m in sorted(box.items())]
+        check(order[-2:] == ["photo", "card"], f"{u['first_name']}: the flyer first, then the card")
+    card = next(m["text"] for m in fake.chats[fans[0]["id"]].values() if "Neuer Termin" in m["text"])
+    check("Bringt &lt;Freunde&gt; mit!" in card and card.index("Bringt") < card.index("blockquote"),
+          "the organisers' words sit above the event's text")
+    photos = fake.sent("sendPhoto")
+    check(photos[0]["photo"].endswith(up["flyer"]) and photos[1]["photo"].startswith("FID-"),
+          "uploaded once, then sent by Telegram's id")
+    fake.tap(fans[0], "Ich bin dabei")
+    app.telegram.pump()
+    fake.tap(fans[0], "✓ Ada Kern")
+    app.telegram.pump()
+    check(any("Bringt" in m["text"] for m in fake.chats[fans[0]["id"]].values() if "Neuer Termin" in m["text"]),
+          "a tap on it keeps the message on top")
+    pub = app.public_state()
+    check(pub["flyer"] == "/flyer/" + up["flyer"], "the landing page shows it")
+    app.act("admin", "event_flyer", {"flyer": ""})
+    check(app.public_state()["flyer"] == "", "and the Event tab can take it off")
+    try:
+        app.act("admin", "event_flyer", {"flyer": "../keys.json"})
+        check(False, "only flyers by their own names")
+    except ValueError:
+        check(True, "only flyers by their own names")
+    shutil.rmtree(d, ignore_errors=True)
 
 
 def test_the_round_message():
@@ -1294,6 +1371,7 @@ def run():
     test_every_step_has_a_way_back()
     test_a_typo_in_a_score_can_be_taken_back()
     test_the_desk_with_telegram()
+    test_the_flyer_and_the_message_on_top()
 
 
 if __name__ == "__main__":

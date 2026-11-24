@@ -154,6 +154,40 @@ def _urllib_transport(token):
     return call
 
 
+FLYER = "flyer:"      # a queued photo naming the event's flyer, not yet uploaded
+
+
+def _upload_photo(token, params, path, timeout=60):
+    """sendPhoto with the file in the request — the one call that is not
+    JSON. Seldom (once per flyer), so plain urllib, which also knows proxies."""
+    boundary = secrets.token_hex(16)
+    parts = []
+    for k, v in params.items():
+        if k == "photo":
+            continue
+        v = v if isinstance(v, str) else json.dumps(v)
+        parts.append(f'--{boundary}\r\nContent-Disposition: form-data; name="{k}"\r\n\r\n'
+                     f'{v}\r\n'.encode())
+    with open(path, "rb") as fh:
+        data = fh.read()
+    fname = os.path.basename(path)
+    ctype = {"png": "image/png", "webp": "image/webp"}.get(fname.rsplit(".", 1)[-1], "image/jpeg")
+    parts.append(f'--{boundary}\r\nContent-Disposition: form-data; name="photo"; '
+                 f'filename="{fname}"\r\nContent-Type: {ctype}\r\n\r\n'.encode()
+                 + data + b"\r\n")
+    parts.append(f"--{boundary}--\r\n".encode())
+    req = urllib.request.Request(
+        f"{API}/bot{token}/sendPhoto", data=b"".join(parts),
+        headers={"Content-Type": f"multipart/form-data; boundary={boundary}"})
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            return _answer(r.status, r.read())
+    except urllib.error.HTTPError as e:
+        return _answer(e.code, e.read())
+    except (urllib.error.URLError, OSError) as e:
+        raise TgError(0, f"network: {getattr(e, 'reason', e)}")
+
+
 # --------------------------------------------------------------------- wire
 
 SCHEMA = """
@@ -819,7 +853,11 @@ class Bot:
                 self.wire.mark(row["id"], "skipped", error="a newer card replaced it")
                 continue
             try:
-                out = self.call(row["method"], row["params"])
+                if row["method"] == "sendPhoto" and \
+                        str(row["params"].get("photo", "")).startswith(FLYER):
+                    out = self.send_flyer(row["params"])
+                else:
+                    out = self.call(row["method"], row["params"])
                 self._ok()
                 mid = out.get("message_id") if isinstance(out, dict) else None
                 self.wire.mark(row["id"], "sent", message_id=mid)
@@ -849,6 +887,36 @@ class Bot:
             if self._threads:
                 self._stop.wait(1 / RATE)
         return sent
+
+    def flyer_path(self, name):
+        return os.path.join(self.data_dir or "", "flyers", os.path.basename(name))
+
+    def send_flyer(self, params):
+        """The flyer as a photo. The first chat gets the file itself; Telegram
+        answers with an id for it, and everybody after that gets the id —
+        one upload for the whole round, not one per follower."""
+        name = params["photo"][len(FLYER):]
+        known = self.cfg.setdefault("flyer_ids", {})
+        if name in known:
+            try:
+                return self.call("sendPhoto", dict(params, photo=known[name]))
+            except TgError as e:
+                if e.code != 400:
+                    raise
+                known.pop(name, None)     # Telegram forgot it: upload again
+        path = self.flyer_path(name)
+        if not os.path.isfile(path):
+            raise TgError(400, "the flyer file is gone")
+        if self._transport:
+            # tests and the sandbox: no real upload, the file's path stands in
+            out = self.call("sendPhoto", dict(params, photo=path))
+        else:
+            out = _upload_photo(self.cfg["token"], params, path)
+        sizes = (out or {}).get("photo") or []
+        if sizes:
+            known[name] = sizes[-1]["file_id"]
+            self._save()
+        return out
 
     def pump(self):
         """Everything the threads do, once, in order. For tests and for the
@@ -910,7 +978,15 @@ class Bot:
         details = self.convo.details() if announce else ""
         note = "\n\n".join(x for x in (esc(text), details) if x)
         ready = []
+        # the flyer goes ahead of the card as a photo of its own: a caption
+        # holds a quarter of what the card does, and the card is the one
+        # whose buttons are kept true afterwards
+        flyer = (self.app.store.event.get("flyer") or "") if announce else ""
+        if flyer and not os.path.isfile(self.flyer_path(flyer)):
+            flyer = ""
         for c in chats:
+            if flyer:
+                ready.append((c, {"chat_id": c, "photo": FLYER + flyer}, "sendPhoto"))
             if announce:
                 message, kb = self.convo.announcement(c, note)
                 if programme.visible_length(message) > 4096:
@@ -921,14 +997,15 @@ class Bot:
             else:
                 params = {"chat_id": c, "text": head + esc(text), "parse_mode": "HTML",
                           "link_preview_options": {"is_disabled": True}}
-            ready.append((c, params))
+            ready.append((c, params, "sendMessage"))
         # all of it or none of it: one card too long must not leave half the
-        # followers told
-        for c, params in ready:
-            self.wire.enqueue(f"bc:{batch}:{c}", c, "sendMessage", params,
+        # followers told. Queued in order, so each chat's photo goes first
+        for c, params, method in ready:
+            photo = method == "sendPhoto"
+            self.wire.enqueue(f"bc:{batch}:{c}" + (":flyer" if photo else ""), c, method, params,
                               prio=1 if kind in ("chat", "tonight", "cup") else 2,
                               # the organisers' own words, for redrawing it later
-                              ref={"announce": text} if announce else None)
+                              ref={"announce": text} if announce and not photo else None)
         if kind == "chat":
             # the thread shows what was written, not how it was dressed up
             self.wire.note(chat_id, "out", text)

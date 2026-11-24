@@ -306,6 +306,7 @@ class App:
                 "venue": s.event.get("venue") or "",
                 "starts_at": s.event.get("starts_at") or "",
                 "ends_at": s.event.get("ends_at") or "",
+                "flyer": flyer_url(s.event.get("flyer")),
                 "starts_ts": s.starts_at_ts(),
                 "open": phase == "registration",
                 "telegram": self._tg_name(),
@@ -1277,9 +1278,52 @@ class App:
         return {
             "parts": programme.parts(doc), "web": programme.web(doc),
             "mismatch": programme.date_mismatch(text, p.get("starts_at")),
-            "telegram": (announce_preview(p, programme.telegram(doc), bool(tg.public_url()))
+            "telegram": (announce_preview(p, programme.telegram(doc), bool(tg.public_url()),
+                                          note=p.get("announce_text") or "",
+                                          flyer=flyer_url(p.get("flyer")))
                          if tg and tg.on else None),
         }
+
+    # the flyer: an image the organisers made themselves
+    FLYER_MAX = 8 * 1024 * 1024        # Telegram takes photos up to 10 MB
+    FLYER_TYPES = {b"\xff\xd8\xff": "jpg", b"\x89PNG\r\n\x1a\n": "png", b"RIFF": "webp"}
+
+    def op_flyer_upload(self, p):
+        """Keep an image for an event that may not exist yet, and say its
+        name. Kept by what it is, so the same file twice is one file, and the
+        event only ever points at it — changing the flyer is a new name."""
+        if self.is_sim or not self.data_dir:
+            raise ValueError("flyers are kept for the real event only, not the sandbox")
+        raw = p.get("data") or ""
+        if raw.startswith("data:"):
+            raw = raw.partition(",")[2]
+        try:
+            data = base64.b64decode(raw, validate=True)
+        except (ValueError, TypeError):
+            raise ValueError("that is not an image")
+        if len(data) > self.FLYER_MAX:
+            raise ValueError("the flyer is over 8 MB — save it smaller and try again")
+        ext = next((x for magic, x in self.FLYER_TYPES.items() if data.startswith(magic)
+                    and (x != "webp" or data[8:12] == b"WEBP")), None)
+        if not ext:
+            raise ValueError("the flyer has to be a JPG, PNG or WebP image")
+        name = hashlib.sha256(data).hexdigest()[:16] + "." + ext
+        folder = os.path.join(self.data_dir, "flyers")
+        os.makedirs(folder, exist_ok=True)
+        path = os.path.join(folder, name)
+        if not os.path.exists(path):
+            tmp = path + ".tmp"
+            with open(tmp, "wb") as fh:
+                fh.write(data)
+            os.replace(tmp, path)
+        return {"flyer": name, "url": flyer_url(name)}
+
+    def op_event_flyer(self, p):
+        """Put a flyer on the event that is there, or take it off."""
+        name = p.get("flyer") or ""
+        if name and not FLYER_NAME.fullmatch(name):
+            raise ValueError("no such flyer")
+        self.store.append("event_meta", {"flyer": name})
 
     def op_new_event(self, p):
         """Start a new event. Players, teams, matches and formats go; tables,
@@ -1311,10 +1355,13 @@ class App:
 
         # the wizard is authoritative over cups: it clears them and writes
         # the ones it was given, rather than merging into whatever was there
+        flyer = p.get("flyer") or ""
+        if flyer and not FLYER_NAME.fullmatch(flyer):
+            raise ValueError("no such flyer")
         s.append("event_new", {
             "name": (p.get("name") or "").strip() or "Table tennis evening",
             "blurb": p.get("blurb", ""), "venue": p.get("venue", ""),
-            "starts_at": p.get("starts_at", ""),
+            "starts_at": p.get("starts_at", ""), "flyer": flyer,
             "keep_cups": False,
         })
 
@@ -1377,7 +1424,8 @@ class App:
             return {"announce_error": "nothing is taking entries before the start time"}
         try:
             tg.remember_url(p.get("url", ""))
-            return {"announced": tg.broadcast("followers", "", announce=True)}
+            return {"announced": tg.broadcast("followers", p.get("announce_text") or "",
+                                              announce=True)}
         except Exception as e:
             return {"announce_error": str(e)}
 
@@ -2610,6 +2658,7 @@ class ArchiveApp(App):
 
 
 OP_LEVEL = {
+    "flyer_upload": 2, "event_flyer": 2,
     "add_player": 2, "update_player": 2, "add_team": 2, "update_entrant": 2,
     "set_table": 2, "remove_table": 2, "share_tables": 2, "lend_table": 2, "split_tables": 2,
     "add_format": 2, "update_format": 2, "start_format": 2, "remove_format": 2,
@@ -2653,7 +2702,13 @@ OFF_THE_LIST = ("dropped", "duplicate", "cancelled")
 # Ops that talk to Telegram and so must not hold the store lock while they
 # wait, and the editor's preview, which never touches the store at all.
 UNLOCKED = {"tg_connect", "tg_disconnect", "tg_send", "tg_door_link", "tg_read",
-            "event_text_preview"}
+            "event_text_preview", "flyer_upload"}
+
+FLYER_NAME = re.compile(r"[0-9a-f]{16}\.(?:jpg|png|webp)")
+
+
+def flyer_url(name):
+    return f"/flyer/{name}" if name and FLYER_NAME.fullmatch(name) else ""
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -2786,6 +2841,9 @@ class Handler(BaseHTTPRequestHandler):
 
         if path == "/api/qr.svg":
             return self._qr(q.get("u", [""])[0])
+
+        if path.startswith("/flyer/"):
+            return self._flyer(path[len("/flyer/"):])
 
         if path.startswith("/static/"):
             return self._static(path[len("/static/"):])
@@ -2996,13 +3054,20 @@ class Handler(BaseHTTPRequestHandler):
             desc = " · ".join(bits) + " — " + desc
         esc = lambda t: (str(t).replace("&", "&amp;").replace("<", "&lt;")
                          .replace(">", "&gt;").replace('"', "&quot;"))
+        # a card only shows a picture it can fetch on its own, so the address
+        # has to be whole: the one this page was asked for under
+        host = self.headers.get("X-Forwarded-Host") or self.headers.get("Host") or ""
+        proto = (self.headers.get("X-Forwarded-Proto") or "http").split(",")[0].strip()
+        image = f"{proto}://{host}{flyer_url(ev.get('flyer'))}" \
+            if host and flyer_url(ev.get("flyer")) else ""
         meta = (
             f'<title>{esc(name)}</title>\n'
             f'<meta name="description" content="{esc(desc)}">\n'
             f'<meta property="og:type" content="website">\n'
             f'<meta property="og:title" content="{esc(name)}">\n'
             f'<meta property="og:description" content="{esc(desc)}">\n'
-            f'<meta name="twitter:card" content="summary">\n'
+            + (f'<meta property="og:image" content="{esc(image)}">\n' if image else "")
+            + f'<meta name="twitter:card" content="{"summary_large_image" if image else "summary"}">\n'
             f'<meta name="twitter:title" content="{esc(name)}">\n'
             f'<meta name="twitter:description" content="{esc(desc)}">'
         )
@@ -3070,6 +3135,20 @@ class Handler(BaseHTTPRequestHandler):
 {detail}
 {qr}<div class="url">{"" if (checkin and qr) else base.replace('https://','')}</div></div>"""
         self._send(200, html, "text/html; charset=utf-8")
+
+    def _flyer(self, name):
+        """A flyer, from the live event's data. Its name is its content, so
+        it never changes in place and can be kept for good."""
+        live = type(self).app
+        if not FLYER_NAME.fullmatch(name) or not live.data_dir:
+            return self._send(404, "not found", "text/plain")
+        p = os.path.join(live.data_dir, "flyers", name)
+        if not os.path.isfile(p):
+            return self._send(404, "not found", "text/plain")
+        with open(p, "rb") as fh:
+            data = fh.read()
+        self._send(200, data, mimetypes.guess_type(p)[0] or "image/jpeg",
+                   cache="public, max-age=31536000, immutable")
 
     def _static(self, rel):
         rel = rel.lstrip("/") or "index.html"
