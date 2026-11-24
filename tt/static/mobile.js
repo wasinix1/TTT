@@ -761,8 +761,11 @@ function geom(H, W) {
    left alone, and keeps its scroll, its open folds and its focus. */
 function put(el, html) {
   if (!el || el._html === html) return false;
+  // what was opened stays open (the guide's lines, a hint, a fold)
+  const open = new Set([...el.querySelectorAll('details[open] > summary')].map(x => x.textContent));
   el.innerHTML = html;
   el._html = html;
+  if (open.size) el.querySelectorAll('details > summary').forEach(x => { if (open.has(x.textContent)) x.parentNode.open = true; });
   return true;
 }
 
@@ -773,13 +776,36 @@ function paintHero(H, entering) {
   if (!H) { lastKey = null; return; }
   const W = hero.clientWidth || Math.min(innerWidth, 460);
   const g = geom(H, W), o = $('obj');
-  // the table is one 250px picture, placed and sized by transform (the GPU's
-  // job, no layout per frame); the blur is drawn before the scale, so divide
-  const set = gg => { const sc = gg.w / 250; Object.entries({ '--x': gg.x + 'px', '--y': gg.y + 'px', '--s': sc.toFixed(4), '--b': (gg.b / sc).toFixed(1) + 'px', '--lines': gg.lines })
-    .forEach(([k, v]) => { if (o.style.getPropertyValue(k) !== String(v)) o.style.setProperty(k, v); }); };
+  // The table is drawn at its own size and moved by transform, the GPU's job:
+  // its paint is drawn once, not once per frame. A change of size is played
+  // backwards (FLIP): the box takes the new size at once, a scale makes it
+  // look as it did, and the scale runs back to 1, so at rest the paint is
+  // drawn 1:1, exactly as before. (A blur is drawn before the scale.)
+  const put1 = (k, v) => { if (o.style.getPropertyValue(k) !== String(v)) o.style.setProperty(k, v); };
+  const write = (gg, s) => {
+    put1('--w', gg.w + 'px'); put1('--h', gg.h + 'px');
+    const px = v => Math.round(v * devicePixelRatio) / devicePixelRatio + 'px';   // whole device pixels: a layer between them is resampled soft
+    put1('--x', px(gg.x)); put1('--y', px(gg.y));
+    put1('--s', s.toFixed(4)); put1('--b', (gg.b / s).toFixed(1) + 'px');
+  };
+  const still = fn => { o.style.transition = 'none'; fn(); void o.offsetWidth; o.style.removeProperty('transition'); };
+  const set = (gg, from) => {
+    put1('--lines', gg.lines);
+    const cw = parseFloat(o.style.getPropertyValue('--w')) || 0;
+    if (!from && cw && Math.abs(cw - gg.w) > .5) {
+      // where it is on screen right now, mid-move or not
+      const cs = getComputedStyle(o);
+      const m = cs.transform && cs.transform !== 'none' ? new DOMMatrix(cs.transform) : null;
+      const b = parseFloat((cs.filter.match(/blur\(([\d.]+)px\)/) || [])[1]) || 0;
+      if (m) from = { x: m.e, y: m.f, s: m.a * cw / gg.w, b: b * m.a };
+    }
+    if (from) still(() => write({ w: gg.w, h: gg.h, x: from.x, y: from.y, b: from.b }, from.s));
+    write(gg, 1);
+  };
   if (entering && !reduced()) {
     // the focus pull: start far away and soft, then come in
-    set({ ...g, b: 60, x: g.x + 30, y: g.y + 30, w: g.w * .8, h: g.h * .8, lines: 0 });
+    put1('--lines', 0);
+    still(() => write({ ...g, x: g.x + 30, y: g.y + 30, b: 60 }, .8));
     requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(() => set(g), 60)));
   } else set(g);
   o.classList.toggle('sharp', !!g.sharp);
@@ -790,6 +816,9 @@ function paintHero(H, entering) {
     n.className = 'num' + ({ next: ' word', word: ' word', result: ' score' }[H.kind] || '') + (g.sharp ? ' on' : '') + (!reduced() ? ' in' : '');
     n.style.removeProperty('font-size');
     n.innerHTML = [...H.big].map((c, k) => `<span style="animation-delay:${(entering ? 250 : 0) + k * 70}ms">${c === ' ' ? '&nbsp;' : esc(c)}</span>`).join('');
+    // once the last letter is in, the number is still and may wear its chalk
+    const last = n.lastElementChild;
+    if (last && n.classList.contains('in')) last.addEventListener('animationend', () => { if (n.lastElementChild === last) n.classList.remove('in'); }, { once: true });
     fit(n, W);
   }
   if (g.sharp) n.style.setProperty('--ny', g.ny + 'px');
@@ -857,15 +886,21 @@ const pushable = () => 'serviceWorker' in navigator && 'PushManager' in window &
 const isIOS = () => /iP(hone|ad|od)/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 const standalone = () => matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
 let pushSub = null;
+/* A hint with nothing to press right here (add the page to the home screen,
+   allow notifications, the Telegram way) is one quiet line that opens. */
+function tip(head, body) {
+  return `<details class="tip"><summary>${esc(head)}<i aria-hidden="true">+</i></summary>${body}</details>`;
+}
+const tgTip = tgLink => tgLink ? tip(L.tgGo, tgLink) : '';
 function callCard() {
   const tgLink = tgOffer();
-  if (!PV()) return tgLink;                // nobody to call yet
-  if (!P || !P.push_key || sim() || !S || !(S.phase === 'doors' || S.phase === 'live')) return tgLink;
+  if (!PV()) return tgTip(tgLink);          // nobody to call yet
+  if (!P || !P.push_key || sim() || !S || !(S.phase === 'doors' || S.phase === 'live')) return tgTip(tgLink);
   if (pushSub) return `<div class="acts"><p class="note">✓ ${esc(L.callOn)}</p>
       <button class="link" data-act="push-off">${esc(L.callOff)}</button></div>`;
   if (!pushable()) return isIOS() && !standalone()
-    ? `<div class="acts tg-offer"><p class="note"><b>${esc(L.callH)}</b> — ${esc(L.iosAdd)}</p></div>` + tgLink : tgLink;
-  if (Notification.permission === 'denied') return `<div class="acts"><p class="note">${esc(L.callBlocked)}</p></div>` + tgLink;
+    ? tip(L.callH, `<p class="note">${esc(L.iosAdd)}</p>` + tgLink) : tgTip(tgLink);
+  if (Notification.permission === 'denied') return tip(L.callH, `<p class="note">${esc(L.callBlocked)}</p>` + tgLink);
   const bot = tgLink ? (tgLink.match(/href="([^"]+)"/) || [])[1] : '';
   return `<div class="acts tg-offer"><p class="note"><b>${esc(L.callH)}</b> — ${esc(L.callP)}</p>
       <button class="btn red wide" data-act="push-on">${esc(L.callGo)}</button>
@@ -947,8 +982,10 @@ function guide() {
   if (!ui.guide && (seen === null || steps.every(([k]) => seen.includes(k)))) return '';
   const part = sec => {
     const xs = steps.filter(x => x[2] === sec);
-    return xs.length ? `<h5>${esc(L[sec])}</h5><ul>${xs.map(([, [t, d]]) =>
-      `<li><b>${esc(t)}</b>${d ? `<span>${esc(d)}</span>` : ''}</li>`).join('')}</ul>` : '';
+    // the headlines are the guide; each one's detail opens under it on a tap
+    return xs.length ? `<h5>${esc(L[sec])}</h5><ul>${xs.map(([, [t, d]]) => d
+      ? `<li><details><summary><b>${esc(t)}</b><i aria-hidden="true">+</i></summary><span>${esc(d)}</span></details></li>`
+      : `<li><b>${esc(t)}</b></li>`).join('')}</ul>` : '';
   };
   return `<div class="card2 guide" id="guide"><h4>${esc(L.guideH)}</h4>${part('gsPlay') + part('gsAfter') + part('gsIf')}
     <div class="acts flush"><button class="btn ghost small" data-act="guide-ok">${esc(L.gotIt)}</button></div></div>`;

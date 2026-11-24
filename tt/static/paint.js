@@ -26,6 +26,13 @@
   'use strict';
   const NS = 'http://www.w3.org/2000/svg';
   const FILTERS = `<svg xmlns="${NS}" width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
+  <filter id="tp-fill" x="-6%" y="-16%" width="112%" height="132%">
+    <feTurbulence type="fractalNoise" baseFrequency=".02 .09" numOctaves="3" seed="11" result="n"/>
+    <feColorMatrix in="n" type="matrix" values="0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0 0 0 -1.2 1.08" result="shade"/>
+    <feComposite in="SourceGraphic" in2="shade" operator="arithmetic" k1="0" k2="1" k3="-.12" k4="0" result="streak"/>
+    <feTurbulence type="fractalNoise" baseFrequency=".08" numOctaves="2" seed="4" result="edge"/>
+    <feDisplacementMap in="streak" in2="edge" scale="2"/>
+  </filter>
   <filter id="tp-edge" x="-4%" y="-12%" width="108%" height="124%">
     <feTurbulence type="fractalNoise" baseFrequency=".07" numOctaves="2" seed="6" result="edge"/>
     <feDisplacementMap in="SourceGraphic" in2="edge" scale="1.8"/>
@@ -40,27 +47,13 @@
 <feColorMatrix in='t' type='matrix' values='0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0 0 0 -1.3 1.3' result='a'/>
 <feComposite in='d' in2='a' operator='in'/></filter>
 <rect x='0' y='2.6' width='1200' height='2.8' fill='%231B1B1B' filter='url(%23s)'/></svg>`;
-  // the fill's streaks and dry edge, as a mask: the same filter, but inside an
-  // SVG image, which the browser rasterises once and caches. As a live
-  // filter:url() on every filled button it ran on the CPU at each repaint —
-  // on an iPhone, at every redraw of the page. The edge frays inward only.
-  const FILL = `<svg xmlns='${NS}' viewBox='0 0 200 50' preserveAspectRatio='none'>
-<filter id='f' filterUnits='userSpaceOnUse' x='0' y='0' width='200' height='50'>
-<feTurbulence type='fractalNoise' baseFrequency='.02 .09' numOctaves='3' seed='11' result='n'/>
-<feColorMatrix in='n' values='0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0 0 0 -1.2 1.08' result='s'/>
-<feComposite in='SourceGraphic' in2='s' operator='arithmetic' k2='1' k3='-.12' result='k'/>
-<feTurbulence type='fractalNoise' baseFrequency='.08' numOctaves='2' seed='4' result='e'/>
-<feDisplacementMap in='k' in2='e' scale='2'/></filter>
-<rect x='1.2' y='1.2' width='197.6' height='47.6' fill='%23fff' filter='url(%23f)'/></svg>`;
-  const svgUrl = s => 'url("data:image/svg+xml,' + s.replace(/\n/g, '').replace(/"/g, "'").replace(/</g, '%3C').replace(/>/g, '%3E') + '")';
-  const FILL_URL = svgUrl(FILL);
   const STROKE_URL = 'url("data:image/svg+xml,' + STROKE.replace(/\n/g, '').replace(/"/g, "'").replace(/</g, '%3C').replace(/>/g, '%3E') + '")';
 
   const CSS = `
-:root{--tp-line:${STROKE_URL};--tp-fill:${FILL_URL}}
+:root{--tp-line:${STROKE_URL}}
 .tp{isolation:isolate;-webkit-background-clip:text!important;background-clip:text!important;box-shadow:none!important}
 :where(.tp){position:relative}
-.tp::before{content:"";position:absolute;inset:0;border-radius:inherit;background-color:inherit;-webkit-mask:var(--tp-fill) 0 0/100% 100% no-repeat;mask:var(--tp-fill) 0 0/100% 100% no-repeat;z-index:-1;pointer-events:none}
+.tp::before{content:"";position:absolute;inset:0;border-radius:inherit;background-color:inherit;filter:url(#tp-fill);z-index:-1;pointer-events:none}
 .tp-o{isolation:isolate;border-color:transparent!important;box-shadow:none!important}
 :where(.tp-o){position:relative}
 .tp-o::before{content:"";position:absolute;inset:calc(-1 * var(--tp-bw,0px));border-radius:inherit;border:var(--tp-ow,1.5px) solid var(--tp-oc,currentColor);filter:url(#tp-edge);pointer-events:none}
@@ -151,7 +144,7 @@
   const soon = () => { if (!queued) { queued = true; requestAnimationFrame(scan); } };
 
   function start() {
-    if (!document.getElementById('tp-edge')) document.body.insertAdjacentHTML('afterbegin', FILTERS);
+    if (!document.getElementById('tp-fill')) document.body.insertAdjacentHTML('afterbegin', FILTERS);
     const st = document.createElement('style');
     st.id = 'tp-style';
     st.textContent = CSS;

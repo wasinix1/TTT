@@ -30,15 +30,6 @@
   --shape:38% 38% 36% 36% / 30% 30% 32% 32%;
   color-scheme:light;
 }
-/* The paint, baked. The table's red, its chalk lines and the ink ring used to
-   be live SVG filters (filter:url(#paint)) on page elements. WebKit runs
-   those on the CPU, again on every repaint and every animation frame, and
-   under a CSS blur it cannot hand the layer to the GPU at all: on an iPhone
-   that was the lag of the personal page. The same filters drawn inside an SVG
-   *image* are rasterised once and cached, so here they are as images: the
-   shape (the --shape blob, on a 250×300 table) is in the picture, with room
-   round it for the frayed edge (10 units: 4% across, 3.33% down). */
-:root{--img-skin:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='-10 -10 270 320' preserveAspectRatio='none'%3E%3Cfilter id='p' filterUnits='userSpaceOnUse' x='-10' y='-10' width='270' height='320'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.008 .045' numOctaves='3' seed='11' result='n'/%3E%3CfeColorMatrix in='n' values='0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0 0 0 -1.2 1.08' result='s'/%3E%3CfeComposite in='SourceGraphic' in2='s' operator='arithmetic' k2='1' k3='-.14' result='k'/%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.03' numOctaves='2' seed='4' result='e'/%3E%3CfeDisplacementMap in='k' in2='e' scale='4'/%3E%3C/filter%3E%3Cpath d='M95 0H155A95 90 0 0 1 250 90V204A90 96 0 0 1 160 300H90A90 96 0 0 1 0 204V90A95 90 0 0 1 95 0Z' fill='%23E8262A' filter='url(%23p)'/%3E%3C/svg%3E");--img-ring:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='-10 -10 270 320' preserveAspectRatio='none'%3E%3Cfilter id='p' filterUnits='userSpaceOnUse' x='-10' y='-10' width='270' height='320'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.008 .045' numOctaves='3' seed='11' result='n'/%3E%3CfeColorMatrix in='n' values='0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0 0 0 -1.2 1.08' result='s'/%3E%3CfeComposite in='SourceGraphic' in2='s' operator='arithmetic' k2='1' k3='-.14' result='k'/%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.03' numOctaves='2' seed='4' result='e'/%3E%3CfeDisplacementMap in='k' in2='e' scale='4'/%3E%3C/filter%3E%3Cpath d='M95 0H155A95 90 0 0 1 250 90V204A90 96 0 0 1 160 300H90A90 96 0 0 1 0 204V90A95 90 0 0 1 95 0Z' fill='none' stroke='%231B1B1B' stroke-width='3' filter='url(%23p)'/%3E%3C/svg%3E");--img-lines:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 250 300' preserveAspectRatio='none'%3E%3Cfilter id='c' filterUnits='userSpaceOnUse' x='0' y='0' width='250' height='300'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' seed='2' result='g'/%3E%3CfeDisplacementMap in='SourceGraphic' in2='g' scale='1.1' result='d'/%3E%3CfeTurbulence type='fractalNoise' baseFrequency='1.6' seed='9' result='t'/%3E%3CfeColorMatrix in='t' values='0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0 0 0 -.45 1.3' result='x'/%3E%3CfeComposite in='d' in2='x' operator='in'/%3E%3C/filter%3E%3Cg filter='url(%23c)' fill='none' stroke-width='2'%3E%3Cg stroke='rgba(90,8,12,.42)' transform='translate(.8 1)'%3E%3Cpath d='M97 8H153A89 86 0 0 1 242 94V200.5A85 91.5 0 0 1 157 292H93A85 91.5 0 0 1 8 200.5V94A89 86 0 0 1 97 8Z'/%3E%3Cpath d='M125 8V292'/%3E%3C/g%3E%3Cg stroke='%23EDE6DB'%3E%3Cpath d='M97 8H153A89 86 0 0 1 242 94V200.5A85 91.5 0 0 1 157 292H93A85 91.5 0 0 1 8 200.5V94A89 86 0 0 1 97 8Z'/%3E%3Cpath d='M125 8V292'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E");--img-chalk:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='128' height='128'%3E%3Cfilter id='c' x='0' y='0' width='1' height='1'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='1.6' seed='9' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0 0 0 -.45 1.3'/%3E%3C/filter%3E%3Crect width='128' height='128' filter='url(%23c)'/%3E%3C/svg%3E")}
 *{box-sizing:border-box}
 html,body{background:var(--bone);color:var(--ink)}
 body{margin:0;font-family:var(--grot);font-size:15px;line-height:1.4;font-variant-numeric:tabular-nums;-webkit-tap-highlight-color:transparent}
@@ -73,26 +64,31 @@ button{background:none;border:0;padding:0;cursor:pointer}
 .hero{position:relative;height:500px;isolation:isolate}
 .hero .who{position:absolute;left:var(--pad);right:var(--pad);top:18px;display:flex;justify-content:space-between;gap:12px;color:var(--ink-2);z-index:3}
 .hero .who button{color:var(--ink-2);text-decoration:underline;text-underline-offset:3px}
-.obj{position:absolute;z-index:0;left:0;top:0;width:250px;height:300px;border-radius:var(--shape);transform-origin:0 0;
+.obj{position:absolute;z-index:0;left:0;top:0;width:var(--w);height:var(--h);border-radius:var(--shape);transform-origin:0 0;
   transform:translate(var(--x),var(--y)) scale(var(--s,1));filter:blur(var(--b));will-change:transform,filter;
   transition:transform var(--slow) var(--ease),filter var(--slow) var(--ease)}
-/* moved and sized by transform, not left/top/width/height: no layout and no
-   re-paint per frame, the GPU slides one finished picture */
-.obj .skin{position:absolute;inset:-3.333% -4%;background:var(--img-skin) 0 0/100% 100% no-repeat}
-.obj .skin::after{content:"";position:absolute;inset:3.125% 3.704%;border-radius:var(--shape);background:radial-gradient(90% 70% at 35% 25%,rgba(255,110,90,.35),transparent 60%),radial-gradient(80% 60% at 70% 95%,rgba(120,10,20,.35),transparent 60%);transition:opacity var(--slow)}
+/* Moved and sized by transform, not by left/top/width/height, and on a layer
+   of its own: the paint below is drawn once into that layer (SVG filters run
+   on the CPU in Safari) and the GPU then slides, scales and blurs the finished
+   picture. Animating the box itself re-ran the filters, under the blur, on
+   every frame. What changes inside (the lines' and the light's opacity) sits
+   on layers of its own too, so a fade never repaints the paint. */
+.obj .skin{position:absolute;inset:0;border-radius:inherit;background:var(--red);filter:url(#paint)}
+.obj .skin::after{content:"";position:absolute;inset:0;border-radius:inherit;will-change:opacity;background:radial-gradient(90% 70% at 35% 25%,rgba(255,110,90,.35),transparent 60%),radial-gradient(80% 60% at 70% 95%,rgba(120,10,20,.35),transparent 60%);transition:opacity var(--slow)}
 .obj.sharp .skin::after{opacity:.25}
 /* painted lines: same 2px, a hair of shadow, an uneven edge; the centre line meets the edge */
-.obj .edge{position:absolute;inset:0;background:var(--img-lines) 0 0/100% 100% no-repeat;opacity:var(--lines,.5);transition:opacity var(--slow)}
-.obj .line{display:none}
-/* out of focus the texture cannot be seen anyway: a plain shape blurs cheaper */
-.obj:not(.sharp) .skin{inset:0;border-radius:var(--shape);background:var(--red)}
-.obj:not(.sharp) .skin::after{inset:0}
+.obj .edge{position:absolute;inset:7px;border:2px solid var(--bone);border-radius:inherit;opacity:var(--lines,.5);transition:opacity var(--slow);will-change:opacity;
+  box-shadow:0 1px 0 rgba(90,8,12,.42),inset 0 1px 0 rgba(90,8,12,.34);filter:url(#chalk)}
+.obj .line{position:absolute;left:50%;top:7px;bottom:7px;width:2px;margin-left:-1px;background:var(--bone);opacity:var(--lines,.5);transition:opacity var(--slow);will-change:opacity;
+  box-shadow:.8px 1px 0 rgba(90,8,12,.42);filter:url(#chalk)}
 
 .num{position:absolute;z-index:2;left:14px;top:92px;font-family:var(--syne);font-weight:800;font-size:216px;line-height:.78;letter-spacing:-.06em;white-space:nowrap}
 .num.word{font-size:92px;letter-spacing:-.05em;top:150px;left:18px}
 .num.score{font-size:112px;top:150px}
-.num.on{left:0;right:0;text-align:center;color:var(--bone);font-size:176px;top:var(--ny);opacity:.9;
-  -webkit-mask-image:var(--img-chalk);mask-image:var(--img-chalk);-webkit-mask-size:128px;mask-size:128px}
+.num.on{left:0;right:0;text-align:center;color:var(--bone);font-size:176px;top:var(--ny);opacity:.9}
+/* the chalk goes on once the number has come in: a live filter over letters
+   that are still moving would be run again for every frame of the entrance */
+.num.on:not(.in){filter:url(#chalk)}
 .num.on span{text-shadow:.8px 1px 0 rgba(90,8,12,.42)}
 .num span{display:inline-block}
 .num.in span{animation:focusIn .9s var(--ease) both}
@@ -172,7 +168,7 @@ button{background:none;border:0;padding:0;cursor:pointer}
 .grid.c3 .tb .a{bottom:calc(50% + 13cqi)}
 .grid.c3 .tb .b{top:calc(50% + 13cqi)}
 .tb{position:relative;aspect-ratio:1/1.22;border-radius:var(--shape);container-type:inline-size;color:var(--bone)}
-.tb .skin{position:absolute;inset:-3.333% -4%;background:var(--img-skin) 0 0/100% 100% no-repeat}
+.tb .skin{position:absolute;inset:0;border-radius:inherit;background:var(--red);filter:url(#paint)}
 .tb .edge{position:absolute;inset:5px;border:1.5px solid var(--bone);border-radius:inherit;opacity:.85}
 .tb .cl{position:absolute;left:50%;top:5px;bottom:5px;width:1.5px;margin-left:-.75px;background:var(--bone);opacity:.16}
 .tb .net{position:absolute;left:0;right:0;top:50%;height:0;border-top:2px solid var(--bone);display:flex;justify-content:center}
@@ -185,10 +181,10 @@ button{background:none;border:0;padding:0;cursor:pointer}
 .tb .b{top:calc(50% + 9cqi)}
 .tb .lbl{position:absolute;left:0;right:0;top:9%;text-align:center;font-size:clamp(8px,5.2cqi,12px);font-weight:600;letter-spacing:.08em;text-transform:uppercase;opacity:.75}
 /* when a name is known, the other tables step back and yours stays full red */
-.grid.someone .tb:not(.mine) .skin{opacity:.72}
+.grid.someone .tb:not(.mine) .skin{opacity:.72;filter:url(#paint) saturate(.8)}
 .tb.mine{box-shadow:0 18px 30px -18px rgba(150,15,20,.55)}
 .tb.free,.tb.paused,.tb.other{color:var(--ink)}
-.tb.free .skin,.tb.paused .skin,.tb.other .skin{inset:0;border-radius:inherit;background:transparent;border:1.5px dashed rgba(27,27,27,.4)}
+.tb.free .skin,.tb.paused .skin,.tb.other .skin{background:transparent;filter:none;border:1.5px dashed rgba(27,27,27,.4)}
 .tb.free .edge,.tb.free .cl,.tb.paused .edge,.tb.paused .cl,.tb.other .edge,.tb.other .cl{display:none}
 .tb.free .net,.tb.paused .net,.tb.other .net{border-top:1.5px dashed rgba(27,27,27,.3)}
 .tb.free .no,.tb.paused .no,.tb.other .no{color:var(--ink-2);box-shadow:0 0 0 1.5px rgba(27,27,27,.25)}
@@ -377,7 +373,7 @@ details.fold .in .list,details.fold .in .h,details.fold .in .cuphead{padding:0;m
 .strip button:not(.all):last-child:nth-child(even){grid-column:1/-1}   /* an odd last cup takes the row, as on the console */
 
 /* every table stays full red; yours is the one with the ink ring */
-.grid.someone .tb:not(.mine) .skin{opacity:1}
+.grid.someone .tb:not(.mine) .skin{opacity:1;filter:url(#paint)}
 .tb.mine{outline:2px solid var(--ink);outline-offset:4px;border-radius:var(--shape)}
 /* names on red labels, as on the console's tables, so the painted lines never run through them */
 .tb:not(.free):not(.paused):not(.other) .side span{background:var(--red);padding:0 .3em;border-radius:4px}
@@ -385,7 +381,7 @@ details.fold .in .list,details.fold .in .h,details.fold .in .cuphead{padding:0;m
 /* the ring frayed like the table's own paint: drawn as an outline of its
    own, through the same #paint filter */
 .tb.mine{outline:0}
-.tb.mine::after{content:"";position:absolute;inset:calc(-6px - 3.333%) calc(-6px - 4%);background:var(--img-ring) 0 0/100% 100% no-repeat;pointer-events:none}
+.tb.mine::after{content:"";position:absolute;inset:-6px;border:2px solid var(--ink);border-radius:var(--shape);filter:url(#paint);pointer-events:none}
 .tb .b{top:calc(50% + 12cqi)}   /* the lower side a little further from the net */
 .tb .a{bottom:calc(50% + 13cqi)}.tb .b{top:calc(50% + 13cqi)}   /* each side toward the middle of its own half */
 .tb .lbl{top:7%}   /* room for a pair once the sides moved in */
@@ -420,3 +416,16 @@ a.btn{text-decoration:none}
 
 /* the sandbox (/?sim=1): a quiet tag beside the mark, on every screen */
 .bar .sim-tag{align-self:center;padding:3px 8px;border-radius:99px;background:var(--ink);color:var(--bone);letter-spacing:.08em;text-transform:uppercase}
+
+/* the guide's headlines, each opening onto its detail; and the quiet,
+   foldable hints (calls on this phone, Telegram) */
+.guide li details summary{list-style:none;display:flex;justify-content:space-between;align-items:baseline;gap:10px;cursor:pointer}
+.guide li details summary::-webkit-details-marker,.tip summary::-webkit-details-marker{display:none}
+.guide li details summary i,.tip summary i{font-style:normal;flex:none;color:var(--ink-3);font-size:15px;line-height:1;transition:transform .3s var(--ease)}
+.guide li details[open] summary i,.tip[open] summary i{transform:rotate(45deg)}
+.guide li details span{margin-top:3px}
+.guide ul{gap:7px}
+.tip{margin:10px var(--pad) 0}
+.tip summary{list-style:none;display:inline-flex;align-items:baseline;gap:8px;font-size:13px;font-weight:600;color:var(--ink-2);cursor:pointer;padding:4px 0}
+.tip .note{margin-top:4px}
+.tip .acts{padding:0;margin-top:10px}
